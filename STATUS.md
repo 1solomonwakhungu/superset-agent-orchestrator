@@ -28,3 +28,15 @@ PER-341 startup reconciliation and batch recovery are complete.
 - Verified PR head: `3a217ac7e2acd2bd36d41bad43e6383666ac94c4`.
 - GitHub reported the exact head clean and mergeable with no required checks.
 - Next: merge PR 7 and reconcile PER-341 in Linear.
+
+PER-322 lifecycle and result API research and verification are complete locally.
+
+- Pinned primary-source evidence to `superset-sh/superset@b0d3411`.
+- Classified public launch as Beta and all ordinary post-launch lifecycle,
+  result, cancellation, and backend recovery operations as unavailable.
+- Quarantined private canary/dev ACP capabilities and excluded private database,
+  temporary-log, transcript, and terminal-output parsing from stable design.
+- Added a fail-closed machine-readable capability contract.
+- Verification: `npm run verify` passed 20 tests, focused Markdown lint passed,
+  and `git diff --check` passed.
+- Next: deliver PER-322 through pull request.
