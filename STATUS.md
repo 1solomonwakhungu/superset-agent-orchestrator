@@ -12,6 +12,16 @@
   omitted or reframed as general-availability orchestration.
 - Next: run full verification and deliver through the PER-326 pull request.
 
+## PER-328 MCP tool contract
+
+- Added the versioned client-independent discovery, launch, batch, status,
+  result, cancellation, bounded-wait, and recovery contract.
+- Published generated JSON Schemas, typed error policy, cross-field semantic
+  rules, 100-session limits, opaque pagination, and generic-client examples.
+- Verification after integration with current `main`: `npm run schema` passes,
+  `npm run verify` passes all 59 tests, and `git diff --check` passes.
+- Next: push, open and safely merge the pull request, then reconcile Linear.
+
 ## PER-330 durable storage
 
 - Added a product-owned SQLite registry with 7 domain tables and a migration ledger.
@@ -48,6 +58,18 @@ PER-341 startup reconciliation and batch recovery are complete.
 - Verified PR head: `3a217ac7e2acd2bd36d41bad43e6383666ac94c4`.
 - GitHub reported the exact head clean and mergeable with no required checks.
 - Next: merge PR 7 and reconcile PER-341 in Linear.
+
+PER-338 durable idempotent asynchronous launch implementation is complete locally.
+
+- Added durable acceptance with stable session, batch, and assignment IDs.
+- Added adapter idempotency keys, asynchronous dispatch recovery, and lifecycle audit events.
+- Added concurrent repeated-key prevention and crash injection at all five launch boundaries.
+- Verification: `npm run verify` passed 19 tests, `node --test
+  test/configuration-contract.test.mjs` passed 3 tests,
+  `./scripts/verify-per-323.sh` passed, and `git diff --check` passed.
+- Pull request: https://github.com/1solomonwakhungu/superset-agent-orchestrator/pull/11
+- Next: verify the merged prerequisite integration, push the conflict resolution,
+  verify exact-head checks, and merge.
 
 PER-339 batch status and result APIs are implemented and verified locally.
 

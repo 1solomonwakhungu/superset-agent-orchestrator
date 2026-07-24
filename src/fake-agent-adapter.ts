@@ -42,8 +42,8 @@ export class FakeAgentAdapter implements AgentAdapter {
 
     this.launches.push(request);
     const runId = `fake-${this.nextRunId++}`;
-    this.runs.set(runId, { script, position: 0, resultAvailable: false });
     const handle = { runId };
+    this.runs.set(runId, { script, position: 0, resultAvailable: false });
     this.runsByIdempotencyKey.set(request.idempotencyKey, handle);
     return handle;
   }
