@@ -18,6 +18,7 @@ function fixture(): DurableState {
         batchId: "batch-1",
         sessionId: "session-1",
         pid: 101,
+        processStartedAt: "live-token",
         status: "running",
         attribution: { agent: "codex", task: "implement" },
         startedAt: timestamp,
@@ -27,6 +28,7 @@ function fixture(): DurableState {
         batchId: "batch-1",
         sessionId: "session-1",
         pid: 202,
+        processStartedAt: "dead-token",
         status: "running",
         attribution: { agent: "codex", task: "verify" },
         startedAt: timestamp,
@@ -136,6 +138,16 @@ test("corrupt state fails safely instead of discarding durable identities", asyn
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("running state without a process identity fails safely", async () => {
+  await withState(async (path) => {
+    const state = fixture();
+    delete state.workers[0]?.processStartedAt;
+    await writeFile(path, JSON.stringify(state), "utf8");
+
+    await assert.rejects(new DurableStore(path).reconcile(), /Running workers require a PID and process start token/);
+  });
 });
 
 test("startup recovers a durable state lock left by a killed server", async () => {

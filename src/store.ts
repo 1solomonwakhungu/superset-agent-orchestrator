@@ -83,6 +83,10 @@ const workerSchema = z.object({
   status: z.enum(["running", "succeeded", "failed", "unknown_outcome"]),
   attribution: attributionSchema, startedAt: z.iso.datetime(), completedAt: z.iso.datetime().optional(),
   result: z.unknown().optional(),
+}).superRefine((worker, context) => {
+  if (worker.status === "running" && (worker.pid === undefined || worker.processStartedAt === undefined)) {
+    context.addIssue({ code: "custom", message: "Running workers require a PID and process start token" });
+  }
 });
 const diagnosticSchema = z.object({
   id: z.string().min(1), kind: z.enum(["orphan", "unknown_outcome", "missing_result"]),
@@ -243,7 +247,8 @@ export class DurableStore {
   static processStartedAt(pid: number): string | undefined {
     try {
       if (process.platform === "linux") {
-        return readFileSync(`/proc/${pid}/stat`, "utf8").split(" ")[21];
+        const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+        return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
       }
       return execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8" }).trim() || undefined;
     } catch {
