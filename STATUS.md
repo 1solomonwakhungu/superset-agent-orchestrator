@@ -37,6 +37,18 @@ PER-341 startup reconciliation and batch recovery are complete.
 - GitHub reported the exact head clean and mergeable with no required checks.
 - Next: merge PR 7 and reconcile PER-341 in Linear.
 
+PER-322 lifecycle and result API research and verification are complete locally.
+
+- Pinned primary-source evidence to `superset-sh/superset@b0d3411`.
+- Classified public launch as Beta and all ordinary post-launch lifecycle,
+  result, cancellation, and backend recovery operations as unavailable.
+- Quarantined private canary/dev ACP capabilities and excluded private database,
+  temporary-log, transcript, and terminal-output parsing from stable design.
+- Added a fail-closed machine-readable capability contract.
+- Verification: `npm run verify` passed 20 tests, focused Markdown lint passed,
+  and `git diff --check` passed.
+- Next: deliver PER-322 through pull request.
+
 PER-337 supported Superset discovery implementation is complete.
 
 - Added structured parsers for projects, workspaces, local host status, agent
