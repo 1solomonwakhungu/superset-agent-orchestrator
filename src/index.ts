@@ -5,3 +5,5 @@ export * from "./launch-service.js";
 export * from "./launch-coordinator.js";
 export * from "./storage.js";
 export * from "./store.js";
+export * from "./discovery-parser.js";
+export * from "./superset-discovery.js";
