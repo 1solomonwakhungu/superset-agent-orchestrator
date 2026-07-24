@@ -1,5 +1,17 @@
 # Status
 
+## PER-326 product boundary
+
+- Accepted a backend-neutral orchestration core with a version-gated Superset
+  adapter and Hermes only as an optional client example.
+- Narrowed Superset to a launch-ledger technical preview because supported status,
+  exact result, stop reason, cancellation, and backend recovery are unavailable.
+- Defined target users and jobs, MVP scope, non-goals, deferrals, and measurable
+  Go, Narrow, Pause, and Kill gates.
+- Added contract tests that prevent the unsupported lifecycle boundary from being
+  omitted or reframed as general-availability orchestration.
+- Next: run full verification and deliver through the PER-326 pull request.
+
 ## PER-328 MCP tool contract
 
 - Added the versioned client-independent discovery, launch, batch, status,
