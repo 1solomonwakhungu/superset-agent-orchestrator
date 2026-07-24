@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { DurableStore, type DurableState } from "../store.js";
+import { DurableStore, type DurableState } from "../src/store.js";
 
 const timestamp = "2026-07-24T10:00:00.000Z";
 

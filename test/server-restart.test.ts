@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import type { DurableState } from "../store.js";
+import type { DurableState } from "../src/store.js";
 
 test("a replacement MCP client reopens an attributed batch from a killed server", async () => {
   const directory = await mkdtemp(join(tmpdir(), "orchestrator-mcp-restart-"));
@@ -32,7 +32,7 @@ test("a replacement MCP client reopens an attributed batch from a killed server"
   const connect = async () => {
     const transport = new StdioClientTransport({
       command: process.execPath,
-      args: [resolve("dist/server.js")],
+      args: [resolve("dist/src/server.js")],
       env: {
         ...process.env,
         SUPERSET_ORCHESTRATOR_STATE: statePath,
