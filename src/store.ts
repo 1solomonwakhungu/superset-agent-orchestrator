@@ -321,6 +321,10 @@ export class DurableStore {
   }): Promise<{ assignment: Assignment; created: boolean }> {
     return this.withLock(async () => {
       await this.load();
+      assignmentSchema.parse(input.assignment);
+      sessionSchema.parse(input.session);
+      batchSchema.parse(input.batch);
+      auditEventSchema.parse(input.event);
       const existing = this.state.assignments.find(({ idempotencyKey }) => idempotencyKey === input.assignment.idempotencyKey);
       if (existing !== undefined) {
         if (existing.requestFingerprint !== input.assignment.requestFingerprint) {
@@ -353,7 +357,7 @@ export class DurableStore {
       await this.load();
       const assignment = this.state.assignments.find(({ id }) => id === assignmentId);
       if (assignment === undefined) throw new Error(`Unknown assignment: ${assignmentId}`);
-      if (assignment.status === "launched") return structuredClone(assignment);
+      if (assignment.status === "launched" || assignment.status === "failed") return structuredClone(assignment);
       assignment.status = status;
       assignment.updatedAt = event.occurredAt;
       if (event.runId !== undefined) assignment.runId = event.runId;

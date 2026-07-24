@@ -118,6 +118,56 @@ test("rejects reuse of an idempotency key for different work", async () => {
   });
 });
 
+test("rejects invalid nested attribution before durable acceptance", async () => {
+  await withStore(async (path) => {
+    const service = new LaunchService(new DurableStore(path), new FakeAgentAdapter([script]));
+    await assert.rejects(service.accept({ ...request, attribution: { agent: "", task: "work" } }), /attribution/);
+    await assert.rejects(
+      service.accept({ ...request, attribution: undefined } as unknown as AsynchronousLaunchRequest),
+      /attribution/,
+    );
+    await assert.rejects(readFile(path, "utf8"), /ENOENT/);
+  });
+});
+
+test("canonical fingerprints accept equivalent requests with reordered properties", async () => {
+  await withStore(async (path) => {
+    const service = new LaunchService(new DurableStore(path), new FakeAgentAdapter([script]));
+    const first = await service.accept(request);
+    const reordered = {
+      workspacePath: request.workspacePath,
+      prompt: request.prompt,
+      attribution: { task: request.attribution.task, agent: request.attribution.agent },
+      batchName: request.batchName,
+      clientId: request.clientId,
+      idempotencyKey: request.idempotencyKey,
+    };
+    assert.equal((await service.accept(reordered)).assignmentId, first.assignmentId);
+  });
+});
+
+test("retries transient background dispatch failure without another launch request", async () => {
+  await withStore(async (path) => {
+    const store = new DurableStore(path);
+    const adapter = new FakeAgentAdapter([script]);
+    const pending = store.pendingAssignments.bind(store);
+    let attempts = 0;
+    store.pendingAssignments = async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("transient storage error");
+      return pending();
+    };
+    const service = new LaunchService(store, adapter, () => new Date(), () => undefined, 5);
+    await service.launch(request);
+
+    for (let attempt = 0; attempt < 100 && adapter.launches.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(adapter.launches.length, 1);
+    assert.ok(attempts >= 2);
+  });
+});
+
 test("recovers without duplicate work after crashes across every launch boundary", async () => {
   const boundaries: LaunchBoundary[] = [
     "after_acceptance",

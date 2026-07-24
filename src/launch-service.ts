@@ -34,22 +34,31 @@ export interface LaunchAcceptance {
 }
 
 export class LaunchService {
+  private dispatchTimer: NodeJS.Timeout | undefined;
+  private dispatching: Promise<void> | undefined;
+
   constructor(
     private readonly store: DurableStore,
     private readonly adapter: AgentAdapter,
     private readonly now: () => Date = () => new Date(),
     private readonly injectCrash: (boundary: LaunchBoundary) => void = () => undefined,
+    private readonly retryDelayMs = 1_000,
   ) {}
 
   async launch(request: AsynchronousLaunchRequest): Promise<LaunchAcceptance> {
     const accepted = await this.accept(request);
-    void this.dispatchPending().catch(() => undefined);
+    this.scheduleDispatch(0);
     return accepted;
   }
 
   async accept(request: AsynchronousLaunchRequest): Promise<LaunchAcceptance> {
     for (const [name, value] of Object.entries(request)) {
       if (typeof value === "string" && value.length === 0) throw new Error(`${name} must not be empty`);
+    }
+    if (request.attribution === undefined
+      || request.attribution.agent.length === 0
+      || request.attribution.task.length === 0) {
+      throw new Error("attribution requires non-empty agent and task values");
     }
     const acceptedAt = this.now().toISOString();
     const assignmentId = stableId("assignment", request.idempotencyKey);
@@ -86,29 +95,39 @@ export class LaunchService {
     for (const assignment of await this.store.pendingAssignments()) await this.dispatch(assignment);
   }
 
+  private scheduleDispatch(delayMs: number): void {
+    if (this.dispatchTimer !== undefined || this.dispatching !== undefined) return;
+    this.dispatchTimer = setTimeout(() => {
+      this.dispatchTimer = undefined;
+      this.dispatching = this.dispatchPending();
+      void this.dispatching
+        .then(
+          () => { this.dispatching = undefined; },
+          () => {
+            this.dispatching = undefined;
+            this.scheduleDispatch(this.retryDelayMs);
+          },
+        );
+    }, delayMs);
+  }
+
   private async dispatch(assignment: Assignment): Promise<void> {
     const startedAt = this.now().toISOString();
-    await this.store.recordLaunchEvent(
+    const reserved = await this.store.recordLaunchEvent(
       assignment.id,
       "launching",
       event(assignment.id, "launch_reserved", startedAt),
     );
+    if (reserved.status !== "launching") return;
     this.injectCrash("after_launch_started");
     this.injectCrash("before_adapter_launch");
+    let handle;
     try {
-      const handle = await this.adapter.launch({
+      handle = await this.adapter.launch({
         idempotencyKey: assignment.idempotencyKey,
         prompt: assignment.prompt,
         workspacePath: assignment.workspacePath,
       });
-      this.injectCrash("after_adapter_launch");
-      const launchedAt = this.now().toISOString();
-      await this.store.recordLaunchEvent(
-        assignment.id,
-        "launched",
-        event(assignment.id, "execution_started", launchedAt, { runId: handle.runId }),
-      );
-      this.injectCrash("after_launch_recorded");
     } catch (error) {
       if (error instanceof InjectedCrash) throw error;
       const message = error instanceof Error ? error.message : String(error);
@@ -118,7 +137,16 @@ export class LaunchService {
         "failed",
         event(assignment.id, "launch_failed", failedAt, { error: message }),
       );
+      return;
     }
+    this.injectCrash("after_adapter_launch");
+    const launchedAt = this.now().toISOString();
+    await this.store.recordLaunchEvent(
+      assignment.id,
+      "launched",
+      event(assignment.id, "execution_started", launchedAt, { runId: handle.runId }),
+    );
+    this.injectCrash("after_launch_recorded");
   }
 }
 
@@ -129,7 +157,15 @@ function stableId(kind: string, key: string): string {
 }
 
 function fingerprint(request: AsynchronousLaunchRequest): string {
-  return createHash("sha256").update(JSON.stringify(request)).digest("hex");
+  const canonical = JSON.stringify({
+    idempotencyKey: request.idempotencyKey,
+    clientId: request.clientId,
+    batchName: request.batchName,
+    attribution: { agent: request.attribution.agent, task: request.attribution.task },
+    prompt: request.prompt,
+    workspacePath: request.workspacePath,
+  });
+  return createHash("sha256").update(canonical).digest("hex");
 }
 
 function event(
