@@ -87,6 +87,9 @@ test("mixed states expose completed results independently with exact attribution
       { id: "unknown", batchId: "batch", sessionId: "owner", position: 3, status: "unknown_outcome", attribution: { agent: "d", task: "lost" }, startedAt: timestamp, completedAt: timestamp },
     ],
     diagnostics: [],
+    assignments: [],
+    auditEvents: [],
+    launchIntents: [],
   };
   await writeFile(path, JSON.stringify(state), "utf8");
   const store = new DurableStore(path);

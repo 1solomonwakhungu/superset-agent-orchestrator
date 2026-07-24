@@ -15,6 +15,18 @@
 - Next: deliver through pull request and verify merged `main` before reconciling
   PER-327.
 
+## PER-326 product boundary
+
+- Accepted a backend-neutral orchestration core with a version-gated Superset
+  adapter and Hermes only as an optional client example.
+- Narrowed Superset to a launch-ledger technical preview because supported status,
+  exact result, stop reason, cancellation, and backend recovery are unavailable.
+- Defined target users and jobs, MVP scope, non-goals, deferrals, and measurable
+  Go, Narrow, Pause, and Kill gates.
+- Added contract tests that prevent the unsupported lifecycle boundary from being
+  omitted or reframed as general-availability orchestration.
+- Next: run full verification and deliver through the PER-326 pull request.
+
 ## PER-328 MCP tool contract
 
 - Added the versioned client-independent discovery, launch, batch, status,
@@ -61,6 +73,18 @@ PER-341 startup reconciliation and batch recovery are complete.
 - Verified PR head: `3a217ac7e2acd2bd36d41bad43e6383666ac94c4`.
 - GitHub reported the exact head clean and mergeable with no required checks.
 - Next: merge PR 7 and reconcile PER-341 in Linear.
+
+PER-338 durable idempotent asynchronous launch implementation is complete locally.
+
+- Added durable acceptance with stable session, batch, and assignment IDs.
+- Added adapter idempotency keys, asynchronous dispatch recovery, and lifecycle audit events.
+- Added concurrent repeated-key prevention and crash injection at all five launch boundaries.
+- Verification: `npm run verify` passed 19 tests, `node --test
+  test/configuration-contract.test.mjs` passed 3 tests,
+  `./scripts/verify-per-323.sh` passed, and `git diff --check` passed.
+- Pull request: https://github.com/1solomonwakhungu/superset-agent-orchestrator/pull/11
+- Next: verify the merged prerequisite integration, push the conflict resolution,
+  verify exact-head checks, and merge.
 
 PER-339 batch status and result APIs are implemented and verified locally.
 
