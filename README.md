@@ -3,6 +3,17 @@
 Local-first MCP server for durable orchestration of parallel coding agents through
 Superset.
 
+## Product status
+
+The backend-neutral core and fake adapter exercise complete lifecycle semantics,
+but the stable public Superset interface currently supports only local discovery
+and launch. It does not provide agent status, exact results, stop reasons,
+cancellation, or backend recovery. Superset is therefore limited to a
+launch-ledger technical preview that reports unobservable work as
+`unknown_outcome`; it is not a general-availability orchestration backend.
+
+See the [product boundary and measurable release gates](docs/adr/0002-product-boundary-and-mvp-gates.md).
+
 ## Recovery
 
 The server reconciles its durable JSON state before accepting MCP requests and periodically while
@@ -36,6 +47,7 @@ node --test test/configuration-contract.test.mjs
 
 ## Architecture
 
+- [Product boundary and MVP decision gates](docs/adr/0002-product-boundary-and-mvp-gates.md)
 - [Authoritative session state machine](docs/session-state-machine.md)
 - [Versioned client-independent MCP tool contract](docs/mcp-tool-contract.md)
 - [Durable storage, migration, retention, export, and recovery policy](docs/durable-storage.md)
