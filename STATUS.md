@@ -49,6 +49,18 @@ PER-338 durable idempotent asynchronous launch implementation is complete locall
 - Next: verify the merged prerequisite integration, push the conflict resolution,
   verify exact-head checks, and merge.
 
+PER-322 lifecycle and result API research and verification are complete locally.
+
+- Pinned primary-source evidence to `superset-sh/superset@b0d3411`.
+- Classified public launch as Beta and all ordinary post-launch lifecycle,
+  result, cancellation, and backend recovery operations as unavailable.
+- Quarantined private canary/dev ACP capabilities and excluded private database,
+  temporary-log, transcript, and terminal-output parsing from stable design.
+- Added a fail-closed machine-readable capability contract.
+- Verification: `npm run verify` passed 20 tests, focused Markdown lint passed,
+  and `git diff --check` passed.
+- Next: deliver PER-322 through pull request.
+
 PER-337 supported Superset discovery implementation is complete.
 
 - Added structured parsers for projects, workspaces, local host status, agent
