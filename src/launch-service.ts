@@ -22,6 +22,7 @@ export interface AsynchronousLaunchRequest {
   batchName: string;
   attribution: WorkerAttribution;
   prompt: string;
+  workspaceId: string;
   workspacePath: string;
 }
 
@@ -62,6 +63,7 @@ export class LaunchService {
     }
     const acceptedAt = this.now().toISOString();
     const assignmentId = stableId("assignment", request.idempotencyKey);
+    const attemptId = stableId("attempt", request.idempotencyKey);
     const session: Session = {
       id: stableId("session", request.idempotencyKey), clientId: request.clientId,
       createdAt: acceptedAt, lastSeenAt: acceptedAt,
@@ -79,7 +81,10 @@ export class LaunchService {
       status: "accepted",
       attribution: request.attribution,
       prompt: request.prompt,
+      workspaceId: request.workspaceId,
       workspacePath: request.workspacePath,
+      attemptId,
+      attempt: 1,
       acceptedAt,
       updatedAt: acceptedAt,
     };
@@ -163,6 +168,7 @@ function fingerprint(request: AsynchronousLaunchRequest): string {
     batchName: request.batchName,
     attribution: { agent: request.attribution.agent, task: request.attribution.task },
     prompt: request.prompt,
+    workspaceId: request.workspaceId,
     workspacePath: request.workspacePath,
   });
   return createHash("sha256").update(canonical).digest("hex");

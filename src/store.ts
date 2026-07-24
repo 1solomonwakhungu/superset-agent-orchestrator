@@ -10,6 +10,7 @@ import { z } from "zod";
 export type WorkerStatus = "requested" | "running" | "succeeded" | "failed" | "unknown_outcome";
 export type DiagnosticKind = "orphan" | "unknown_outcome" | "missing_result";
 export type LaunchStatus = "reserved" | "dispatching" | "unknown_outcome" | "bound";
+export type ResultCompleteness = "complete" | "empty" | "partial" | "missing" | "malformed";
 
 export interface Session {
   id: string;
@@ -92,11 +93,41 @@ export interface Assignment {
   status: AssignmentLaunchStatus;
   attribution: WorkerAttribution;
   prompt: string;
+  workspaceId?: string;
   workspacePath: string;
+  attemptId?: string;
+  attempt?: number;
   acceptedAt: string;
   updatedAt: string;
   runId?: string;
   error?: string;
+}
+
+export interface AgentResultClaim {
+  status: "succeeded" | "failed" | "cancelled" | "stopped_without_result" | "malformed";
+  completeness: ResultCompleteness;
+  output?: string;
+  error?: string;
+  retryable?: boolean;
+  stopReason?: string;
+  resume?: { adapter: string; token: string };
+}
+
+export interface CapturedResult {
+  deliveryId: string;
+  deliveryFingerprint: string;
+  assignmentId: string;
+  batchId: string;
+  sessionId: string;
+  workspaceId: string;
+  workspacePath: string;
+  attemptId: string;
+  attempt: number;
+  runId: string;
+  attribution: WorkerAttribution;
+  claim: AgentResultClaim;
+  verifiedArtifacts: readonly [];
+  capturedAt: string;
 }
 
 export type LaunchAuditType = "launch_accepted" | "launch_reserved" | "execution_started" | "launch_failed";
@@ -133,6 +164,7 @@ export interface DurableState {
   assignments: Assignment[];
   auditEvents: LaunchAuditEvent[];
   launchIntents: LaunchIntent[];
+  capturedResults?: CapturedResult[];
   reconciledAt?: string;
 }
 
@@ -174,8 +206,23 @@ const assignmentSchema = z.object({
   id: z.string().min(1), idempotencyKey: z.string().min(1), requestFingerprint: z.string().min(1),
   batchId: z.string().min(1), sessionId: z.string().min(1),
   status: z.enum(["accepted", "launching", "launched", "failed"]), attribution: attributionSchema,
-  prompt: z.string().min(1), workspacePath: z.string().min(1), acceptedAt: z.iso.datetime(),
+  prompt: z.string().min(1), workspaceId: z.string().min(1).optional(), workspacePath: z.string().min(1),
+  attemptId: z.string().min(1).optional(), attempt: z.number().int().positive().optional(), acceptedAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(), runId: z.string().min(1).optional(), error: z.string().min(1).optional(),
+});
+const resultClaimSchema = z.object({
+  status: z.enum(["succeeded", "failed", "cancelled", "stopped_without_result", "malformed"]),
+  completeness: z.enum(["complete", "empty", "partial", "missing", "malformed"]),
+  output: z.string().optional(), error: z.string().min(1).optional(), retryable: z.boolean().optional(),
+  stopReason: z.string().min(1).optional(),
+  resume: z.object({ adapter: z.string().min(1), token: z.string().min(1) }).optional(),
+});
+const capturedResultSchema = z.object({
+  deliveryId: z.string().min(1), deliveryFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  assignmentId: z.string().min(1), batchId: z.string().min(1), sessionId: z.string().min(1),
+  workspaceId: z.string().min(1), workspacePath: z.string().min(1), attemptId: z.string().min(1),
+  attempt: z.number().int().positive(), runId: z.string().min(1), attribution: attributionSchema,
+  claim: resultClaimSchema, verifiedArtifacts: z.tuple([]), capturedAt: z.iso.datetime(),
 });
 const auditEventSchema = z.object({
   id: z.string().min(1), assignmentId: z.string().min(1),
@@ -198,7 +245,8 @@ const stateSchema = z.object({
   version: z.literal(1), sessions: z.array(sessionSchema), batches: z.array(batchSchema),
   workers: z.array(workerSchema), diagnostics: z.array(diagnosticSchema),
   assignments: z.array(assignmentSchema).default([]), auditEvents: z.array(auditEventSchema).default([]),
-  launchIntents: z.array(launchIntentSchema).default([]), reconciledAt: z.iso.datetime().optional(),
+  launchIntents: z.array(launchIntentSchema).default([]), capturedResults: z.array(capturedResultSchema).default([]),
+  reconciledAt: z.iso.datetime().optional(),
 }).superRefine((state, context) => {
   for (const [kind, records] of [["session", state.sessions], ["batch", state.batches], ["worker", state.workers],
     ["assignment", state.assignments], ["audit event", state.auditEvents]] as const) {
@@ -213,6 +261,14 @@ const stateSchema = z.object({
     if (keys.has(intent.idempotencyKey)) context.addIssue({ code: "custom", message: `Duplicate idempotency key: ${intent.idempotencyKey}` });
     keys.add(intent.idempotencyKey);
   }
+  const deliveries = new Set<string>();
+  const attempts = new Set<string>();
+  for (const result of state.capturedResults ?? []) {
+    if (deliveries.has(result.deliveryId)) context.addIssue({ code: "custom", message: `Duplicate result delivery ID: ${result.deliveryId}` });
+    if (attempts.has(result.attemptId)) context.addIssue({ code: "custom", message: `Duplicate result attempt ID: ${result.attemptId}` });
+    deliveries.add(result.deliveryId);
+    attempts.add(result.attemptId);
+  }
 });
 
 const EMPTY_STATE: DurableState = {
@@ -224,6 +280,7 @@ const EMPTY_STATE: DurableState = {
   assignments: [],
   auditEvents: [],
   launchIntents: [],
+  capturedResults: [],
 };
 
 export class DurableStore {
@@ -504,6 +561,49 @@ export class DurableStore {
       if (!this.state.auditEvents.some(({ id }) => id === event.id)) this.state.auditEvents.push(event);
       await this.persist();
       return structuredClone(assignment);
+    });
+  }
+
+  async assignmentForResult(assignmentId: string): Promise<Assignment> {
+    return this.withFreshState(() => {
+      const assignment = this.state.assignments.find(({ id }) => id === assignmentId);
+      if (assignment === undefined) throw new Error(`Unknown assignment: ${assignmentId}`);
+      return structuredClone(assignment);
+    });
+  }
+
+  async captureResult(input: CapturedResult): Promise<{ result: CapturedResult; duplicate: boolean }> {
+    return this.withLock(async () => {
+      await this.load();
+      capturedResultSchema.parse(input);
+      const assignment = this.state.assignments.find(({ id }) => id === input.assignmentId);
+      if (assignment === undefined) throw new Error(`Unknown assignment: ${input.assignmentId}`);
+      if (assignment.workspaceId === undefined || assignment.attemptId === undefined || assignment.attempt === undefined) {
+        throw new Error("Legacy assignments without exact workspace and attempt identities cannot accept results");
+      }
+      const identities = ["batchId", "sessionId", "workspaceId", "workspacePath", "attemptId", "attempt", "runId"] as const;
+      for (const identity of identities) {
+        if (assignment[identity] !== input[identity]) throw new Error(`Result ${identity} does not match its assignment`);
+      }
+      if (assignment.status !== "launched") throw new Error("Results require a launched assignment");
+      const results = this.state.capturedResults ??= [];
+      const existingDelivery = results.find(({ deliveryId }) => deliveryId === input.deliveryId);
+      if (existingDelivery !== undefined) {
+        if (existingDelivery.deliveryFingerprint !== input.deliveryFingerprint) {
+          throw new Error(`Result delivery ${JSON.stringify(input.deliveryId)} conflicts with its first payload`);
+        }
+        return { result: structuredClone(existingDelivery), duplicate: true };
+      }
+      const existingAttempt = results.find(({ attemptId }) => attemptId === input.attemptId);
+      if (existingAttempt !== undefined) {
+        if (existingAttempt.deliveryFingerprint !== input.deliveryFingerprint) {
+          throw new Error(`Attempt ${JSON.stringify(input.attemptId)} already has a different authoritative result`);
+        }
+        return { result: structuredClone(existingAttempt), duplicate: true };
+      }
+      results.push(input);
+      await this.persist();
+      return { result: structuredClone(input), duplicate: false };
     });
   }
 
