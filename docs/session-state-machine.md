@@ -35,19 +35,21 @@ stateDiagram-v2
     launching --> running: execution observed
     launching --> canceling: cancel requested
     launching --> failed: launch failed or timed out
+    launching --> lost: reconciliation unresolved
     running --> canceling: cancel requested
     running --> completed: successful completion
     running --> failed: execution failure
-    running --> lost: observation lease expired
+    running --> lost: lease expired or reconciliation unresolved
     canceling --> canceled: cancellation confirmed
     canceling --> completed: completion won race
     canceling --> failed: terminal failure won race
-    canceling --> lost: cancellation deadline expired
+    canceling --> lost: deadline expired or reconciliation unresolved
     lost --> running: same execution rediscovered
     lost --> canceling: cancel requested
     lost --> completed: completion reconciled
     lost --> failed: failure reconciled
     lost --> canceled: cancellation reconciled
+    lost --> lost: reconciliation unresolved
     completed --> [*]
     failed --> [*]
     canceled --> [*]
@@ -72,19 +74,23 @@ Only the transitions below are legal. All other state-event pairs append a
 | `launching` | `cancel_requested` | `canceling` | none | Durable cancellation intent |
 | `launching` | `launch_failed` | `failed` | `launch_error` | Superset rejection or transport error after retry policy |
 | `launching` | `launch_deadline_expired` | `failed` | `launch_timeout` | Deadline and final reconciliation query |
+| `launching` | `reconciliation_unresolved` | `lost` | none | Bound execution identity cannot be reconciled |
 | `running` | `cancel_requested` | `canceling` | none | Durable cancellation intent |
 | `running` | `execution_completed` | `completed` | `succeeded` | Matching execution and final artifact manifest |
 | `running` | `execution_failed` | `failed` | A failure reason below | Matching execution terminal observation |
 | `running` | `observation_lease_expired` | `lost` | none | Lease deadline and unsuccessful reconciliation query |
+| `running` | `reconciliation_unresolved` | `lost` | none | Bound execution identity cannot be reconciled |
 | `canceling` | `cancellation_confirmed` | `canceled` | A cancellation reason below | Matching execution reports canceled or never started |
 | `canceling` | `execution_completed` | `completed` | `succeeded_before_cancellation` | Completion timestamp or source sequence precedes effective cancellation |
 | `canceling` | `execution_failed` | `failed` | A failure reason below | Failure timestamp or source sequence precedes effective cancellation |
 | `canceling` | `cancellation_deadline_expired` | `lost` | none | Deadline and unsuccessful reconciliation query |
+| `canceling` | `reconciliation_unresolved` | `lost` | none | Bound execution identity cannot be reconciled |
 | `lost` | `execution_started` | `running` | none | The same reserved execution is rediscovered as active |
 | `lost` | `cancel_requested` | `canceling` | none | Durable cancellation intent; no new execution is launched |
 | `lost` | `execution_completed` | `completed` | `succeeded` or `succeeded_before_cancellation` | Matching terminal observation and artifacts |
 | `lost` | `execution_failed` | `failed` | A failure reason below | Matching terminal observation |
 | `lost` | `cancellation_confirmed` | `canceled` | A cancellation reason below | Matching terminal observation |
+| `lost` | `reconciliation_unresolved` | `lost` | none | Bound execution identity remains unobservable |
 
 ## Ownership Rules
 
