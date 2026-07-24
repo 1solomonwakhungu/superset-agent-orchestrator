@@ -1,7 +1,9 @@
 # Workspace lease and writer-safety policy
 
-Status: normative MVP safety contract  
-Scope: agent launches and every process that can access a selected workspace  
+Status: normative MVP safety contract
+
+Scope: agent launches and every process that can access a selected workspace
+
 Last reviewed: 2026-07-24
 
 ## Safety invariant
