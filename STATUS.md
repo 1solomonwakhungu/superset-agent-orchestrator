@@ -1,5 +1,13 @@
 # Status
 
+## PER-330 durable storage
+
+- Added a product-owned SQLite registry with 7 domain tables and a migration ledger.
+- Added transactional migrations, backup-gated rollback, retention cleanup, export, verified backup, and fail-closed corruption handling.
+- Added tests for empty and prior schemas, rollback, constraints, history, cleanup, export, backup, and corruption.
+- Verification: `npm run verify` passes the build and all 21 tests.
+- Next: complete pull request delivery.
+
 PER-332 agent adapter implementation and verification are complete.
 
 - Added the provider-neutral launch, status, result, cancellation, and resume
