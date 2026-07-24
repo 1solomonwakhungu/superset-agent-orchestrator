@@ -35,6 +35,9 @@ node --test test/configuration-contract.test.mjs
 ## Architecture
 
 - [Authoritative session state machine](docs/session-state-machine.md)
+- [Versioned client-independent MCP tool contract](docs/mcp-tool-contract.md)
+
+The MCP contract publishes typed TypeScript/Zod schemas and a client-neutral JSON Schema catalog. It defines asynchronous launch, stable IDs, batches of 100 sessions, pagination, bounded wait, cancellation, results, and restart recovery. The contract is normative; tools not listed under Recovery above are not yet registered runtime handlers.
 
 ## Agent adapter boundary
 
