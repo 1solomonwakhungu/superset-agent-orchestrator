@@ -35,7 +35,7 @@ test("supports cancellation and resume metadata", async () => {
   const adapter = new FakeAgentAdapter([
     { statuses: ["queued", "running", "succeeded"], result: { status: "succeeded", output: "unreachable" }, resume },
   ]);
-  const handle = await adapter.launch({ idempotencyKey: "task", prompt: "task", workspacePath: "/workspace" });
+  const handle = await adapter.launch({ idempotencyKey: "cancel", prompt: "task", workspacePath: "/workspace" });
 
   assert.equal(await adapter.result(handle), undefined);
   await adapter.cancel(handle, "operator request");
@@ -48,7 +48,7 @@ test("supports cancellation and resume metadata", async () => {
 
 test("rejects missing scripts and unknown handles", async () => {
   const adapter = new FakeAgentAdapter([]);
-  await assert.rejects(adapter.launch({ idempotencyKey: "task", prompt: "task", workspacePath: "/workspace" }), /No fake run script/);
+  await assert.rejects(adapter.launch({ idempotencyKey: "empty", prompt: "task", workspacePath: "/workspace" }), /No fake run script/);
   await assert.rejects(adapter.status({ runId: "missing" }), /Unknown fake run/);
 });
 
@@ -73,7 +73,7 @@ test("does not overwrite a completed run with late cancellation", async () => {
   const adapter = new FakeAgentAdapter([
     { statuses: ["succeeded"], result: { status: "succeeded", output: "done" } },
   ]);
-  const handle = await adapter.launch({ idempotencyKey: "task", prompt: "task", workspacePath: "/workspace" });
+  const handle = await adapter.launch({ idempotencyKey: "resume", prompt: "task", workspacePath: "/workspace" });
   await adapter.status(handle);
   await adapter.cancel(handle, "too late");
 

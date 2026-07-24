@@ -28,6 +28,8 @@ export type RunResult =
   | { status: "cancelled"; reason?: string; resume?: ResumeMetadata };
 
 export interface AgentAdapter {
+  /** Returns the one run previously accepted for this key, or undefined when absence is authoritative. */
+  findByIdempotencyKey(idempotencyKey: string): Promise<RunHandle | undefined>;
   launch(request: LaunchRequest): Promise<RunHandle>;
   status(handle: RunHandle): Promise<RunState>;
   result(handle: RunHandle): Promise<RunResult | undefined>;

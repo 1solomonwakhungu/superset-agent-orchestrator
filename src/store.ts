@@ -8,6 +8,7 @@ import { z } from "zod";
 
 export type WorkerStatus = "running" | "succeeded" | "failed" | "unknown_outcome";
 export type DiagnosticKind = "orphan" | "unknown_outcome" | "missing_result";
+export type LaunchStatus = "reserved" | "dispatching" | "unknown_outcome" | "bound";
 
 export interface Session {
   id: string;
@@ -50,7 +51,7 @@ export interface Diagnostic {
   detectedAt: string;
 }
 
-export type LaunchStatus = "accepted" | "launching" | "launched" | "failed";
+export type AssignmentLaunchStatus = "accepted" | "launching" | "launched" | "failed";
 
 export interface Assignment {
   id: string;
@@ -58,7 +59,7 @@ export interface Assignment {
   requestFingerprint: string;
   batchId: string;
   sessionId: string;
-  status: LaunchStatus;
+  status: AssignmentLaunchStatus;
   attribution: WorkerAttribution;
   prompt: string;
   workspacePath: string;
@@ -79,6 +80,20 @@ export interface LaunchAuditEvent {
   error?: string;
 }
 
+export interface LaunchIntent {
+  idempotencyKey: string;
+  requestHash: string;
+  sessionId: string;
+  batchId: string;
+  workerId: string;
+  attribution: WorkerAttribution;
+  status: LaunchStatus;
+  createdAt: string;
+  updatedAt: string;
+  runId?: string;
+  diagnostic?: string;
+}
+
 export interface DurableState {
   version: 1;
   sessions: Session[];
@@ -87,6 +102,7 @@ export interface DurableState {
   diagnostics: Diagnostic[];
   assignments: Assignment[];
   auditEvents: LaunchAuditEvent[];
+  launchIntents: LaunchIntent[];
   reconciledAt?: string;
 }
 
@@ -135,11 +151,23 @@ const auditEventSchema = z.object({
   type: z.enum(["launch_accepted", "launch_reserved", "execution_started", "launch_failed"]),
   occurredAt: z.iso.datetime(), runId: z.string().min(1).optional(), error: z.string().min(1).optional(),
 });
+const launchIntentSchema = z.object({
+  idempotencyKey: z.string().min(1), requestHash: z.string().regex(/^[a-f0-9]{64}$/),
+  sessionId: z.string().min(1), batchId: z.string().min(1), workerId: z.string().min(1),
+  attribution: attributionSchema,
+  status: z.enum(["reserved", "dispatching", "unknown_outcome", "bound"]),
+  createdAt: z.iso.datetime(), updatedAt: z.iso.datetime(), runId: z.string().min(1).optional(),
+  diagnostic: z.string().min(1).optional(),
+}).superRefine((intent, context) => {
+  if (intent.status === "bound" && intent.runId === undefined) {
+    context.addIssue({ code: "custom", message: "Bound launch intents require a run ID" });
+  }
+});
 const stateSchema = z.object({
   version: z.literal(1), sessions: z.array(sessionSchema), batches: z.array(batchSchema),
   workers: z.array(workerSchema), diagnostics: z.array(diagnosticSchema),
   assignments: z.array(assignmentSchema).default([]), auditEvents: z.array(auditEventSchema).default([]),
-  reconciledAt: z.iso.datetime().optional(),
+  launchIntents: z.array(launchIntentSchema).default([]), reconciledAt: z.iso.datetime().optional(),
 }).superRefine((state, context) => {
   for (const [kind, records] of [["session", state.sessions], ["batch", state.batches], ["worker", state.workers],
     ["assignment", state.assignments], ["audit event", state.auditEvents]] as const) {
@@ -148,6 +176,11 @@ const stateSchema = z.object({
       if (ids.has(record.id)) context.addIssue({ code: "custom", message: `Duplicate ${kind} ID: ${record.id}` });
       ids.add(record.id);
     }
+  }
+  const keys = new Set<string>();
+  for (const intent of state.launchIntents) {
+    if (keys.has(intent.idempotencyKey)) context.addIssue({ code: "custom", message: `Duplicate idempotency key: ${intent.idempotencyKey}` });
+    keys.add(intent.idempotencyKey);
   }
 });
 
@@ -159,6 +192,7 @@ const EMPTY_STATE: DurableState = {
   diagnostics: [],
   assignments: [],
   auditEvents: [],
+  launchIntents: [],
 };
 
 export class DurableStore {
@@ -237,6 +271,44 @@ export class DurableStore {
     return this.state.diagnostics.filter((diagnostic) => kind === undefined || diagnostic.kind === kind);
   }
 
+  async reserveLaunch(intent: Omit<LaunchIntent, "status" | "createdAt" | "updatedAt">, now = new Date()): Promise<{ intent: LaunchIntent; created: boolean }> {
+    return this.withLock(async () => {
+      await this.load();
+      const launches = this.state.launchIntents ??= [];
+      const existing = launches.find(({ idempotencyKey }) => idempotencyKey === intent.idempotencyKey);
+      if (existing !== undefined) {
+        if (existing.requestHash !== intent.requestHash) throw new Error("Idempotency key was already used for a different launch request");
+        return { intent: structuredClone(existing), created: false };
+      }
+      const timestamp = now.toISOString();
+      const reserved: LaunchIntent = { ...intent, status: "reserved", createdAt: timestamp, updatedAt: timestamp };
+      launches.push(reserved);
+      await this.persist();
+      return { intent: structuredClone(reserved), created: true };
+    });
+  }
+
+  async updateLaunch(idempotencyKey: string, status: LaunchStatus, options: { runId?: string; diagnostic?: string } = {}, now = new Date()): Promise<LaunchIntent> {
+    return this.withLock(async () => {
+      await this.load();
+      const intent = this.state.launchIntents?.find((candidate) => candidate.idempotencyKey === idempotencyKey);
+      if (intent === undefined) throw new Error(`Unknown launch idempotency key: ${idempotencyKey}`);
+      if (intent.status === "bound" && (status !== "bound" || options.runId !== undefined && options.runId !== intent.runId)) {
+        throw new Error("A bound launch cannot be rebound or regressed");
+      }
+      intent.status = status;
+      intent.updatedAt = now.toISOString();
+      if (options.runId !== undefined) intent.runId = options.runId;
+      if (options.diagnostic !== undefined) intent.diagnostic = options.diagnostic;
+      await this.persist();
+      return structuredClone(intent);
+    });
+  }
+
+  launchIntents(): LaunchIntent[] {
+    return structuredClone(this.state.launchIntents ?? []);
+  }
+
   snapshot(): DurableState {
     return structuredClone(this.state);
   }
@@ -274,7 +346,7 @@ export class DurableStore {
 
   async recordLaunchEvent(
     assignmentId: string,
-    status: Extract<LaunchStatus, "launching" | "launched" | "failed">,
+    status: Extract<AssignmentLaunchStatus, "launching" | "launched" | "failed">,
     event: LaunchAuditEvent,
   ): Promise<Assignment> {
     return this.withLock(async () => {

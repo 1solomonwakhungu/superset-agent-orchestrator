@@ -57,6 +57,7 @@ test("asynchronous launch returns after acceptance without waiting for the adapt
     let markEntered: (() => void) | undefined;
     const entered = new Promise<void>((resolve) => { markEntered = resolve; });
     const adapter = {
+      findByIdempotencyKey: async () => undefined,
       launch: async () => new Promise<{ runId: string }>((resolve) => {
         releaseLaunch = () => resolve({ runId: "provider-1" });
         markEntered?.();
@@ -75,8 +76,12 @@ test("asynchronous launch returns after acceptance without waiting for the adapt
     assert.equal((JSON.parse(await readFile(path, "utf8")) as DurableState).assignments[0]?.status, "launching");
 
     releaseLaunch();
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    assert.equal((JSON.parse(await readFile(path, "utf8")) as DurableState).assignments[0]?.status, "launched");
+    let status: string | undefined;
+    for (let attempt = 0; attempt < 100 && status !== "launched"; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      status = (JSON.parse(await readFile(path, "utf8")) as DurableState).assignments[0]?.status;
+    }
+    assert.equal(status, "launched");
   });
 });
 
