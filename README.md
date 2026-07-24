@@ -35,6 +35,7 @@ node --test test/configuration-contract.test.mjs
 ## Architecture
 
 - [Authoritative session state machine](docs/session-state-machine.md)
+- [Durable storage, migration, retention, export, and recovery policy](docs/durable-storage.md)
 - [Local control-plane threat model](docs/security/local-control-plane-threat-model.md)
 - [Idempotency and reconciliation contract](docs/idempotency-and-reconciliation.md)
 
