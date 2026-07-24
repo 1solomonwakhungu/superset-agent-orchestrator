@@ -37,6 +37,18 @@ PER-341 startup reconciliation and batch recovery are complete.
 - GitHub reported the exact head clean and mergeable with no required checks.
 - Next: merge PR 7 and reconcile PER-341 in Linear.
 
+PER-337 supported Superset discovery implementation is complete.
+
+- Added structured parsers for projects, workspaces, local host status, agent
+  presets, and CLI versions.
+- Added explicit `--local` routing, host correlation, version probing,
+  per-command timeouts, isolated child environments, and normalized errors.
+- Child commands use argument arrays with `shell: false`; large JSON responses
+  use permission-restricted temporary capture and guaranteed cleanup.
+- Verification: `npm run verify` passed 22 tests, including a real Superset
+  1.16.1 smoke test for all documented discovery schemas.
+- Next: open, verify, and merge the PER-337 pull request.
+
 PER-325 local control-plane threat model implementation and verification are
 complete.
 
