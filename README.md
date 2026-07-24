@@ -1,5 +1,7 @@
 # superset-agent-orchestrator
-Local-first MCP server for durable orchestration of parallel coding agents through Superset
+
+Local-first MCP server for durable orchestration of parallel coding agents through
+Superset.
 
 ## Configuration contract
 
@@ -13,3 +15,7 @@ Run the zero-dependency contract checks with:
 ```sh
 node --test test/configuration-contract.test.mjs
 ```
+
+## Architecture
+
+- [Authoritative session state machine](docs/session-state-machine.md)
