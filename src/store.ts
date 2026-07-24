@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -6,8 +7,9 @@ import { dirname } from "node:path";
 import lockfile from "proper-lockfile";
 import { z } from "zod";
 
-export type WorkerStatus = "running" | "succeeded" | "failed" | "unknown_outcome";
+export type WorkerStatus = "requested" | "running" | "succeeded" | "failed" | "unknown_outcome";
 export type DiagnosticKind = "orphan" | "unknown_outcome" | "missing_result";
+export type LaunchStatus = "reserved" | "dispatching" | "unknown_outcome" | "bound";
 
 export interface Session {
   id: string;
@@ -22,6 +24,9 @@ export interface Batch {
   sessionId: string;
   createdAt: string;
   updatedAt: string;
+  idempotencyKey?: string;
+  clientId?: string;
+  requestFingerprint?: string;
 }
 
 export interface WorkerAttribution {
@@ -40,6 +45,32 @@ export interface Worker {
   startedAt: string;
   completedAt?: string;
   result?: unknown;
+  position?: number;
+}
+
+export interface BatchAssignment {
+  agent: string;
+  task: string;
+}
+
+export interface QueryMeasurement {
+  operation: "batch_get" | "batch_status" | "batch_results";
+  examined: number;
+  returned: number;
+  durationMs: number;
+}
+
+export interface BatchPage {
+  batch: Batch;
+  sessions: Worker[];
+  unknownIds: string[];
+  nextCursor?: string;
+}
+
+export class BatchQueryError extends Error {
+  constructor(readonly code: "duplicate_ids" | "invalid_cursor" | "invalid_request" | "idempotency_conflict" | "not_found", message: string) {
+    super(message);
+  }
 }
 
 export interface Diagnostic {
@@ -50,12 +81,27 @@ export interface Diagnostic {
   detectedAt: string;
 }
 
+export interface LaunchIntent {
+  idempotencyKey: string;
+  requestHash: string;
+  sessionId: string;
+  batchId: string;
+  workerId: string;
+  attribution: WorkerAttribution;
+  status: LaunchStatus;
+  createdAt: string;
+  updatedAt: string;
+  runId?: string;
+  diagnostic?: string;
+}
+
 export interface DurableState {
   version: 1;
   sessions: Session[];
   batches: Batch[];
   workers: Worker[];
   diagnostics: Diagnostic[];
+  launchIntents?: LaunchIntent[];
   reconciledAt?: string;
 }
 
@@ -74,15 +120,16 @@ const sessionSchema = z.object({
 });
 const batchSchema = z.object({
   id: z.string().min(1), name: z.string().min(1), sessionId: z.string().min(1),
-  createdAt: z.iso.datetime(), updatedAt: z.iso.datetime(),
+  createdAt: z.iso.datetime(), updatedAt: z.iso.datetime(), idempotencyKey: z.string().min(1).optional(),
+  clientId: z.string().min(1).optional(), requestFingerprint: z.string().min(1).optional(),
 });
 const workerSchema = z.object({
   id: z.string().min(1), batchId: z.string().min(1), sessionId: z.string().min(1),
   pid: z.number().int().positive().optional(),
   processStartedAt: z.string().min(1).optional(),
-  status: z.enum(["running", "succeeded", "failed", "unknown_outcome"]),
+  status: z.enum(["requested", "running", "succeeded", "failed", "unknown_outcome"]),
   attribution: attributionSchema, startedAt: z.iso.datetime(), completedAt: z.iso.datetime().optional(),
-  result: z.unknown().optional(),
+  result: z.unknown().optional(), position: z.number().int().nonnegative().optional(),
 }).superRefine((worker, context) => {
   if (worker.status === "running" && (worker.pid === undefined || worker.processStartedAt === undefined)) {
     context.addIssue({ code: "custom", message: "Running workers require a PID and process start token" });
@@ -92,9 +139,22 @@ const diagnosticSchema = z.object({
   id: z.string().min(1), kind: z.enum(["orphan", "unknown_outcome", "missing_result"]),
   workerId: z.string().min(1), message: z.string().min(1), detectedAt: z.iso.datetime(),
 });
+const launchIntentSchema = z.object({
+  idempotencyKey: z.string().min(1), requestHash: z.string().regex(/^[a-f0-9]{64}$/),
+  sessionId: z.string().min(1), batchId: z.string().min(1), workerId: z.string().min(1),
+  attribution: attributionSchema,
+  status: z.enum(["reserved", "dispatching", "unknown_outcome", "bound"]),
+  createdAt: z.iso.datetime(), updatedAt: z.iso.datetime(), runId: z.string().min(1).optional(),
+  diagnostic: z.string().min(1).optional(),
+}).superRefine((intent, context) => {
+  if (intent.status === "bound" && intent.runId === undefined) {
+    context.addIssue({ code: "custom", message: "Bound launch intents require a run ID" });
+  }
+});
 const stateSchema = z.object({
   version: z.literal(1), sessions: z.array(sessionSchema), batches: z.array(batchSchema),
-  workers: z.array(workerSchema), diagnostics: z.array(diagnosticSchema), reconciledAt: z.iso.datetime().optional(),
+  workers: z.array(workerSchema), diagnostics: z.array(diagnosticSchema),
+  launchIntents: z.array(launchIntentSchema).default([]), reconciledAt: z.iso.datetime().optional(),
 }).superRefine((state, context) => {
   for (const [kind, records] of [["session", state.sessions], ["batch", state.batches], ["worker", state.workers]] as const) {
     const ids = new Set<string>();
@@ -102,6 +162,11 @@ const stateSchema = z.object({
       if (ids.has(record.id)) context.addIssue({ code: "custom", message: `Duplicate ${kind} ID: ${record.id}` });
       ids.add(record.id);
     }
+  }
+  const keys = new Set<string>();
+  for (const intent of state.launchIntents) {
+    if (keys.has(intent.idempotencyKey)) context.addIssue({ code: "custom", message: `Duplicate idempotency key: ${intent.idempotencyKey}` });
+    keys.add(intent.idempotencyKey);
   }
 });
 
@@ -111,15 +176,123 @@ const EMPTY_STATE: DurableState = {
   batches: [],
   workers: [],
   diagnostics: [],
+  launchIntents: [],
 };
 
 export class DurableStore {
   private state: DurableState = structuredClone(EMPTY_STATE);
+  private readonly batchesById = new Map<string, Batch>();
+  private readonly workersById = new Map<string, Worker>();
+  private readonly workerIdsByBatchId = new Map<string, string[]>();
+  private readonly batchesByIdempotencyKey = new Map<string, string>();
 
   constructor(
     private readonly path: string,
     private readonly isProcessAlive: (pid: number, processStartedAt?: string) => boolean = DurableStore.isProcessAlive,
+    private readonly observeQuery: (measurement: QueryMeasurement) => void = () => undefined,
+    private readonly now: () => number = performance.now.bind(performance),
   ) {}
+
+  async createBatch(
+    name: string,
+    clientId: string,
+    assignments: BatchAssignment[],
+    idempotencyKey?: string,
+    at = new Date(),
+  ): Promise<{ batch: Batch; sessions: Worker[]; duplicate: boolean }> {
+    if (assignments.length === 0 || assignments.length > 250) {
+      throw new BatchQueryError("invalid_request", "A batch requires between 1 and 250 assignments");
+    }
+    return this.withLock(async () => {
+      await this.load();
+      const requestFingerprint = createHash("sha256").update(JSON.stringify({ name, assignments })).digest("hex");
+      if (idempotencyKey !== undefined) {
+        const existingId = this.batchesByIdempotencyKey.get(`${clientId}\0${idempotencyKey}`);
+        if (existingId !== undefined) {
+          const existing = this.batchesById.get(existingId);
+          if (existing === undefined) throw new Error(`Missing indexed batch ${existingId}`);
+          if (existing.requestFingerprint !== requestFingerprint) {
+            throw new BatchQueryError("idempotency_conflict", "Idempotency key was already used with a different batch request");
+          }
+          return { batch: structuredClone(existing), sessions: this.workersForBatch(existing.id), duplicate: true };
+        }
+      }
+
+      const timestamp = at.toISOString();
+      const ownerSession: Session = {
+        id: randomUUID(), clientId, createdAt: timestamp, lastSeenAt: timestamp,
+      };
+      const batch: Batch = {
+        id: randomUUID(), name, sessionId: ownerSession.id, createdAt: timestamp, updatedAt: timestamp,
+        clientId, requestFingerprint, ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+      };
+      const workers = assignments.map((attribution, position): Worker => ({
+        id: randomUUID(), batchId: batch.id, sessionId: ownerSession.id, status: "requested",
+        attribution, startedAt: timestamp, position,
+      }));
+      const previousState = structuredClone(this.state);
+      try {
+        this.state.sessions.push(ownerSession);
+        this.state.batches.push(batch);
+        this.state.workers.push(...workers);
+        this.rebuildIndexes();
+        await this.persist();
+      } catch (error) {
+        this.state = previousState;
+        this.rebuildIndexes();
+        throw error;
+      }
+      return { batch: structuredClone(batch), sessions: structuredClone(workers), duplicate: false };
+    });
+  }
+
+  async getBatch(batchId: string, options: { ids?: string[]; limit?: number; cursor?: string } = {}): Promise<BatchPage> {
+    return this.withFreshState(() => this.queryBatch("batch_get", batchId, options));
+  }
+
+  async batchStatus(batchId: string, options: { ids?: string[]; limit?: number; cursor?: string } = {}) {
+    return this.withFreshState(() => {
+    const page = this.queryBatch("batch_status", batchId, options);
+    const counts: Record<WorkerStatus, number> = {
+      requested: 0, running: 0, succeeded: 0, failed: 0, unknown_outcome: 0,
+    };
+    for (const worker of this.workersForBatch(batchId)) counts[worker.status] += 1;
+    const settled = counts.succeeded + counts.failed + counts.unknown_outcome;
+    return {
+      ...page,
+      sessions: page.sessions.map(({ id, batchId: attributedBatchId, status, attribution, startedAt, completedAt }) => ({
+        sessionId: id, batchId: attributedBatchId, status, attribution, startedAt, completedAt,
+      })),
+      summary: {
+        total: Object.values(counts).reduce((sum, count) => sum + count, 0),
+        settled,
+        complete: settled === Object.values(counts).reduce((sum, count) => sum + count, 0),
+        partiallyComplete: settled > 0 && settled < Object.values(counts).reduce((sum, count) => sum + count, 0),
+        counts,
+      },
+    };
+    });
+  }
+
+  async batchResults(batchId: string, options: { ids?: string[]; limit?: number; cursor?: string } = {}) {
+    return this.withFreshState(() => {
+    const page = this.queryBatch("batch_results", batchId, options);
+    const results = page.sessions
+      .filter(({ result }) => result !== undefined)
+      .map(({ id, batchId: attributedBatchId, status, attribution, startedAt, completedAt, result }) => ({
+        sessionId: id, batchId: attributedBatchId, status, attribution, startedAt, completedAt, result,
+      }));
+    return {
+      batch: page.batch,
+      results,
+      unavailable: page.sessions
+        .filter(({ result }) => result === undefined)
+        .map(({ id, status }) => ({ sessionId: id, status })),
+      unknownIds: page.unknownIds,
+      ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
+    };
+    });
+  }
 
   async reconcile(now = new Date()): Promise<ReconciliationSummary> {
     return this.withLock(async () => {
@@ -155,6 +328,7 @@ export class DurableStore {
       }
 
       this.state.reconciledAt = detectedAt;
+      this.rebuildIndexes();
       await this.persist();
       return {
         sessionsRecovered: this.state.sessions.length,
@@ -189,6 +363,44 @@ export class DurableStore {
     return this.state.diagnostics.filter((diagnostic) => kind === undefined || diagnostic.kind === kind);
   }
 
+  async reserveLaunch(intent: Omit<LaunchIntent, "status" | "createdAt" | "updatedAt">, now = new Date()): Promise<{ intent: LaunchIntent; created: boolean }> {
+    return this.withLock(async () => {
+      await this.load();
+      const launches = this.state.launchIntents ??= [];
+      const existing = launches.find(({ idempotencyKey }) => idempotencyKey === intent.idempotencyKey);
+      if (existing !== undefined) {
+        if (existing.requestHash !== intent.requestHash) throw new Error("Idempotency key was already used for a different launch request");
+        return { intent: structuredClone(existing), created: false };
+      }
+      const timestamp = now.toISOString();
+      const reserved: LaunchIntent = { ...intent, status: "reserved", createdAt: timestamp, updatedAt: timestamp };
+      launches.push(reserved);
+      await this.persist();
+      return { intent: structuredClone(reserved), created: true };
+    });
+  }
+
+  async updateLaunch(idempotencyKey: string, status: LaunchStatus, options: { runId?: string; diagnostic?: string } = {}, now = new Date()): Promise<LaunchIntent> {
+    return this.withLock(async () => {
+      await this.load();
+      const intent = this.state.launchIntents?.find((candidate) => candidate.idempotencyKey === idempotencyKey);
+      if (intent === undefined) throw new Error(`Unknown launch idempotency key: ${idempotencyKey}`);
+      if (intent.status === "bound" && (status !== "bound" || options.runId !== undefined && options.runId !== intent.runId)) {
+        throw new Error("A bound launch cannot be rebound or regressed");
+      }
+      intent.status = status;
+      intent.updatedAt = now.toISOString();
+      if (options.runId !== undefined) intent.runId = options.runId;
+      if (options.diagnostic !== undefined) intent.diagnostic = options.diagnostic;
+      await this.persist();
+      return structuredClone(intent);
+    });
+  }
+
+  launchIntents(): LaunchIntent[] {
+    return structuredClone(this.state.launchIntents ?? []);
+  }
+
   snapshot(): DurableState {
     return structuredClone(this.state);
   }
@@ -202,6 +414,106 @@ export class DurableStore {
         throw new Error(`Cannot load orchestrator state at ${this.path}: ${(error as Error).message}`, { cause: error });
       }
       this.state = structuredClone(EMPTY_STATE);
+    }
+    this.rebuildIndexes();
+  }
+
+  private queryBatch(
+    operation: QueryMeasurement["operation"],
+    batchId: string,
+    { ids, limit = 100, cursor }: { ids?: string[]; limit?: number; cursor?: string },
+  ): BatchPage {
+    const startedAt = this.now();
+    const batch = this.batchesById.get(batchId);
+    if (batch === undefined) throw new BatchQueryError("not_found", `Unknown batch ID: ${batchId}`);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 250) {
+      throw new BatchQueryError("invalid_cursor", "Limit must be between 1 and 250");
+    }
+    if (ids !== undefined && cursor !== undefined) {
+      throw new BatchQueryError("invalid_cursor", "IDs and cursor cannot be combined");
+    }
+
+    let examined = 0;
+    let sessions: Worker[];
+    const unknownIds: string[] = [];
+    let nextCursor: string | undefined;
+    if (ids !== undefined) {
+      const duplicates = ids.filter((id, index) => ids.indexOf(id) !== index);
+      if (duplicates.length > 0) {
+        throw new BatchQueryError("duplicate_ids", `Duplicate session IDs: ${[...new Set(duplicates)].join(", ")}`);
+      }
+      sessions = [];
+      for (const id of ids) {
+        examined += 1;
+        const worker = this.workersById.get(id);
+        if (worker === undefined || worker.batchId !== batchId) unknownIds.push(id);
+        else sessions.push(worker);
+      }
+    } else {
+      const memberIds = this.workerIdsByBatchId.get(batchId) ?? [];
+      const offset = cursor === undefined ? 0 : this.decodeCursor(cursor, batchId);
+      const pageIds = memberIds.slice(offset, offset + limit);
+      examined = pageIds.length;
+      sessions = pageIds.flatMap((id) => {
+        const worker = this.workersById.get(id);
+        return worker === undefined ? [] : [worker];
+      });
+      if (offset + pageIds.length < memberIds.length) nextCursor = this.encodeCursor(batchId, offset + pageIds.length);
+    }
+    this.observeQuery({ operation, examined, returned: sessions.length, durationMs: this.now() - startedAt });
+    return {
+      batch: structuredClone(batch), sessions: structuredClone(sessions), unknownIds,
+      ...(nextCursor === undefined ? {} : { nextCursor }),
+    };
+  }
+
+  private workersForBatch(batchId: string): Worker[] {
+    return (this.workerIdsByBatchId.get(batchId) ?? []).flatMap((id) => {
+      const worker = this.workersById.get(id);
+      return worker === undefined ? [] : [worker];
+    });
+  }
+
+  private rebuildIndexes(): void {
+    this.batchesById.clear();
+    this.workersById.clear();
+    this.workerIdsByBatchId.clear();
+    this.batchesByIdempotencyKey.clear();
+    for (const batch of this.state.batches) {
+      this.batchesById.set(batch.id, batch);
+      if (batch.idempotencyKey !== undefined && batch.clientId !== undefined) {
+        this.batchesByIdempotencyKey.set(`${batch.clientId}\0${batch.idempotencyKey}`, batch.id);
+      }
+    }
+    for (const worker of this.state.workers) {
+      this.workersById.set(worker.id, worker);
+      const members = this.workerIdsByBatchId.get(worker.batchId) ?? [];
+      members.push(worker.id);
+      this.workerIdsByBatchId.set(worker.batchId, members);
+    }
+    for (const members of this.workerIdsByBatchId.values()) {
+      members.sort((leftId, rightId) => {
+        const left = this.workersById.get(leftId)!;
+        const right = this.workersById.get(rightId)!;
+        return (left.position ?? Number.MAX_SAFE_INTEGER) - (right.position ?? Number.MAX_SAFE_INTEGER)
+          || left.startedAt.localeCompare(right.startedAt)
+          || left.id.localeCompare(right.id);
+      });
+    }
+  }
+
+  private encodeCursor(batchId: string, offset: number): string {
+    return Buffer.from(JSON.stringify({ batchId, offset }), "utf8").toString("base64url");
+  }
+
+  private decodeCursor(cursor: string, batchId: string): number {
+    try {
+      const value: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+      const parsed = z.object({ batchId: z.string(), offset: z.number().int().nonnegative() }).parse(value);
+      if (parsed.batchId !== batchId) throw new Error("wrong batch");
+      return parsed.offset;
+    } catch {
+      throw new BatchQueryError("invalid_cursor", "Invalid pagination cursor");
     }
   }
 
@@ -242,6 +554,13 @@ export class DurableStore {
     } finally {
       await release();
     }
+  }
+
+  private async withFreshState<T>(query: () => T): Promise<T> {
+    return this.withLock(async () => {
+      await this.load();
+      return query();
+    });
   }
 
   static processStartedAt(pid: number): string | undefined {

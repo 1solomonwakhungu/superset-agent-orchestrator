@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "contractVersion": 1,
+  "evidenceRevision": "b0d3411665ff5b9241dee7aef0e23a19c265dfbc",
+  "stable": {
+    "surface": "public-beta-cli",
+    "operations": {
+      "launch": "beta",
+      "listSessions": "unavailable",
+      "getSession": "unavailable",
+      "status": "unavailable",
+      "finalResult": "unavailable",
+      "stopReason": "unavailable",
+      "cancel": "unavailable",
+      "recoverBackendSession": "unavailable"
+    },
+    "recovery": "orchestrator-registry-metadata-only",
+    "unsupportedBehavior": "fail-closed"
+  },
+  "experiment": {
+    "surface": "private-acp-host-client",
+    "classification": "private",
+    "enabledByDefault": false,
+    "allowedChannels": ["canary", "dev"],
+    "operations": {
+      "listSessions": "private",
+      "getSession": "private",
+      "status": "private",
+      "messageHistory": "private-bounded",
+      "stopReason": "private",
+      "cancel": "private",
+      "recoverBackendSession": "private-partial",
+      "singularDurableFinalResult": "unavailable"
+    }
+  },
+  "prohibitedSources": [
+    "superset-private-database",
+    "agent-temporary-log",
+    "agent-native-transcript",
+    "terminal-scrollback",
+    "terminal-replay-buffer",
+    "private-trpc-route-in-stable-adapter"
+  ]
+}
