@@ -28,3 +28,20 @@ PER-341 startup reconciliation and batch recovery are complete.
 - Verified PR head: `3a217ac7e2acd2bd36d41bad43e6383666ac94c4`.
 - GitHub reported the exact head clean and mergeable with no required checks.
 - Next: merge PR 7 and reconcile PER-341 in Linear.
+
+PER-325 local control-plane threat model implementation and verification are
+complete.
+
+- Defined assets, actors, trust boundaries, capabilities, abuse cases, and residual
+  risk for the local MCP, Superset, agent-process, storage, and result boundaries.
+- Mapped 18 P0 threats to enforceable controls and 29 adversarial tests across
+  path, command, prompt, secret, workspace, confused-deputy, routing, audit, state,
+  resource, lifecycle, and executable-provenance attacks.
+- Excluded arbitrary commands, workspace deletion, raw filesystem/Git/database,
+  relay, secret, and dynamic-plugin escape hatches from the MVP.
+- Specified fail-closed redaction, owner-only persistence, mutation intent/outcome
+  audit events, event injection resistance, and tamper evidence.
+- Verification: `npm run verify` passed 20 tests, the independent configuration
+  contract passed 3 tests, strict local-routing evidence verified, Markdown lint
+  passed with 0 issues, and `git diff --check` passed.
+- Next: open, validate, and merge the PER-325 pull request, then reconcile Linear.
