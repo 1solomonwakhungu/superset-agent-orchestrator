@@ -1,5 +1,13 @@
 # Status
 
+## PER-330 durable storage
+
+- Added a product-owned SQLite registry with 7 domain tables and a migration ledger.
+- Added transactional migrations, backup-gated rollback, retention cleanup, export, verified backup, and fail-closed corruption handling.
+- Added tests for empty and prior schemas, rollback, constraints, history, cleanup, export, backup, and corruption.
+- Verification: `npm run verify` passes the build and all 21 tests.
+- Next: complete pull request delivery.
+
 PER-332 agent adapter implementation and verification are complete.
 
 - Added the provider-neutral launch, status, result, cancellation, and resume
@@ -41,3 +49,60 @@ PER-339 batch status and result APIs are implemented and verified locally.
   test/configuration-contract.test.mjs` passed 3 tests,
   `./scripts/verify-per-323.sh` passed, and `git diff --check` passed.
 - Next: commit, open the PER-339 pull request, verify the exact head, and merge.
+
+PER-322 lifecycle and result API research and verification are complete locally.
+
+- Pinned primary-source evidence to `superset-sh/superset@b0d3411`.
+- Classified public launch as Beta and all ordinary post-launch lifecycle,
+  result, cancellation, and backend recovery operations as unavailable.
+- Quarantined private canary/dev ACP capabilities and excluded private database,
+  temporary-log, transcript, and terminal-output parsing from stable design.
+- Added a fail-closed machine-readable capability contract.
+- Verification: `npm run verify` passed 20 tests, focused Markdown lint passed,
+  and `git diff --check` passed.
+- Next: deliver PER-322 through pull request.
+
+PER-337 supported Superset discovery implementation is complete.
+
+- Added structured parsers for projects, workspaces, local host status, agent
+  presets, and CLI versions.
+- Added explicit `--local` routing, host correlation, version probing,
+  per-command timeouts, isolated child environments, and normalized errors.
+- Child commands use argument arrays with `shell: false`; large JSON responses
+  use permission-restricted temporary capture and guaranteed cleanup.
+- Verification: `npm run verify` passed 22 tests, including a real Superset
+  1.16.1 smoke test for all documented discovery schemas.
+- Next: open, verify, and merge the PER-337 pull request.
+
+PER-325 local control-plane threat model implementation and verification are
+complete.
+
+- Defined assets, actors, trust boundaries, capabilities, abuse cases, and residual
+  risk for the local MCP, Superset, agent-process, storage, and result boundaries.
+- Mapped 18 P0 threats to enforceable controls and 29 adversarial tests across
+  path, command, prompt, secret, workspace, confused-deputy, routing, audit, state,
+  resource, lifecycle, and executable-provenance attacks.
+- Excluded arbitrary commands, workspace deletion, raw filesystem/Git/database,
+  relay, secret, and dynamic-plugin escape hatches from the MVP.
+- Specified fail-closed redaction, owner-only persistence, mutation intent/outcome
+  audit events, event injection resistance, and tamper evidence.
+- Verification: `npm run verify` passed 20 tests, the independent configuration
+  contract passed 3 tests, strict local-routing evidence verified, Markdown lint
+  passed with 0 issues, and `git diff --check` passed.
+- Next: open, validate, and merge the PER-325 pull request, then reconcile Linear.
+
+PER-331 idempotency and restart recovery implementation is complete locally.
+
+- Added a durable semantic request reservation keyed before external launch.
+- Added adapter lookup and deduplication by idempotency key, exact execution
+  binding, and immutable session, batch, worker, agent, and task attribution.
+- Added startup recovery and explicit unknown-outcome, orphan, foreign execution,
+  missing-result, and retry decisions without fabricated completion.
+- Added deterministic tests for crashes after reservation and after external
+  acceptance, repeated requests, conflicting key reuse, backend rediscovery, and
+  unresolved outcomes. Each path proves at most one external launch.
+- Verification: `npm run verify` passed 20 tests, `node --test
+  test/configuration-contract.test.mjs` passed 3 tests,
+  `./scripts/verify-per-323.sh` passed, and `git diff --check` passed.
+- Next: commit, push, open the PER-331 pull request, verify its exact head, merge,
+  verify `main`, and mark Linear Done.
