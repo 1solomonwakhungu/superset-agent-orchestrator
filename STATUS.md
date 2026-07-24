@@ -1,5 +1,15 @@
 # Status
 
+## PER-328 MCP tool contract
+
+- Added the versioned client-independent discovery, launch, batch, status,
+  result, cancellation, bounded-wait, and recovery contract.
+- Published generated JSON Schemas, typed error policy, cross-field semantic
+  rules, 100-session limits, opaque pagination, and generic-client examples.
+- Verification after integration with current `main`: `npm run schema` passes,
+  `npm run verify` passes all 59 tests, and `git diff --check` passes.
+- Next: push, open and safely merge the pull request, then reconcile Linear.
+
 ## PER-330 durable storage
 
 - Added a product-owned SQLite registry with 7 domain tables and a migration ledger.
