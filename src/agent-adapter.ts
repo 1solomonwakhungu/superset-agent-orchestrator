@@ -24,8 +24,8 @@ export interface ResumeMetadata {
 
 export type RunResult =
   | { status: "succeeded"; output: string; resume?: ResumeMetadata }
-  | { status: "failed"; error: string; retryable: boolean; resume?: ResumeMetadata }
-  | { status: "cancelled"; reason?: string; resume?: ResumeMetadata };
+  | { status: "failed"; error: string; retryable: boolean; output?: string; resume?: ResumeMetadata }
+  | { status: "cancelled"; reason?: string; output?: string; resume?: ResumeMetadata };
 
 export interface AgentAdapter {
   /** Returns the one run previously accepted for this key, or undefined when absence is authoritative. */

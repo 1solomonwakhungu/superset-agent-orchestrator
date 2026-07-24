@@ -74,6 +74,15 @@ PER-341 startup reconciliation and batch recovery are complete.
 - GitHub reported the exact head clean and mergeable with no required checks.
 - Next: merge PR 7 and reconcile PER-341 in Linear.
 
+PER-340 exact result capture and attribution are implemented locally.
+
+- Added fail-closed Codex response validation and exact empty/partial handling.
+- Added durable result claims with assignment, batch, session, workspace,
+  attempt, run, and task attribution.
+- Added idempotent duplicate/late delivery and conflicting-delivery rejection.
+- Kept agent claims separate from independently verified artifacts.
+- Verification pending final review and pull request delivery.
+
 PER-338 durable idempotent asynchronous launch implementation is complete locally.
 
 - Added durable acceptance with stable session, batch, and assignment IDs.
