@@ -37,4 +37,22 @@ PER-338 durable idempotent asynchronous launch implementation is complete locall
 - Verification: `npm run verify` passed 19 tests, `node --test
   test/configuration-contract.test.mjs` passed 3 tests,
   `./scripts/verify-per-323.sh` passed, and `git diff --check` passed.
-- Next: commit, push, open the PR, verify exact-head checks, and merge.
+- Pull request: https://github.com/1solomonwakhungu/superset-agent-orchestrator/pull/11
+- Next: verify the merged prerequisite integration, push the conflict resolution,
+  verify exact-head checks, and merge.
+
+PER-331 idempotency and restart recovery implementation is complete locally.
+
+- Added a durable semantic request reservation keyed before external launch.
+- Added adapter lookup and deduplication by idempotency key, exact execution
+  binding, and immutable session, batch, worker, agent, and task attribution.
+- Added startup recovery and explicit unknown-outcome, orphan, foreign execution,
+  missing-result, and retry decisions without fabricated completion.
+- Added deterministic tests for crashes after reservation and after external
+  acceptance, repeated requests, conflicting key reuse, backend rediscovery, and
+  unresolved outcomes. Each path proves at most one external launch.
+- Verification: `npm run verify` passed 20 tests, `node --test
+  test/configuration-contract.test.mjs` passed 3 tests,
+  `./scripts/verify-per-323.sh` passed, and `git diff --check` passed.
+- Next: commit, push, open the PER-331 pull request, verify its exact head, merge,
+  verify `main`, and mark Linear Done.

@@ -25,7 +25,7 @@ export class FakeAgentAdapter implements AgentAdapter {
   readonly launches: LaunchRequest[] = [];
   readonly cancellations: Array<{ runId: string; reason?: string }> = [];
   private readonly runs = new Map<string, FakeRun>();
-  private readonly runsByKey = new Map<string, RunHandle>();
+  private readonly runsByIdempotencyKey = new Map<string, RunHandle>();
   private nextRunId = 1;
 
   constructor(
@@ -34,7 +34,7 @@ export class FakeAgentAdapter implements AgentAdapter {
   ) {}
 
   async launch(request: LaunchRequest): Promise<RunHandle> {
-    const existing = this.runsByKey.get(request.idempotencyKey);
+    const existing = this.runsByIdempotencyKey.get(request.idempotencyKey);
     if (existing !== undefined) return existing;
     const script = this.scripts[this.launches.length];
     if (script === undefined) throw new Error("No fake run script available");
@@ -44,8 +44,12 @@ export class FakeAgentAdapter implements AgentAdapter {
     const runId = `fake-${this.nextRunId++}`;
     const handle = { runId };
     this.runs.set(runId, { script, position: 0, resultAvailable: false });
-    this.runsByKey.set(request.idempotencyKey, handle);
+    this.runsByIdempotencyKey.set(request.idempotencyKey, handle);
     return handle;
+  }
+
+  async findByIdempotencyKey(idempotencyKey: string): Promise<RunHandle | undefined> {
+    return this.runsByIdempotencyKey.get(idempotencyKey);
   }
 
   async status(handle: RunHandle): Promise<RunState> {
