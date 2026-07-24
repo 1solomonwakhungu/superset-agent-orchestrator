@@ -36,6 +36,7 @@ node --test test/configuration-contract.test.mjs
 
 - [Authoritative session state machine](docs/session-state-machine.md)
 - [Local control-plane threat model](docs/security/local-control-plane-threat-model.md)
+- [Idempotency and reconciliation contract](docs/idempotency-and-reconciliation.md)
 
 ## Agent adapter boundary
 
