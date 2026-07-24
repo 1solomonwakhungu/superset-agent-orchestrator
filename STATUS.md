@@ -49,6 +49,19 @@ PER-338 durable idempotent asynchronous launch implementation is complete locall
 - Next: verify the merged prerequisite integration, push the conflict resolution,
   verify exact-head checks, and merge.
 
+PER-339 batch status and result APIs are implemented and verified locally.
+
+- Added durable idempotent acceptance for up to 250 attributed sessions with
+  stable IDs returned before execution completes.
+- Added indexed batch get, mixed-state status, partial results, opaque
+  pagination, cross-process freshness, and query instrumentation.
+- Added deterministic duplicate, unknown-ID, ordering, attribution,
+  idempotency-conflict, 100-plus session, and cursor tests.
+- Verification: `npm run verify` passed 19 tests, `node --test
+  test/configuration-contract.test.mjs` passed 3 tests,
+  `./scripts/verify-per-323.sh` passed, and `git diff --check` passed.
+- Next: commit, open the PER-339 pull request, verify the exact head, and merge.
+
 PER-322 lifecycle and result API research and verification are complete locally.
 
 - Pinned primary-source evidence to `superset-sh/superset@b0d3411`.
