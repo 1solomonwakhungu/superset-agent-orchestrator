@@ -36,6 +36,7 @@ node --test test/configuration-contract.test.mjs
 
 - [Authoritative session state machine](docs/session-state-machine.md)
 - [Durable storage, migration, retention, export, and recovery policy](docs/durable-storage.md)
+- [Idempotency and reconciliation contract](docs/idempotency-and-reconciliation.md)
 
 ## Agent adapter boundary
 
