@@ -1,6 +1,7 @@
 {
   "name": "superset-agent-orchestrator",
   "version": "0.1.0",
+  "description": "Local-first MCP server for durable orchestration of parallel coding agents through Superset",
   "private": true,
   "type": "module",
   "main": "./dist/src/index.js",
@@ -11,14 +12,29 @@
       "import": "./dist/src/index.js"
     }
   },
+  "bin": {
+    "superset-agent-orchestrator": "dist/src/server.js"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "start": "node dist/src/server.js",
     "test": "tsx --test test/**/*.test.ts",
-    "verify": "npm run build && npm test"
+    "verify": "npm run build && npm test",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "proper-lockfile": "^4.1.2",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
+    "@types/proper-lockfile": "^4.1.4",
     "tsx": "^4.19.3",
     "typescript": "^5.8.3"
-  }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT"
 }

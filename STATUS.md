@@ -15,3 +15,16 @@ PER-332 agent adapter implementation and verification are complete.
 - Merge commit: `1a2e61ec2dac707f6b180b46490f0f441e102fe8`.
 - GitHub reported the exact head clean and mergeable with no required checks.
 - Next: reconcile PER-332 in Linear.
+
+PER-341 startup reconciliation and batch recovery are complete.
+
+- Added durable startup and periodic reconciliation without worker relaunch.
+- Added recent-session, named batch reopen, and recovery diagnostic MCP tools.
+- Added strict state validation, process identity checks, serialized synced writes,
+  and orphan, unknown-outcome, and missing-result diagnostics.
+- Verification: `npm run verify` passed 13 tests, `node --test
+  test/configuration-contract.test.mjs` passed 3 tests, and `git diff --check` passed.
+- Pull request: https://github.com/1solomonwakhungu/superset-agent-orchestrator/pull/7
+- Verified PR head: `3a217ac7e2acd2bd36d41bad43e6383666ac94c4`.
+- GitHub reported the exact head clean and mergeable with no required checks.
+- Next: merge PR 7 and reconcile PER-341 in Linear.
