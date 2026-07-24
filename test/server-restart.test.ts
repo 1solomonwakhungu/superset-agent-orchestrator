@@ -26,6 +26,8 @@ test("a replacement MCP client reopens an attributed batch from a killed server"
       result: { answer: 42 },
     }],
     diagnostics: [],
+    assignments: [],
+    auditEvents: [],
   };
   await writeFile(statePath, JSON.stringify(state), "utf8");
 
