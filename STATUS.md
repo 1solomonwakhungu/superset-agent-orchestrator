@@ -1,5 +1,20 @@
 # Status
 
+## PER-327 compatibility evidence matrix
+
+- Added a versioned, machine-readable matrix for OS, Node, npm, MCP SDK,
+  transport, Superset Desktop/CLI, and agent-preset combinations.
+- Added a sanitized, non-mutating environment probe and tests that enforce
+  immutable evidence, bounded claims, and actionable fail-closed unknowns.
+- Documented exact current claims, repeatable operation probes, revalidation
+  triggers, and unsupported/unknown-combination policy.
+- Verification: `npm ci` succeeded; `npm run compatibility:probe` produced an
+  actionable sanitized `unknown`; `npm run verify` passed all 63 tests;
+  `./scripts/verify-per-323.sh` passed; the focused lifecycle suite passed all
+  3 tests; Markdown lint and `git diff --check` passed.
+- Next: deliver through pull request and verify merged `main` before reconciling
+  PER-327.
+
 ## PER-326 product boundary
 
 - Accepted a backend-neutral orchestration core with a version-gated Superset
