@@ -1,5 +1,19 @@
 # Status
 
+## PER-333 workspace lease and writer safety
+
+- Defined exclusive cross-process writer admission using a durable generation and
+  continuously held OS lock over stable canonical worktree identity.
+- Defined acquisition, heartbeat, two-phase release, fencing, crash recovery,
+  quarantine, evidence-based operator repair, and typed fail-closed refusals.
+- Allowed shared read-only work only behind verified mechanical write prevention;
+  unsupported agent launches remain disabled rather than relying on prompts.
+- Prohibited every warning, force, expiry, configuration, request, and state-edit
+  override and added contract tests for the critical safety invariants.
+- Verification: focused policy tests passed 7/7; `npm run verify` passed 81/81;
+  Markdown lint, strict local-routing verification, and `git diff --check` passed.
+- Next: deliver through the PER-333 pull request and verify fetched `main`.
+
 ## PER-327 compatibility evidence matrix
 
 - Added a versioned, machine-readable matrix for OS, Node, npm, MCP SDK,
