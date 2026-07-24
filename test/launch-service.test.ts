@@ -18,6 +18,7 @@ const request: AsynchronousLaunchRequest = {
   batchName: "PER-338",
   attribution: { agent: "codex", task: "implement durable launch" },
   prompt: "Implement the assignment",
+  workspaceId: "workspace-per-338",
   workspacePath: "/workspace/per-338",
 };
 
@@ -136,6 +137,7 @@ test("canonical fingerprints accept equivalent requests with reordered propertie
     const first = await service.accept(request);
     const reordered = {
       workspacePath: request.workspacePath,
+      workspaceId: request.workspaceId,
       prompt: request.prompt,
       attribution: { task: request.attribution.task, agent: request.attribution.agent },
       batchName: request.batchName,
