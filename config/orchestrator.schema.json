@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://superset-agent-orchestrator.dev/schemas/orchestrator.schema.json",
+  "title": "Superset Agent Orchestrator configuration",
+  "description": "Machine-independent local discovery and child-process policy.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "superset": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "executable": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Absolute path or executable name. Relative paths containing separators are rejected at runtime."
+        },
+        "hostState": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Absolute path to Superset host state. Relative paths are rejected at runtime."
+        }
+      }
+    },
+    "timeouts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "discoveryMs": { "$ref": "#/$defs/timeout" },
+        "startupMs": { "$ref": "#/$defs/timeout" },
+        "shutdownMs": { "$ref": "#/$defs/timeout" }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allow": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/environmentName" },
+          "uniqueItems": true,
+          "default": []
+        },
+        "set": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/environmentName" },
+          "additionalProperties": { "type": "string" },
+          "default": {}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "timeout": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3600000
+    },
+    "environmentName": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+    }
+  }
+}
