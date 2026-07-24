@@ -14,6 +14,8 @@ Recovery tools:
 
 * `recent_sessions` lists durable sessions independently of the connected client.
 * `reopen_batch` restores the newest exact-name batch with sessions, workers, results, and attribution.
+* `batches_create` durably accepts up to 250 attributed sessions and returns stable IDs immediately.
+* `batches_get`, `batches_status`, and `batches_results` provide indexed, ordered pagination without per-agent polling.
 * `recovery_diagnostics` reports orphan, unknown-outcome, and missing-result records.
 
 Set `SUPERSET_ORCHESTRATOR_STATE` to choose the state file. By default it is stored at
