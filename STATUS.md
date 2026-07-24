@@ -28,3 +28,13 @@ PER-341 startup reconciliation and batch recovery are complete.
 - Verified PR head: `3a217ac7e2acd2bd36d41bad43e6383666ac94c4`.
 - GitHub reported the exact head clean and mergeable with no required checks.
 - Next: merge PR 7 and reconcile PER-341 in Linear.
+
+PER-338 durable idempotent asynchronous launch implementation is complete locally.
+
+- Added durable acceptance with stable session, batch, and assignment IDs.
+- Added adapter idempotency keys, asynchronous dispatch recovery, and lifecycle audit events.
+- Added concurrent repeated-key prevention and crash injection at all five launch boundaries.
+- Verification: `npm run verify` passed 19 tests, `node --test
+  test/configuration-contract.test.mjs` passed 3 tests,
+  `./scripts/verify-per-323.sh` passed, and `git diff --check` passed.
+- Next: commit, push, open the PR, verify exact-head checks, and merge.

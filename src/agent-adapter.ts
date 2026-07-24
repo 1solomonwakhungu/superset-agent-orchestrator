@@ -2,6 +2,7 @@ export type RunStatus = "queued" | "running" | "succeeded" | "failed" | "cancell
 export type TerminalRunStatus = Extract<RunStatus, "succeeded" | "failed" | "cancelled">;
 
 export interface LaunchRequest {
+  idempotencyKey: string;
   prompt: string;
   workspacePath: string;
   resume?: ResumeMetadata;

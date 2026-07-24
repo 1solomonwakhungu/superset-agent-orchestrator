@@ -25,6 +25,7 @@ export class FakeAgentAdapter implements AgentAdapter {
   readonly launches: LaunchRequest[] = [];
   readonly cancellations: Array<{ runId: string; reason?: string }> = [];
   private readonly runs = new Map<string, FakeRun>();
+  private readonly runsByKey = new Map<string, RunHandle>();
   private nextRunId = 1;
 
   constructor(
@@ -33,14 +34,18 @@ export class FakeAgentAdapter implements AgentAdapter {
   ) {}
 
   async launch(request: LaunchRequest): Promise<RunHandle> {
+    const existing = this.runsByKey.get(request.idempotencyKey);
+    if (existing !== undefined) return existing;
     const script = this.scripts[this.launches.length];
     if (script === undefined) throw new Error("No fake run script available");
     this.validateScript(script);
 
     this.launches.push(request);
     const runId = `fake-${this.nextRunId++}`;
+    const handle = { runId };
     this.runs.set(runId, { script, position: 0, resultAvailable: false });
-    return { runId };
+    this.runsByKey.set(request.idempotencyKey, handle);
+    return handle;
   }
 
   async status(handle: RunHandle): Promise<RunState> {

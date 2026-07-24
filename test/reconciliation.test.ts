@@ -53,6 +53,8 @@ function fixture(): DurableState {
       },
     ],
     diagnostics: [],
+    assignments: [],
+    auditEvents: [],
   };
 }
 

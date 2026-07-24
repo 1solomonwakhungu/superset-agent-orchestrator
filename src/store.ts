@@ -50,12 +50,43 @@ export interface Diagnostic {
   detectedAt: string;
 }
 
+export type LaunchStatus = "accepted" | "launching" | "launched" | "failed";
+
+export interface Assignment {
+  id: string;
+  idempotencyKey: string;
+  requestFingerprint: string;
+  batchId: string;
+  sessionId: string;
+  status: LaunchStatus;
+  attribution: WorkerAttribution;
+  prompt: string;
+  workspacePath: string;
+  acceptedAt: string;
+  updatedAt: string;
+  runId?: string;
+  error?: string;
+}
+
+export type LaunchAuditType = "launch_accepted" | "launch_reserved" | "execution_started" | "launch_failed";
+
+export interface LaunchAuditEvent {
+  id: string;
+  assignmentId: string;
+  type: LaunchAuditType;
+  occurredAt: string;
+  runId?: string;
+  error?: string;
+}
+
 export interface DurableState {
   version: 1;
   sessions: Session[];
   batches: Batch[];
   workers: Worker[];
   diagnostics: Diagnostic[];
+  assignments: Assignment[];
+  auditEvents: LaunchAuditEvent[];
   reconciledAt?: string;
 }
 
@@ -92,11 +123,26 @@ const diagnosticSchema = z.object({
   id: z.string().min(1), kind: z.enum(["orphan", "unknown_outcome", "missing_result"]),
   workerId: z.string().min(1), message: z.string().min(1), detectedAt: z.iso.datetime(),
 });
+const assignmentSchema = z.object({
+  id: z.string().min(1), idempotencyKey: z.string().min(1), requestFingerprint: z.string().min(1),
+  batchId: z.string().min(1), sessionId: z.string().min(1),
+  status: z.enum(["accepted", "launching", "launched", "failed"]), attribution: attributionSchema,
+  prompt: z.string().min(1), workspacePath: z.string().min(1), acceptedAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(), runId: z.string().min(1).optional(), error: z.string().min(1).optional(),
+});
+const auditEventSchema = z.object({
+  id: z.string().min(1), assignmentId: z.string().min(1),
+  type: z.enum(["launch_accepted", "launch_reserved", "execution_started", "launch_failed"]),
+  occurredAt: z.iso.datetime(), runId: z.string().min(1).optional(), error: z.string().min(1).optional(),
+});
 const stateSchema = z.object({
   version: z.literal(1), sessions: z.array(sessionSchema), batches: z.array(batchSchema),
-  workers: z.array(workerSchema), diagnostics: z.array(diagnosticSchema), reconciledAt: z.iso.datetime().optional(),
+  workers: z.array(workerSchema), diagnostics: z.array(diagnosticSchema),
+  assignments: z.array(assignmentSchema).default([]), auditEvents: z.array(auditEventSchema).default([]),
+  reconciledAt: z.iso.datetime().optional(),
 }).superRefine((state, context) => {
-  for (const [kind, records] of [["session", state.sessions], ["batch", state.batches], ["worker", state.workers]] as const) {
+  for (const [kind, records] of [["session", state.sessions], ["batch", state.batches], ["worker", state.workers],
+    ["assignment", state.assignments], ["audit event", state.auditEvents]] as const) {
     const ids = new Set<string>();
     for (const record of records) {
       if (ids.has(record.id)) context.addIssue({ code: "custom", message: `Duplicate ${kind} ID: ${record.id}` });
@@ -111,6 +157,8 @@ const EMPTY_STATE: DurableState = {
   batches: [],
   workers: [],
   diagnostics: [],
+  assignments: [],
+  auditEvents: [],
 };
 
 export class DurableStore {
@@ -191,6 +239,57 @@ export class DurableStore {
 
   snapshot(): DurableState {
     return structuredClone(this.state);
+  }
+
+  async acceptLaunch(input: {
+    assignment: Assignment;
+    session: Session;
+    batch: Batch;
+    event: LaunchAuditEvent;
+  }): Promise<{ assignment: Assignment; created: boolean }> {
+    return this.withLock(async () => {
+      await this.load();
+      const existing = this.state.assignments.find(({ idempotencyKey }) => idempotencyKey === input.assignment.idempotencyKey);
+      if (existing !== undefined) {
+        if (existing.requestFingerprint !== input.assignment.requestFingerprint) {
+          throw new Error(`Idempotency key ${JSON.stringify(input.assignment.idempotencyKey)} was already used for a different launch`);
+        }
+        return { assignment: structuredClone(existing), created: false };
+      }
+      this.state.sessions.push(input.session);
+      this.state.batches.push(input.batch);
+      this.state.assignments.push(input.assignment);
+      this.state.auditEvents.push(input.event);
+      await this.persist();
+      return { assignment: structuredClone(input.assignment), created: true };
+    });
+  }
+
+  async pendingAssignments(): Promise<Assignment[]> {
+    return this.withLock(async () => {
+      await this.load();
+      return structuredClone(this.state.assignments.filter(({ status }) => status === "accepted" || status === "launching"));
+    });
+  }
+
+  async recordLaunchEvent(
+    assignmentId: string,
+    status: Extract<LaunchStatus, "launching" | "launched" | "failed">,
+    event: LaunchAuditEvent,
+  ): Promise<Assignment> {
+    return this.withLock(async () => {
+      await this.load();
+      const assignment = this.state.assignments.find(({ id }) => id === assignmentId);
+      if (assignment === undefined) throw new Error(`Unknown assignment: ${assignmentId}`);
+      if (assignment.status === "launched") return structuredClone(assignment);
+      assignment.status = status;
+      assignment.updatedAt = event.occurredAt;
+      if (event.runId !== undefined) assignment.runId = event.runId;
+      if (event.error !== undefined) assignment.error = event.error;
+      if (!this.state.auditEvents.some(({ id }) => id === event.id)) this.state.auditEvents.push(event);
+      await this.persist();
+      return structuredClone(assignment);
+    });
   }
 
   private async load(): Promise<void> {
