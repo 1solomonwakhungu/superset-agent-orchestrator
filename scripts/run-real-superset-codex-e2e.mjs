@@ -142,10 +142,12 @@ async function main() {
     throw new Error("Harness repository is outside the authorized workspace");
   }
 
-  const identity = await gitIdentity(root);
-  if (identity.canonicalTopLevel !== root) throw new Error("Harness root is not the target Git worktree root");
+  const identity = await gitIdentity(actualPath);
+  if (identity.canonicalTopLevel !== actualPath) {
+    throw new Error("Authorized workspace path is not the enclosing Git worktree root");
+  }
   if (identity.canonicalGitDirectory === identity.canonicalCommonDirectory) {
-    throw new Error("Target repository is a shared main checkout, not an isolated linked Git worktree");
+    throw new Error("Authorized workspace is a shared main checkout, not an isolated linked Git worktree");
   }
 
   workspacesResult.evidence.observed = {
