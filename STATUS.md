@@ -9,7 +9,7 @@
 - Made the Superset Desktop smoke skip visible and justified on generic runners.
 - Made Windows explicitly unsupported in package metadata, startup, probe policy,
   matrix evidence, documentation, and tests.
-- Verification: `npm run verify` passed 94/94 runnable tests with one explicit
+- Verification: `npm run verify` passed 106/106 runnable tests with one explicit
   Superset Desktop skip; `npm run compatibility:probe` returned the expected
   actionable unknown; `git diff --check` passed.
 - Next: deliver through PR, verify exact-head checks and merged main, then
