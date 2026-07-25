@@ -178,3 +178,27 @@ PER-331 idempotency and restart recovery implementation is complete locally.
   `./scripts/verify-per-323.sh` passed, and `git diff --check` passed.
 - Next: commit, push, open the PER-331 pull request, verify its exact head, merge,
   verify `main`, and mark Linear Done.
+
+PER-347 fake-Superset provider integration suite implementation is complete
+locally.
+
+- Added a scriptable subprocess-backed Superset adapter with strict response
+  validation and typed unavailable, protocol, launch-rejection, and
+  cancellation-unsupported errors.
+- Added a deterministic fake Superset process with persisted execution state so
+  orchestration and agent state survive independent process restarts.
+- Covered completion, failure, timeout, cancellation, restart, malformed output,
+  and exactly 100 attributed runs without a real coding agent.
+- Proved durable result persistence and exact batch, session, assignment,
+  workspace, attempt, run, agent, and task attribution.
+- Added a persisted command ledger and exact call-count assertions so no retry can
+  hide timeout, malformed-output, launch-rejection, or cancellation failures.
+- Verification: focused integration tests passed 4/4; `npm run verify` passed
+  93/93 tests; the configuration contract passed 3/3; strict PER-323 routing and
+  `git diff --check` passed.
+- Remaining scope: the production MCP server does not wire the launch and result
+  services to its transport, and `LaunchService` creates one batch per launch.
+  Consequently this suite proves the provider boundary, not complete MCP
+  lifecycle transport or one true 100-session launch batch.
+- Next: commit, push, open the verified PR, and address the production MCP wiring
+  gap in the owning implementation task before claiming complete MCP coverage.
