@@ -14,6 +14,13 @@ import {
   type Workspace,
   workspaceListSchema,
 } from "./discovery-parser.js";
+import {
+  assertFixedArguments,
+  assertPinnedExecutable,
+  childEnvironment,
+  safeErrorMessage,
+  type WorkspaceInventory,
+} from "./security.js";
 
 export type DiscoveryErrorCode =
   | "AMBIGUOUS"
@@ -62,25 +69,15 @@ export interface SupersetDiscoveryResult {
 
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const MINIMUM_SUPPORTED_MAJOR = 1;
-const CHILD_ENVIRONMENT_ALLOWLIST = [
-  "PATH", "HOME", "USERPROFILE", "TMPDIR", "TMP", "TEMP", "SystemRoot",
-  "ComSpec", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "COLORTERM", "NO_COLOR",
-  "FORCE_COLOR", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy",
-  "https_proxy", "no_proxy",
-] as const;
-
-function childEnvironment(): NodeJS.ProcessEnv {
-  return Object.fromEntries(CHILD_ENVIRONMENT_ALLOWLIST.flatMap((name) =>
-    process.env[name] === undefined ? [] : [[name, process.env[name]]]));
-}
-
 export const runProcess: ProcessRunner = async (executable, args, timeoutMs) => {
+  const program = assertPinnedExecutable(executable);
+  const argv = assertFixedArguments(args);
   const directory = await mkdtemp(join(tmpdir(), "superset-discovery-"));
   const stdoutPath = join(directory, "stdout");
   const stdoutFile = await open(stdoutPath, "wx", 0o600);
   try {
     const result = await new Promise<Omit<ProcessResult, "stdout">>((resolve, reject) => {
-      const child = spawn(executable, [...args], {
+      const child = spawn(program, argv, {
         shell: false,
         stdio: ["ignore", stdoutFile.fd, "pipe"],
         windowsHide: true,
@@ -169,6 +166,12 @@ export class SupersetDiscoveryAdapter {
     return { version, host, projects, workspaces, presets };
   }
 
+  /** Fresh authoritative inventory for workspace authorization decisions. */
+  async inventory(): Promise<WorkspaceInventory> {
+    const { host, projects, workspaces } = await this.discover();
+    return { hostId: host.hostId, organizationId: host.organizationId, projects, workspaces };
+  }
+
   private async probeVersion(): Promise<string> {
     const result = await this.invoke(["--version"]);
     let version: string;
@@ -202,7 +205,7 @@ export class SupersetDiscoveryAdapter {
       result = await this.runner(this.executable, args, this.timeoutMs);
     } catch (error) {
       if (error instanceof SupersetDiscoveryError) throw error;
-      throw new SupersetDiscoveryError("UNAVAILABLE", "Superset discovery failed", { cause: error });
+      throw new SupersetDiscoveryError("UNAVAILABLE", safeErrorMessage(error));
     }
     if (result.exitCode !== 0) {
       throw new SupersetDiscoveryError(

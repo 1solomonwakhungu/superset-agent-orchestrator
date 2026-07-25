@@ -8,6 +8,16 @@ import {
   type Session,
   type WorkerAttribution,
 } from "./store.js";
+import {
+  assertBoundedText,
+  assertDataOperand,
+  reasonCode,
+  redactText,
+  safeErrorMessage,
+  SecurityError,
+  type WorkspaceAuthorizer,
+  type WorkspaceGrant,
+} from "./security.js";
 
 export type LaunchBoundary =
   | "after_acceptance"
@@ -23,7 +33,6 @@ export interface AsynchronousLaunchRequest {
   attribution: WorkerAttribution;
   prompt: string;
   workspaceId: string;
-  workspacePath: string;
 }
 
 export interface LaunchAcceptance {
@@ -41,6 +50,7 @@ export class LaunchService {
   constructor(
     private readonly store: DurableStore,
     private readonly adapter: AgentAdapter,
+    private readonly workspaceAuthorizer: WorkspaceAuthorizer,
     private readonly now: () => Date = () => new Date(),
     private readonly injectCrash: (boundary: LaunchBoundary) => void = () => undefined,
     private readonly retryDelayMs = 1_000,
@@ -53,19 +63,32 @@ export class LaunchService {
   }
 
   async accept(request: AsynchronousLaunchRequest): Promise<LaunchAcceptance> {
-    for (const [name, value] of Object.entries(request)) {
-      if (typeof value === "string" && value.length === 0) throw new Error(`${name} must not be empty`);
-    }
-    if (request.attribution === undefined
-      || request.attribution.agent.length === 0
-      || request.attribution.task.length === 0) {
-      throw new Error("attribution requires non-empty agent and task values");
+    let grant: WorkspaceGrant;
+    let prompt: string;
+    let clientId: string;
+    try {
+      for (const [name, value] of Object.entries(request)) {
+        if (typeof value === "string" && value.length === 0) throw new SecurityError("INVALID_ARGUMENT", `${name} must not be empty`);
+      }
+      if (request.attribution === undefined
+        || request.attribution.agent.length === 0
+        || request.attribution.task.length === 0) {
+        throw new SecurityError("INVALID_ARGUMENT", "attribution requires non-empty agent and task values");
+      }
+      prompt = redactText(assertBoundedText(request.prompt, "prompt"));
+      clientId = redactText(assertBoundedText(request.clientId, "clientId", 256));
+      assertBoundedText(request.batchName, "batchName", 256);
+      grant = await this.workspaceAuthorizer.authorize(request.workspaceId);
+    } catch (error) {
+      await this.audit(request, "denied", reasonCode(error));
+      throw error;
     }
     const acceptedAt = this.now().toISOString();
     const assignmentId = stableId("assignment", request.idempotencyKey);
     const attemptId = stableId("attempt", request.idempotencyKey);
     const session: Session = {
-      id: stableId("session", request.idempotencyKey), clientId: request.clientId,
+      id: stableId("session", request.idempotencyKey),
+      clientId,
       createdAt: acceptedAt, lastSeenAt: acceptedAt,
     };
     const batch: Batch = {
@@ -80,9 +103,9 @@ export class LaunchService {
       sessionId: session.id,
       status: "accepted",
       attribution: request.attribution,
-      prompt: request.prompt,
+      prompt,
       workspaceId: request.workspaceId,
-      workspacePath: request.workspacePath,
+      workspacePath: assertDataOperand(grant.canonicalPath, "workspace path"),
       attemptId,
       attempt: 1,
       acceptedAt,
@@ -92,6 +115,7 @@ export class LaunchService {
       assignment, session, batch,
       event: event(assignmentId, "launch_accepted", acceptedAt),
     });
+    await this.audit(request, "allowed", "launch_accepted", assignmentId, grant.projectId);
     this.injectCrash("after_acceptance");
     return acceptance(accepted.assignment);
   }
@@ -117,6 +141,21 @@ export class LaunchService {
   }
 
   private async dispatch(assignment: Assignment): Promise<void> {
+    let grant: WorkspaceGrant;
+    try {
+      if (assignment.workspaceId === undefined) throw new SecurityError("INVALID_ARGUMENT", "Launch has no workspace identity");
+      grant = await this.workspaceAuthorizer.authorize(assignment.workspaceId);
+      await grant.revalidate();
+      if (grant.canonicalPath !== assignment.workspacePath) {
+        throw new SecurityError("INTEGRITY_FAILURE", "Workspace identity changed before launch");
+      }
+    } catch (error) {
+      await this.auditAssignment(assignment, "denied", reasonCode(error));
+      await this.store.recordLaunchEvent(assignment.id, "failed", event(
+        assignment.id, "launch_failed", this.now().toISOString(), { error: safeErrorMessage(error) },
+      ));
+      return;
+    }
     const startedAt = this.now().toISOString();
     const reserved = await this.store.recordLaunchEvent(
       assignment.id,
@@ -128,14 +167,15 @@ export class LaunchService {
     this.injectCrash("before_adapter_launch");
     let handle;
     try {
+      await this.auditAssignment(assignment, "allowed", "launch_intent", grant.projectId);
       handle = await this.adapter.launch({
         idempotencyKey: assignment.idempotencyKey,
         prompt: assignment.prompt,
-        workspacePath: assignment.workspacePath,
+        workspacePath: assertDataOperand(grant.canonicalPath, "workspace path"),
       });
     } catch (error) {
       if (error instanceof InjectedCrash) throw error;
-      const message = error instanceof Error ? error.message : String(error);
+      const message = safeErrorMessage(error);
       const failedAt = this.now().toISOString();
       await this.store.recordLaunchEvent(
         assignment.id,
@@ -153,6 +193,36 @@ export class LaunchService {
     );
     this.injectCrash("after_launch_recorded");
   }
+
+  private audit(
+    request: AsynchronousLaunchRequest,
+    decision: "allowed" | "denied",
+    reason: string,
+    assignmentId?: string,
+    projectId?: string,
+  ): Promise<unknown> {
+    return this.store.appendSecurityAudit({
+      requesterId: request.clientId || "invalid-requester", operation: "sessions_launch", decision,
+      reasonCode: reason, correlationId: request.idempotencyKey || "invalid-correlation",
+      ...(request.workspaceId ? { workspaceId: request.workspaceId } : {}),
+      ...(projectId === undefined ? {} : { projectId }),
+      ...(assignmentId === undefined ? {} : { assignmentId }),
+    });
+  }
+
+  private auditAssignment(
+    assignment: Assignment,
+    decision: "allowed" | "denied",
+    reason: string,
+    projectId?: string,
+  ): Promise<unknown> {
+    return this.store.appendSecurityAudit({
+      requesterId: assignment.sessionId, operation: "sessions_launch", decision,
+      reasonCode: reason, correlationId: assignment.idempotencyKey, assignmentId: assignment.id,
+      ...(assignment.workspaceId === undefined ? {} : { workspaceId: assignment.workspaceId }),
+      ...(projectId === undefined ? {} : { projectId }),
+    });
+  }
 }
 
 export class InjectedCrash extends Error {}
@@ -169,7 +239,6 @@ function fingerprint(request: AsynchronousLaunchRequest): string {
     attribution: { agent: request.attribution.agent, task: request.attribution.task },
     prompt: request.prompt,
     workspaceId: request.workspaceId,
-    workspacePath: request.workspacePath,
   });
   return createHash("sha256").update(canonical).digest("hex");
 }

@@ -178,3 +178,33 @@ PER-331 idempotency and restart recovery implementation is complete locally.
   `./scripts/verify-per-323.sh` passed, and `git diff --check` passed.
 - Next: commit, push, open the PER-331 pull request, verify its exact head, merge,
   verify `main`, and mark Linear Done.
+
+PER-345 path, command, environment, and audit security controls are implemented
+locally.
+
+- Added `src/security.ts`: typed `SecurityError` codes, canonical workspace
+  authorization through the registered local inventory, device and inode identity
+  revalidation before spawn, bounded text validation, pinned executable and fixed
+  argument-vector checks, data-operand checks, an exact-case child environment
+  allowlist, and recursive cycle-safe secret redaction.
+- Added `src/tool-security.ts`: the reviewed MVP tool snapshot plus exclusion of
+  shell, terminal, destructive, raw filesystem, raw Git, environment, secret,
+  database, relay, process-kill, and dynamic-plugin capabilities. `src/server.ts`
+  now asserts every registration and the whole surface before connecting.
+- Added a durable security audit trail in `src/store.ts`: normalized bounded
+  redacted fields, policy version, sequence numbers, a SHA-256 event chain, and
+  `verifySecurityAuditChain` for tamper detection. Launch acceptance and dispatch
+  record an allowed intent before every external launch and a typed denial for
+  every refusal.
+- Launch requests now carry `workspaceId` only. The canonical path is derived from
+  Superset's local inventory, never supplied by a client.
+- Added `docs/security/path-command-environment-audit-controls.md` mapping each
+  implemented control and its proving test.
+- Verification: `npm run verify` passed 107 tests including 15 new adversarial
+  tests for traversal, symlink and prefix escape, time-of-check/time-of-use
+  retargeting, shell-free spawning, executable and argument injection, malicious
+  environment seeding, secret canaries in state and audit, audit chain tampering,
+  and tool-surface drift. `npm run schema` produced no snapshot change and
+  Markdown lint passed for `docs/security`.
+- Next: push the branch, open the PER-345 pull request, and reconcile Linear from
+  the parent factory.

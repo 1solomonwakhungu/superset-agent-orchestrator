@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import { dirname } from "node:path";
 import lockfile from "proper-lockfile";
 import { z } from "zod";
+import { auditField, SECURITY_POLICY_VERSION } from "./security.js";
 
 export type WorkerStatus = "requested" | "running" | "succeeded" | "failed" | "unknown_outcome";
 export type DiagnosticKind = "orphan" | "unknown_outcome" | "missing_result";
@@ -141,6 +142,45 @@ export interface LaunchAuditEvent {
   error?: string;
 }
 
+export interface SecurityAuditEvent {
+  id: string;
+  sequence: number;
+  occurredAt: string;
+  requesterId: string;
+  operation: string;
+  decision: "allowed" | "denied" | "failed";
+  reasonCode: string;
+  correlationId: string;
+  policyVersion: string;
+  workspaceId?: string;
+  projectId?: string;
+  assignmentId?: string;
+  previousEventHash: string;
+  eventHash: string;
+}
+
+export interface SecurityAuditChainVerification {
+  valid: boolean;
+  length: number;
+  brokenAtSequence?: number;
+}
+
+export type SecurityAuditInput = Omit<
+  SecurityAuditEvent,
+  "id" | "sequence" | "occurredAt" | "policyVersion" | "previousEventHash" | "eventHash"
+>;
+
+const GENESIS_AUDIT_HASH = "0".repeat(64);
+const SECURITY_AUDIT_HASH_FIELDS = [
+  "id", "sequence", "occurredAt", "requesterId", "operation", "decision", "reasonCode",
+  "correlationId", "policyVersion", "workspaceId", "projectId", "assignmentId", "previousEventHash",
+] as const;
+
+function securityAuditEventHash(event: Omit<SecurityAuditEvent, "eventHash">): string {
+  const canonical = JSON.stringify(SECURITY_AUDIT_HASH_FIELDS.map((field) => event[field] ?? null));
+  return createHash("sha256").update(canonical).digest("hex");
+}
+
 export interface LaunchIntent {
   idempotencyKey: string;
   requestHash: string;
@@ -165,6 +205,7 @@ export interface DurableState {
   auditEvents: LaunchAuditEvent[];
   launchIntents: LaunchIntent[];
   capturedResults?: CapturedResult[];
+  securityAuditEvents?: SecurityAuditEvent[];
   reconciledAt?: string;
 }
 
@@ -229,6 +270,15 @@ const auditEventSchema = z.object({
   type: z.enum(["launch_accepted", "launch_reserved", "execution_started", "launch_failed"]),
   occurredAt: z.iso.datetime(), runId: z.string().min(1).optional(), error: z.string().min(1).optional(),
 });
+const securityAuditEventSchema = z.object({
+  id: z.string().min(1), sequence: z.number().int().positive(), occurredAt: z.iso.datetime(),
+  requesterId: z.string().min(1),
+  operation: z.string().min(1), decision: z.enum(["allowed", "denied", "failed"]),
+  reasonCode: z.string().min(1), correlationId: z.string().min(1), policyVersion: z.string().min(1),
+  workspaceId: z.string().min(1).optional(), projectId: z.string().min(1).optional(),
+  assignmentId: z.string().min(1).optional(),
+  previousEventHash: z.string().regex(/^[a-f0-9]{64}$/), eventHash: z.string().regex(/^[a-f0-9]{64}$/),
+});
 const launchIntentSchema = z.object({
   idempotencyKey: z.string().min(1), requestHash: z.string().regex(/^[a-f0-9]{64}$/),
   sessionId: z.string().min(1), batchId: z.string().min(1), workerId: z.string().min(1),
@@ -246,6 +296,7 @@ const stateSchema = z.object({
   workers: z.array(workerSchema), diagnostics: z.array(diagnosticSchema),
   assignments: z.array(assignmentSchema).default([]), auditEvents: z.array(auditEventSchema).default([]),
   launchIntents: z.array(launchIntentSchema).default([]), capturedResults: z.array(capturedResultSchema).default([]),
+  securityAuditEvents: z.array(securityAuditEventSchema).default([]),
   reconciledAt: z.iso.datetime().optional(),
 }).superRefine((state, context) => {
   for (const [kind, records] of [["session", state.sessions], ["batch", state.batches], ["worker", state.workers],
@@ -281,6 +332,7 @@ const EMPTY_STATE: DurableState = {
   auditEvents: [],
   launchIntents: [],
   capturedResults: [],
+  securityAuditEvents: [],
 };
 
 export class DurableStore {
@@ -537,6 +589,60 @@ export class DurableStore {
     });
   }
 
+  /**
+   * Appends a normalized, redacted, tamper-evident security decision. Every field
+   * that can carry untrusted text is bounded and stripped of control characters so
+   * that no payload can forge or truncate a later record, and each event is chained
+   * to its predecessor's hash. Persistence failure propagates so the caller fails
+   * closed rather than proceeding without an audit record.
+   */
+  async appendSecurityAudit(input: SecurityAuditInput, now = new Date()): Promise<SecurityAuditEvent> {
+    return this.withLock(async () => {
+      await this.load();
+      const audit = this.state.securityAuditEvents ??= [];
+      const previous = audit.at(-1);
+      const body = {
+        id: randomUUID(),
+        sequence: (previous?.sequence ?? 0) + 1,
+        occurredAt: now.toISOString(),
+        requesterId: auditField(input.requesterId),
+        operation: auditField(input.operation),
+        decision: input.decision,
+        reasonCode: auditField(input.reasonCode),
+        correlationId: auditField(input.correlationId),
+        policyVersion: SECURITY_POLICY_VERSION,
+        ...(input.workspaceId === undefined ? {} : { workspaceId: auditField(input.workspaceId) }),
+        ...(input.projectId === undefined ? {} : { projectId: auditField(input.projectId) }),
+        ...(input.assignmentId === undefined ? {} : { assignmentId: auditField(input.assignmentId) }),
+        previousEventHash: previous?.eventHash ?? GENESIS_AUDIT_HASH,
+      };
+      const event: SecurityAuditEvent = { ...body, eventHash: securityAuditEventHash(body) };
+      securityAuditEventSchema.parse(event);
+      audit.push(event);
+      await this.persist();
+      return structuredClone(event);
+    });
+  }
+
+  securityAuditEvents(): SecurityAuditEvent[] {
+    return structuredClone(this.state.securityAuditEvents ?? []);
+  }
+
+  /** Detects any edit, deletion, or reordering of the persisted audit sequence. */
+  verifySecurityAuditChain(): SecurityAuditChainVerification {
+    const events = this.state.securityAuditEvents ?? [];
+    let previousHash = GENESIS_AUDIT_HASH;
+    for (const [index, event] of events.entries()) {
+      const { eventHash, ...body } = event;
+      if (event.sequence !== index + 1 || event.previousEventHash !== previousHash
+        || securityAuditEventHash(body) !== eventHash) {
+        return { valid: false, length: events.length, brokenAtSequence: index + 1 };
+      }
+      previousHash = eventHash;
+    }
+    return { valid: true, length: events.length };
+  }
+
   async pendingAssignments(): Promise<Assignment[]> {
     return this.withLock(async () => {
       await this.load();
@@ -720,7 +826,7 @@ export class DurableStore {
   }
 
   private async persist(): Promise<void> {
-    await mkdir(dirname(this.path), { recursive: true });
+    await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
     const temporaryPath = `${this.path}.${process.pid}.${randomUUID()}.tmp`;
     const file = await open(temporaryPath, "wx", 0o600);
     try {
@@ -744,7 +850,7 @@ export class DurableStore {
   }
 
   private async withLock<T>(operation: () => Promise<T>): Promise<T> {
-    await mkdir(dirname(this.path), { recursive: true });
+    await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
     const release = await lockfile.lock(this.path, {
       realpath: false,
       stale: 10_000,

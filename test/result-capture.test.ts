@@ -15,7 +15,12 @@ const request: AsynchronousLaunchRequest = {
   attribution: { agent: "codex", task: "capture exact response" },
   prompt: "Return an exact result",
   workspaceId: "workspace-340",
-  workspacePath: "/workspace/per-340",
+};
+
+const authorizer = {
+  authorize: async (workspaceId: string) => ({
+    workspaceId, projectId: "project-340", canonicalPath: "/workspace/per-340", revalidate: async () => undefined,
+  }),
 };
 
 async function fixture(result = { status: "succeeded", output: "exact answer" } as const) {
@@ -23,7 +28,7 @@ async function fixture(result = { status: "succeeded", output: "exact answer" } 
   const path = join(directory, "state.json");
   const store = new DurableStore(path);
   const adapter = new FakeAgentAdapter([{ statuses: ["succeeded"], result }]);
-  const launch = new LaunchService(store, adapter);
+  const launch = new LaunchService(store, adapter, authorizer);
   const accepted = await launch.accept(request);
   await launch.dispatchPending();
   return { directory, path, store, adapter, accepted };
@@ -113,7 +118,7 @@ test("does not capture a nonterminal adapter result", async () => {
     const adapter = new FakeAgentAdapter([{
       statuses: ["running", "succeeded"], result: { status: "succeeded", output: "later" },
     }]);
-    const launch = new LaunchService(store, adapter);
+    const launch = new LaunchService(store, adapter, authorizer);
     const accepted = await launch.accept(request);
     await launch.dispatchPending();
     const collected = await new ResultCaptureService(store, adapter).collect(accepted.assignmentId, "delivery-1");
