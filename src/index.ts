@@ -9,3 +9,4 @@ export * from "./store.js";
 export * from "./tool-contract.js";
 export * from "./discovery-parser.js";
 export * from "./superset-discovery.js";
+export * from "./superset-process-adapter.js";

@@ -63,6 +63,17 @@ The MCP contract publishes typed TypeScript/Zod schemas and a client-neutral JSO
 
 `FakeAgentAdapter` accepts ordered run scripts and a caller-controlled clock. Integration tests can therefore drive queued, running, succeeded, failed, and cancelled paths without timing or network dependencies.
 
+`SupersetProcessAdapter` exercises the provider process boundary with strict JSON
+response validation. Its scriptable fake-Superset fixture persists run state
+across process restarts and covers completion, failure, timeout, cancellation,
+restart recovery, malformed output, and 100-run attribution without a real coding
+agent. An exact invocation ledger proves that failing operations are not retried.
+Run that suite independently with:
+
+```sh
+npx tsx --test test/fake-superset.integration.test.ts
+```
+
 Run `npm run verify` to type-check the complete implementation and execute all tests.
 
 ## Superset discovery
