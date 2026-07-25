@@ -240,3 +240,32 @@ PER-336 embedded persistence and migrations is complete and verified locally.
   pre-existing), `npm run build` exit 0, `npm run check` exit 0, `npm test`
   106/106 passing, storage/migration/corruption suites 12/12 passing.
 - Next: PR review and merge. Linear is owned by the parent factory.
+
+PER-336 attempt 2 makes discovery verification deterministic without a Superset install.
+
+- Root cause: `test/superset-discovery.smoke.test.ts` unconditionally shelled out
+  to the optional `superset` executable, so the suite failed with
+  `SupersetDiscoveryError UNAVAILABLE` on any machine without it.
+- `test/fixtures/superset-discovery-recorded.json` holds real CLI payloads
+  captured by `npm run discovery:record`. The recorder reuses the adapter's own
+  `runProcess`, which spools stdout to a temp file. This matters because the
+  Superset CLI truncates large payloads when its stdout is a pipe.
+- The recorded contract test always runs and replays the fixture through the
+  real adapter and schemas, so schema coverage no longer depends on the
+  executable. The live test runs only when the executable resolves on the search
+  path.
+- Availability is decided by resolving the executable, not by interpreting an
+  adapter error. A present but broken Superset still fails.
+- `SUPERSET_ORCHESTRATOR_REQUIRE_LIVE_DISCOVERY=1` turns an absent executable
+  from a skip into a failure.
+- Guard cases proved by running them: absent plus require flag fails
+  (`... is set but no Superset executable was found on PATH`); present but
+  malformed fails (`MALFORMED_RESPONSE`); present but unhealthy host fails
+  (`UNAVAILABLE`).
+- Verification after `rm -rf node_modules dist` and `npm ci` (exit 0):
+  `npm run build` exit 0, `npm run check` exit 0, `npm test` 107/107 passing
+  with Superset present, and 106 passing plus 1 truthfully skipped with Superset
+  absent from PATH. Focused persistence and migration
+  (`storage`, `repositories`, `server-restart`) 11/11 passing. Corruption
+  fail-closed (`storage-cli`) 2/2 passing.
+- Next: PR review and merge. Linear is owned by the parent factory.

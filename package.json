@@ -20,6 +20,7 @@
     "build": "tsc -p tsconfig.json",
     "schema": "npm run build && node scripts/generate-tool-schema.mjs",
     "compatibility:probe": "node scripts/probe-compatibility.mjs",
+    "discovery:record": "npm run build && node scripts/record-discovery-fixture.mjs",
     "start": "node dist/src/server.js",
     "test": "tsx --test test/**/*.test.ts test/**/*.test.mjs",
     "verify": "npm run build && npm test",

@@ -132,3 +132,32 @@ Errors returned to callers follow the same policy. Full unredacted diagnostics
 MUST NOT be enabled by an environment variable. If a future explicit debug sink
 is introduced, it must be local, opt-in, permission-restricted, and separate
 from normal logs.
+
+## Verifying the discovery contract
+
+Superset itself is an optional dependency of this repository, so the test suite
+MUST be deterministic on machines that do not have it installed, without
+weakening schema coverage or hiding a genuine failure.
+
+Two tests in `test/superset-discovery.smoke.test.ts` cover this:
+
+1. The recorded contract test always runs. It replays
+   `test/fixtures/superset-discovery-recorded.json` through the real
+   `SupersetDiscoveryAdapter` and its real schemas. The fixture holds payloads
+   captured from a live Superset CLI by `npm run discovery:record`, which uses
+   the adapter's own spawn path, so field names, types, and the null and absent
+   distinctions are verbatim. Only identifying values are pseudonymised.
+2. The live contract test runs only when a Superset executable is present.
+
+Availability is decided by resolving the executable on the search path, never by
+interpreting an adapter error. An executable that is present but returns a
+malformed payload, exits non-zero, or reports an unhealthy host therefore fails
+the live test instead of being skipped. Only a genuinely absent executable is
+skipped, and the skip reason is reported by the test runner.
+
+Set `SUPERSET_ORCHESTRATOR_REQUIRE_LIVE_DISCOVERY=1` where a real Superset is
+expected. An absent executable is then a failure rather than a skip.
+
+When the live test runs it also compares the field names returned by the real
+CLI against the recorded fixture, so the fixture cannot silently drift away from
+the product. Re-run `npm run discovery:record` when that comparison fails.
