@@ -65,6 +65,8 @@ The MCP contract publishes typed TypeScript/Zod schemas and a client-neutral JSO
 
 Run `npm run verify` to type-check the complete implementation and execute all tests.
 
+Real Superset and Codex verification is opt-in because it launches an agent in an exact isolated worktree. See [the real-system harness guide](docs/real-superset-codex-e2e.md) for safety gates, commands, evidence, and currently unsupported lifecycle operations.
+
 ## Superset discovery
 
 `SupersetDiscoveryAdapter` uses the supported Superset CLI JSON interface to
