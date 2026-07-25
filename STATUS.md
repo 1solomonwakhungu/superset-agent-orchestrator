@@ -45,9 +45,11 @@
 - Executable fake-Superset tests prove preflight, launch/receipt attribution,
   unsupported lifecycle reporting, sentinel redaction, workspace isolation, and
   opt-in refusal.
-- Verification: `npm run verify` passed build and all 92 tests; focused harness
+- Verification: `npm run verify` passed build and all 104 tests; focused harness
   tests passed 3/3; `git diff --check` passed.
-- Real preflight passed against Superset CLI 1.16.1 with zero failures.
+- Real preflight passed again at 2026-07-25T20:06:57Z against Superset CLI
+  1.16.1 and Node 22.23.1 with zero failures, unchanged HEAD/status, and the
+  current isolated workspace resolved by exact canonical path.
 - Authorized relay-outage launch passed in 86.97 ms and returned session
   `4236efff-a9c8-4941-9eb8-00a657ead0ec`; target HEAD/status remained unchanged.
 - Real classification is `blocked`, not passed: exact sentinel retrieval and
