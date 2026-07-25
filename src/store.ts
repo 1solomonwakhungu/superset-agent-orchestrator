@@ -297,6 +297,8 @@ export class DurableStore {
     private readonly now: () => number = performance.now.bind(performance),
   ) {}
 
+  get statePath(): string { return this.path; }
+
   async createBatch(
     name: string,
     clientId: string,
@@ -548,19 +550,30 @@ export class DurableStore {
     assignmentId: string,
     status: Extract<AssignmentLaunchStatus, "launching" | "launched" | "failed">,
     event: LaunchAuditEvent,
-  ): Promise<Assignment> {
+  ): Promise<{ assignment: Assignment; transitioned: boolean }> {
     return this.withLock(async () => {
       await this.load();
+      auditEventSchema.parse(event);
       const assignment = this.state.assignments.find(({ id }) => id === assignmentId);
       if (assignment === undefined) throw new Error(`Unknown assignment: ${assignmentId}`);
-      if (assignment.status === "launched" || assignment.status === "failed") return structuredClone(assignment);
+      if (event.assignmentId !== assignmentId) throw new Error("Launch event assignment does not match its target");
+      const expectedType: Record<typeof status, LaunchAuditType> = {
+        launching: "launch_reserved",
+        launched: "execution_started",
+        failed: "launch_failed",
+      };
+      if (event.type !== expectedType[status]) throw new Error("Launch event type does not match its transition");
+      if (event.occurredAt < assignment.updatedAt) throw new Error("Stale launch events cannot regress assignment time");
+      const allowed = assignment.status === "accepted" && status === "launching"
+        || assignment.status === "launching" && (status === "launched" || status === "failed");
+      if (!allowed) return { assignment: structuredClone(assignment), transitioned: false };
       assignment.status = status;
       assignment.updatedAt = event.occurredAt;
       if (event.runId !== undefined) assignment.runId = event.runId;
       if (event.error !== undefined) assignment.error = event.error;
       if (!this.state.auditEvents.some(({ id }) => id === event.id)) this.state.auditEvents.push(event);
       await this.persist();
-      return structuredClone(assignment);
+      return { assignment: structuredClone(assignment), transitioned: true };
     });
   }
 

@@ -105,6 +105,27 @@ test("makes duplicate and late delivery idempotent and rejects conflicts", async
   }
 });
 
+test("concurrent conflicting deliveries persist exactly one authoritative result", async () => {
+  const context = await fixture();
+  try {
+    const deliveries = [
+      { kind: "adapter_result", result: { status: "succeeded", output: "winner-a" } } as const,
+      { kind: "adapter_result", result: { status: "failed", error: "winner-b", retryable: false } } as const,
+    ];
+    const settled = await Promise.allSettled(deliveries.map((delivery, index) =>
+      new ResultCaptureService(new DurableStore(context.path), context.adapter)
+        .ingest(context.accepted.assignmentId, `racing-delivery-${index}`, delivery)));
+
+    assert.equal(settled.filter(({ status }) => status === "fulfilled").length, 1);
+    assert.equal(settled.filter(({ status }) => status === "rejected").length, 1);
+    const state = JSON.parse(await readFile(context.path, "utf8")) as DurableState;
+    assert.equal(state.capturedResults?.length, 1);
+    assert.match(state.capturedResults?.[0]?.deliveryId ?? "", /^racing-delivery-[01]$/);
+  } finally {
+    await rm(context.directory, { recursive: true, force: true });
+  }
+});
+
 test("does not capture a nonterminal adapter result", async () => {
   const directory = await mkdtemp(join(tmpdir(), "orchestrator-result-"));
   try {

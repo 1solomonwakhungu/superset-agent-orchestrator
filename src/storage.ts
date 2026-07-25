@@ -89,6 +89,7 @@ export class OrchestratorStorage {
       if (integrity.quick_check !== "ok") throw new Error(`integrity check failed: ${integrity.quick_check}`);
       if (path !== ":memory:") this.database.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;");
       this.migrate();
+      this.validateSchema();
     } catch (error) {
       this.database.close();
       throw new Error(`Cannot open orchestrator registry at ${path}: ${(error as Error).message}`, { cause: error });
@@ -106,10 +107,14 @@ export class OrchestratorStorage {
       throw new Error(`Unsupported schema version ${targetVersion}`);
     }
     this.database.exec("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL) STRICT;");
-    const current = this.schemaVersion();
+    const history = this.database.prepare("SELECT version FROM schema_migrations ORDER BY version").all()
+      .map((row) => (row as { version: number }).version);
+    if (history.some((version, index) => version !== index + 1)) throw new Error("Migration history is noncontiguous");
+    const current = history.at(-1) ?? 0;
     if (current > targetVersion) throw new Error("Use rollback() to move to an older schema");
     for (const migration of migrations.filter(({ version }) => version > current && version <= targetVersion)) {
       this.transaction(() => {
+        if (this.schemaVersion() >= migration.version) return;
         this.database.exec(migration.up);
         this.database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
           .run(migration.version, new Date().toISOString());
@@ -154,8 +159,8 @@ export class OrchestratorStorage {
         "DELETE FROM idempotency_records WHERE expires_at < ? OR created_at < ?",
       ).run(sqlTimestamp(now), expiredIdempotency).changes);
       const leasesDeleted = Number(this.database.prepare(
-        "DELETE FROM workspace_leases WHERE expires_at < ? OR released_at IS NOT NULL",
-      ).run(sqlTimestamp(now)).changes);
+        "DELETE FROM workspace_leases WHERE released_at IS NOT NULL",
+      ).run().changes);
       if (assignmentsRedacted + resultsRedacted + idempotencyDeleted + leasesDeleted > 0) {
         this.appendEvent({ aggregateType: "registry", aggregateId: "maintenance", eventType: "retention.cleanup_completed",
           actor: "system", data: { assignmentsRedacted, resultsRedacted, idempotencyDeleted, leasesDeleted }, occurredAt: now });
@@ -190,6 +195,20 @@ export class OrchestratorStorage {
     this.database.exec("BEGIN IMMEDIATE");
     try { const result = operation(); this.database.exec("COMMIT"); return result; }
     catch (error) { this.database.exec("ROLLBACK"); throw error; }
+  }
+
+  private validateSchema(): void {
+    const required = [
+      "assignments", "batches", "events", "events_no_delete", "events_no_update",
+      "results", "schema_migrations", "sessions", "workspace_leases",
+      "one_active_writer_per_workspace", "idempotency_records",
+    ];
+    const objects = new Set(this.database.prepare("SELECT name FROM sqlite_schema").all()
+      .map((row) => (row as { name: string }).name));
+    const missing = required.filter((name) => !objects.has(name));
+    if (missing.length > 0) throw new Error(`Registry schema is incomplete: ${missing.join(", ")}`);
+    const foreignKeyFailures = this.database.prepare("PRAGMA foreign_key_check").all();
+    if (foreignKeyFailures.length > 0) throw new Error("Registry foreign key integrity check failed");
   }
 
   private writeAtomically(path: string, contents: string): void {
