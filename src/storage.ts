@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { createRepositories, type Repositories } from "./repositories.js";
 
 export const CURRENT_SCHEMA_VERSION = 2;
 
@@ -15,6 +16,14 @@ export interface CleanupSummary {
   resultsRedacted: number;
   idempotencyDeleted: number;
   leasesDeleted: number;
+}
+
+export interface IntegrityReport {
+  ok: boolean;
+  schemaVersion?: number;
+  databaseErrors: string[];
+  foreignKeyErrors: Record<string, unknown>[];
+  schemaErrors: string[];
 }
 
 interface Migration { version: number; up: string; down: string }
@@ -75,6 +84,7 @@ const cutoff = (now: Date, days: number): string => new Date(now.getTime() - day
 
 export class OrchestratorStorage {
   readonly database: DatabaseSync;
+  readonly repositories!: Repositories;
   private readonly resultRetentionDays: number;
   private readonly idempotencyRetentionDays: number;
 
@@ -89,6 +99,7 @@ export class OrchestratorStorage {
       if (integrity.quick_check !== "ok") throw new Error(`integrity check failed: ${integrity.quick_check}`);
       if (path !== ":memory:") this.database.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;");
       this.migrate();
+      this.repositories = createRepositories(this.database);
     } catch (error) {
       this.database.close();
       throw new Error(`Cannot open orchestrator registry at ${path}: ${(error as Error).message}`, { cause: error });
@@ -166,10 +177,46 @@ export class OrchestratorStorage {
 
   exportJson(path: string): void {
     const tables = ["schema_migrations", "batches", "assignments", "sessions", "results", "events", "workspace_leases", "idempotency_records"];
-    const output = { format: "superset-agent-orchestrator-export", formatVersion: 1,
+    const output = this.transaction(() => ({ format: "superset-agent-orchestrator-export", formatVersion: 1,
       schemaVersion: this.schemaVersion(), exportedAt: new Date().toISOString(),
-      tables: Object.fromEntries(tables.map((table) => [table, this.database.prepare(`SELECT * FROM ${table}`).all()])) };
+      tables: Object.fromEntries(tables.map((table) => [table, this.database.prepare(`SELECT * FROM ${table}`).all()])) }));
     this.writeAtomically(path, `${JSON.stringify(output, null, 2)}\n`);
+  }
+
+  static checkIntegrity(path: string): IntegrityReport {
+    const report: IntegrityReport = { ok: false, databaseErrors: [], foreignKeyErrors: [], schemaErrors: [] };
+    let database: DatabaseSync | undefined;
+    try {
+      database = new DatabaseSync(path, { readOnly: true });
+      report.databaseErrors = (database.prepare("PRAGMA integrity_check").all() as { integrity_check: string }[])
+        .map(({ integrity_check }) => integrity_check).filter((message) => message !== "ok");
+      report.foreignKeyErrors = database.prepare("PRAGMA foreign_key_check").all() as Record<string, unknown>[];
+      const migrations = database.prepare("SELECT version FROM schema_migrations ORDER BY version").all()
+        .map((row) => Number((row as { version: number }).version));
+      report.schemaVersion = migrations.at(-1) ?? 0;
+      const expected = Array.from({ length: report.schemaVersion }, (_, index) => index + 1);
+      if (JSON.stringify(migrations) !== JSON.stringify(expected)) report.schemaErrors.push("migration ledger is not contiguous");
+      if (report.schemaVersion !== CURRENT_SCHEMA_VERSION) {
+        report.schemaErrors.push(`expected schema version ${CURRENT_SCHEMA_VERSION}, found ${report.schemaVersion}`);
+      }
+      const requiredObjects = [
+        ...["schema_migrations", "batches", "assignments", "sessions", "results", "events", "workspace_leases", "idempotency_records"]
+          .map((name) => ["table", name]),
+        ["trigger", "events_no_update"], ["trigger", "events_no_delete"],
+        ["index", "one_active_writer_per_workspace"],
+      ];
+      const objects = new Set((database.prepare("SELECT type, name FROM sqlite_schema").all() as { type: string; name: string }[])
+        .map(({ type, name }) => `${type}:${name}`));
+      for (const [type, name] of requiredObjects) {
+        if (!objects.has(`${type}:${name}`)) report.schemaErrors.push(`missing required ${type} ${name}`);
+      }
+    } catch (error) {
+      report.databaseErrors.push((error as Error).message);
+    } finally {
+      database?.close();
+    }
+    report.ok = report.databaseErrors.length === 0 && report.foreignKeyErrors.length === 0 && report.schemaErrors.length === 0;
+    return report;
   }
 
   backup(path: string): void {
@@ -186,7 +233,7 @@ export class OrchestratorStorage {
     } finally { verification.close(); }
   }
 
-  private transaction<T>(operation: () => T): T {
+  transaction<T>(operation: () => T): T {
     this.database.exec("BEGIN IMMEDIATE");
     try { const result = operation(); this.database.exec("COMMIT"); return result; }
     catch (error) { this.database.exec("ROLLBACK"); throw error; }
