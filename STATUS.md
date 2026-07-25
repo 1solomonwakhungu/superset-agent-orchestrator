@@ -178,3 +178,20 @@ PER-331 idempotency and restart recovery implementation is complete locally.
   `./scripts/verify-per-323.sh` passed, and `git diff --check` passed.
 - Next: commit, push, open the PER-331 pull request, verify its exact head, merge,
   verify `main`, and mark Linear Done.
+
+PER-348 adversarial resilience regression coverage is complete locally.
+
+- Added deterministic launch interruption, forced dispatch contention,
+  cancellation race, stale-event, conflicting-result, corruption, migration,
+  stale-lease, hostile-parser, hostile-identifier, and secret-canary tests.
+- Replaced process-local dispatch exclusion with a filesystem-backed assignment
+  lock and added exact result-attribution enforcement.
+- All fixtures use temporary synthetic state and do not invoke Superset, cron, or
+  user repositories.
+- Verification: `npm run verify` passed 102/102 tests; the configuration contract
+  passed 3/3; strict local-routing verification and `git diff --check` passed.
+- Full-tree Markdown lint still reports pre-existing issues in `README.md`,
+  `docs/mcp-tool-contract.md`, and historical `STATUS.md` entries; the changed
+  matrix passes focused Markdown lint.
+- Next: commit the final hardening changes and open the unmerged PER-348 pull
+  request.

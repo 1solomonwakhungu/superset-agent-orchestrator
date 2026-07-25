@@ -35,7 +35,6 @@ export interface LaunchAcceptance {
 }
 
 export class LaunchService {
-  private static readonly activeDispatches = new Set<string>();
   private dispatchTimer: NodeJS.Timeout | undefined;
   private dispatching: Promise<void> | undefined;
 
@@ -101,6 +100,14 @@ export class LaunchService {
     for (const assignment of await this.store.pendingAssignments()) await this.dispatch(assignment);
   }
 
+  async stop(): Promise<void> {
+    if (this.dispatchTimer !== undefined) {
+      clearTimeout(this.dispatchTimer);
+      this.dispatchTimer = undefined;
+    }
+    await this.dispatching;
+  }
+
   private scheduleDispatch(delayMs: number): void {
     if (this.dispatchTimer !== undefined || this.dispatching !== undefined) return;
     this.dispatchTimer = setTimeout(() => {
@@ -118,10 +125,9 @@ export class LaunchService {
   }
 
   private async dispatch(assignment: Assignment): Promise<void> {
-    const dispatchKey = `${this.store.statePath}\0${assignment.id}`;
-    if (LaunchService.activeDispatches.has(dispatchKey)) return;
-    LaunchService.activeDispatches.add(dispatchKey);
-    try {
+    await this.store.withLaunchDispatchLock(assignment.id, async () => {
+      assignment = await this.store.assignmentForResult(assignment.id);
+      if (assignment.status !== "accepted" && assignment.status !== "launching") return;
       if (assignment.status === "accepted") {
         const startedAt = this.now().toISOString();
         const reserved = await this.store.recordLaunchEvent(
@@ -161,9 +167,7 @@ export class LaunchService {
         event(assignment.id, "execution_started", launchedAt, { runId: handle.runId }),
       );
       this.injectCrash("after_launch_recorded");
-    } finally {
-      LaunchService.activeDispatches.delete(dispatchKey);
-    }
+    });
   }
 }
 

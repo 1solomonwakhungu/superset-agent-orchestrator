@@ -167,6 +167,7 @@ test("retries transient background dispatch failure without another launch reque
     }
     assert.equal(adapter.launches.length, 1);
     assert.ok(attempts >= 2);
+    await service.stop();
   });
 });
 

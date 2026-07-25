@@ -126,6 +126,33 @@ test("concurrent conflicting deliveries persist exactly one authoritative result
   }
 });
 
+test("rejects forged result attribution without mutating durable state", async () => {
+  const context = await fixture();
+  try {
+    const assignment = await context.store.assignmentForResult(context.accepted.assignmentId);
+    const before = await readFile(context.path, "utf8");
+    await assert.rejects(context.store.captureResult({
+      deliveryId: "forged-attribution",
+      deliveryFingerprint: "a".repeat(64),
+      assignmentId: assignment.id,
+      batchId: assignment.batchId,
+      sessionId: assignment.sessionId,
+      workspaceId: assignment.workspaceId ?? "",
+      workspacePath: assignment.workspacePath,
+      attemptId: assignment.attemptId ?? "",
+      attempt: assignment.attempt ?? 0,
+      runId: assignment.runId ?? "",
+      attribution: { agent: "attacker", task: assignment.attribution.task },
+      claim: { status: "succeeded", completeness: "complete", output: "forged" },
+      verifiedArtifacts: [],
+      capturedAt: new Date().toISOString(),
+    }), /attribution does not match/);
+    assert.equal(await readFile(context.path, "utf8"), before);
+  } finally {
+    await rm(context.directory, { recursive: true, force: true });
+  }
+});
+
 test("does not capture a nonterminal adapter result", async () => {
   const directory = await mkdtemp(join(tmpdir(), "orchestrator-result-"));
   try {

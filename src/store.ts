@@ -299,6 +299,22 @@ export class DurableStore {
 
   get statePath(): string { return this.path; }
 
+  async withLaunchDispatchLock<T>(assignmentId: string, operation: () => Promise<T>): Promise<T> {
+    await mkdir(dirname(this.path), { recursive: true });
+    const lockPath = `${this.path}.${assignmentId}.dispatch`;
+    const release = await lockfile.lock(lockPath, {
+      realpath: false,
+      stale: 10_000,
+      update: 2_000,
+      retries: { retries: 50, minTimeout: 50, maxTimeout: 200 },
+    });
+    try {
+      return await operation();
+    } finally {
+      await release();
+    }
+  }
+
   async createBatch(
     name: string,
     clientId: string,
@@ -597,6 +613,10 @@ export class DurableStore {
       const identities = ["batchId", "sessionId", "workspaceId", "workspacePath", "attemptId", "attempt", "runId"] as const;
       for (const identity of identities) {
         if (assignment[identity] !== input[identity]) throw new Error(`Result ${identity} does not match its assignment`);
+      }
+      if (assignment.attribution.agent !== input.attribution.agent
+        || assignment.attribution.task !== input.attribution.task) {
+        throw new Error("Result attribution does not match its assignment");
       }
       if (assignment.status !== "launched") throw new Error("Results require a launched assignment");
       const results = this.state.capturedResults ??= [];
