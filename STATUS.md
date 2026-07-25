@@ -1,5 +1,12 @@
 # Status
 
+## PER-230 vllm-mlx soak safety gate
+
+- Completed: PER-230 pre-test validation and safety-gate report.
+- Result: Three-hour soak skipped because net swap grew 2,065.69 MiB in 5m48s before model start, exceeding the 2 GiB hard-stop threshold.
+- Safety: No model started, port 8001 remained closed, and all three protected hashes were unchanged.
+- Next: Merge the report and return PER-230 to Backlog with exact blocker evidence.
+
 ## PER-333 workspace lease and writer safety
 
 - Defined exclusive cross-process writer admission using a durable generation and
