@@ -57,6 +57,7 @@ test("publishes the complete versioned tool surface", async () => {
     "sessions_status",
     "sessions_results",
     "sessions_cancel",
+    "batches_cancel",
     "batches_get",
     "batches_wait",
     "batches_recover",

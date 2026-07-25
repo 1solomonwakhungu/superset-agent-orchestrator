@@ -98,7 +98,7 @@ test("mixed states expose completed results independently with exact attribution
     const status = await store.batchStatus("batch");
     assert.deepEqual(status.summary, {
       total: 4, settled: 3, complete: false, partiallyComplete: true,
-      counts: { requested: 1, running: 0, succeeded: 1, failed: 1, unknown_outcome: 1 },
+      counts: { requested: 1, running: 0, canceling: 0, succeeded: 1, failed: 1, canceled: 0, unknown_outcome: 1 },
     });
     const results = await store.batchResults("batch");
     assert.deepEqual(results.results.map(({ sessionId, batchId, attribution, result }) => ({ sessionId, batchId, attribution, result })), [

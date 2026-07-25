@@ -27,12 +27,21 @@ export type RunResult =
   | { status: "failed"; error: string; retryable: boolean; output?: string; resume?: ResumeMetadata }
   | { status: "cancelled"; reason?: string; output?: string; resume?: ResumeMetadata };
 
+export type CancellationOutcome =
+  | { status: "accepted" }
+  | { status: "unsupported" };
+
 export interface AgentAdapter {
+  /**
+   * Declares whether this backend can actually stop a run. Anything other than "supported" makes the
+   * orchestrator refuse cancellation with CANCEL_UNSUPPORTED instead of recording an intent it cannot honor.
+   */
+  readonly cancellation?: "supported" | "unsupported";
   /** Returns the one run previously accepted for this key, or undefined when absence is authoritative. */
   findByIdempotencyKey(idempotencyKey: string): Promise<RunHandle | undefined>;
   launch(request: LaunchRequest): Promise<RunHandle>;
   status(handle: RunHandle): Promise<RunState>;
   result(handle: RunHandle): Promise<RunResult | undefined>;
-  cancel(handle: RunHandle, reason?: string): Promise<void>;
+  cancel(handle: RunHandle, reason?: string): Promise<CancellationOutcome | void>;
   resumeMetadata(handle: RunHandle): Promise<ResumeMetadata | undefined>;
 }

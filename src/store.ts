@@ -7,7 +7,10 @@ import { dirname } from "node:path";
 import lockfile from "proper-lockfile";
 import { z } from "zod";
 
-export type WorkerStatus = "requested" | "running" | "succeeded" | "failed" | "unknown_outcome";
+export type WorkerStatus = "requested" | "running" | "canceling" | "succeeded" | "failed" | "canceled" | "unknown_outcome";
+export type TerminalWorkerStatus = Extract<WorkerStatus, "succeeded" | "failed" | "canceled" | "unknown_outcome">;
+/** Stop reasons the state machine allows for a canceled session. */
+export type CancellationReason = "user_requested" | "orchestrator_shutdown" | "superseded" | "policy_revoked";
 export type DiagnosticKind = "orphan" | "unknown_outcome" | "missing_result";
 export type LaunchStatus = "reserved" | "dispatching" | "unknown_outcome" | "bound";
 export type ResultCompleteness = "complete" | "empty" | "partial" | "missing" | "malformed";
@@ -47,6 +50,20 @@ export interface Worker {
   completedAt?: string;
   result?: unknown;
   position?: number;
+  runId?: string;
+  stopReason?: string;
+  stopDetail?: string;
+  cancelRequestedAt?: string;
+  preCancelStatus?: WorkerStatus;
+  deadlineAt?: string;
+  lateObservations?: LateObservation[];
+}
+
+/** Evidence that arrived after a worker was already terminal. It never changes state. */
+export interface LateObservation {
+  observedAt: string;
+  status: string;
+  retainedResult: boolean;
 }
 
 export interface BatchAssignment {
@@ -186,16 +203,43 @@ const batchSchema = z.object({
   createdAt: z.iso.datetime(), updatedAt: z.iso.datetime(), idempotencyKey: z.string().min(1).optional(),
   clientId: z.string().min(1).optional(), requestFingerprint: z.string().min(1).optional(),
 });
+const workerStatusSchema = z.enum([
+  "requested", "running", "canceling", "succeeded", "failed", "canceled", "unknown_outcome",
+]);
+/**
+ * Stop reasons the authoritative state machine allows per terminal status.
+ * See docs/session-state-machine.md; deadlines are a `failed`/`deadline_exceeded` outcome,
+ * not a separate terminal state.
+ */
+const STOP_REASONS_BY_STATUS = {
+  succeeded: new Set(["succeeded", "succeeded_before_cancellation"]),
+  failed: new Set([
+    "invalid_request", "policy_denied", "dependency_unavailable", "launch_error", "launch_timeout",
+    "execution_error", "worker_crash", "resource_exhausted", "deadline_exceeded", "artifact_error",
+  ]),
+  canceled: new Set(["user_requested", "orchestrator_shutdown", "superseded", "policy_revoked"]),
+} as const;
+const CANCELLATION_REASONS: ReadonlySet<string> = STOP_REASONS_BY_STATUS.canceled;
 const workerSchema = z.object({
   id: z.string().min(1), batchId: z.string().min(1), sessionId: z.string().min(1),
   pid: z.number().int().positive().optional(),
   processStartedAt: z.string().min(1).optional(),
-  status: z.enum(["requested", "running", "succeeded", "failed", "unknown_outcome"]),
+  status: workerStatusSchema,
   attribution: attributionSchema, startedAt: z.iso.datetime(), completedAt: z.iso.datetime().optional(),
-  result: z.unknown().optional(), position: z.number().int().nonnegative().optional(),
+  result: z.unknown().optional(), position: z.number().int().nonnegative().optional(), runId: z.string().min(1).optional(),
+  stopReason: z.string().min(1).optional(), stopDetail: z.string().min(1).optional(),
+  cancelRequestedAt: z.iso.datetime().optional(), preCancelStatus: workerStatusSchema.optional(),
+  deadlineAt: z.iso.datetime().optional(),
+  lateObservations: z.array(z.object({
+    observedAt: z.iso.datetime(), status: z.string().min(1), retainedResult: z.boolean(),
+  })).optional(),
 }).superRefine((worker, context) => {
   if (worker.status === "running" && (worker.pid === undefined || worker.processStartedAt === undefined)) {
     context.addIssue({ code: "custom", message: "Running workers require a PID and process start token" });
+  }
+  const allowed = STOP_REASONS_BY_STATUS[worker.status as keyof typeof STOP_REASONS_BY_STATUS];
+  if (allowed !== undefined && worker.stopReason !== undefined && !allowed.has(worker.stopReason)) {
+    context.addIssue({ code: "custom", message: `${worker.status} cannot use stop reason ${JSON.stringify(worker.stopReason)}` });
   }
 });
 const diagnosticSchema = z.object({
@@ -358,10 +402,10 @@ export class DurableStore {
     return this.withFreshState(() => {
     const page = this.queryBatch("batch_status", batchId, options);
     const counts: Record<WorkerStatus, number> = {
-      requested: 0, running: 0, succeeded: 0, failed: 0, unknown_outcome: 0,
+      requested: 0, running: 0, canceling: 0, succeeded: 0, failed: 0, canceled: 0, unknown_outcome: 0,
     };
     for (const worker of this.workersForBatch(batchId)) counts[worker.status] += 1;
-    const settled = counts.succeeded + counts.failed + counts.unknown_outcome;
+    const settled = counts.succeeded + counts.failed + counts.canceled + counts.unknown_outcome;
     return {
       ...page,
       sessions: page.sessions.map(({ id, batchId: attributedBatchId, status, attribution, startedAt, completedAt }) => ({
@@ -398,6 +442,153 @@ export class DurableStore {
     });
   }
 
+  async worker(workerId: string): Promise<Worker | undefined> {
+    return this.withFreshState(() => {
+      const worker = this.workersById.get(workerId);
+      return worker === undefined ? undefined : structuredClone(worker);
+    });
+  }
+
+  async workersInBatch(batchId: string): Promise<Worker[]> {
+    return this.withFreshState(() => {
+      if (!this.batchesById.has(batchId)) throw new BatchQueryError("not_found", `Unknown batch ID: ${batchId}`);
+      return structuredClone(this.workersForBatch(batchId));
+    });
+  }
+
+  /**
+   * Binds a worker to exactly one execution identity. A rebind to a different run ID is refused so a
+   * single session can never be attributed to two executions. Process evidence promotes the worker to
+   * `running`; without it the status is left alone, because `running` requires a liveness token.
+   */
+  async bindWorkerRun(
+    workerId: string,
+    runId: string,
+    execution: { pid: number; processStartedAt: string } | undefined = undefined,
+  ): Promise<Worker> {
+    return this.updateWorker(workerId, (worker) => {
+      if (worker.runId !== undefined && worker.runId !== runId) {
+        throw new BatchQueryError("invalid_request", "Worker is already bound to another run");
+      }
+      worker.runId = runId;
+      if (execution !== undefined && (worker.status === "requested" || worker.status === "running")) {
+        worker.status = "running";
+        worker.pid = execution.pid;
+        worker.processStartedAt = execution.processStartedAt;
+      }
+    });
+  }
+
+  /** Records the wall-clock instant after which a nonterminal worker must be expired. */
+  async setWorkerDeadline(workerId: string, deadline: Date): Promise<Worker> {
+    return this.updateWorker(workerId, (worker) => {
+      worker.deadlineAt = deadline.toISOString();
+    });
+  }
+
+  /**
+   * Durably records cancellation intent before any provider call. Repeated or concurrent requests are
+   * idempotent and preserve the first reason; only the caller that actually performed the transition
+   * receives `claimed: true`, so exactly one caller is responsible for issuing the provider stop.
+   */
+  async requestWorkerCancellation(
+    workerId: string,
+    reason: CancellationReason = "user_requested",
+    options: { detail?: string; at?: Date } = {},
+  ): Promise<{ worker: Worker; claimed: boolean }> {
+    if (!CANCELLATION_REASONS.has(reason)) {
+      throw new BatchQueryError("invalid_request", `Unsupported cancellation reason: ${reason}`);
+    }
+    const at = options.at ?? new Date();
+    let claimed = false;
+    const worker = await this.updateWorker(workerId, (candidate) => {
+      if (DurableStore.isTerminal(candidate.status) || candidate.status === "canceling") return;
+      claimed = true;
+      candidate.preCancelStatus = candidate.status;
+      candidate.status = "canceling";
+      candidate.cancelRequestedAt = at.toISOString();
+      candidate.stopReason = reason;
+      if (options.detail !== undefined) candidate.stopDetail = options.detail;
+    });
+    return { worker, claimed };
+  }
+
+  /**
+   * Withdraws unconfirmed cancellation intent, restoring the pre-cancel status. Used when a backend
+   * that advertised cancellation rejects the command as unsupported, so state stays honest.
+   */
+  async clearWorkerCancellation(workerId: string): Promise<Worker> {
+    return this.updateWorker(workerId, (worker) => {
+      if (worker.status !== "canceling") return;
+      worker.status = worker.preCancelStatus ?? "requested";
+      delete worker.preCancelStatus;
+      delete worker.cancelRequestedAt;
+      delete worker.stopReason;
+      delete worker.stopDetail;
+    });
+  }
+
+  /**
+   * Appends the one winning terminal outcome. Terminal state is monotonic: a later observation never
+   * changes status or stop reason, but its result is retained and audited as a late observation.
+   */
+  async recordWorkerTerminal(
+    workerId: string,
+    status: TerminalWorkerStatus,
+    options: { result?: unknown; stopReason?: string; at?: Date } = {},
+  ): Promise<Worker> {
+    const at = options.at ?? new Date();
+    return this.updateWorker(workerId, (worker) => {
+      if (DurableStore.isTerminal(worker.status)) {
+        const retainedResult = options.result !== undefined && worker.result === undefined;
+        if (retainedResult) worker.result = options.result;
+        (worker.lateObservations ??= []).push({ observedAt: at.toISOString(), status, retainedResult });
+        return;
+      }
+      const cancellationRequested = worker.status === "canceling";
+      worker.status = status;
+      worker.completedAt = at.toISOString();
+      if (options.result !== undefined) worker.result = options.result;
+      delete worker.preCancelStatus;
+      const stopReason = options.stopReason
+        ?? (status === "succeeded" ? (cancellationRequested ? "succeeded_before_cancellation" : "succeeded") : undefined)
+        ?? (status === "canceled" ? (worker.stopReason ?? "user_requested") : undefined)
+        ?? (status === "failed" ? "execution_error" : undefined);
+      if (stopReason === undefined) delete worker.stopReason;
+      else worker.stopReason = stopReason;
+    });
+  }
+
+  /**
+   * Expires one worker whose deadline passed. Per the state machine this is `failed`/`deadline_exceeded`.
+   * Only the caller that performed the transition receives `claimed: true`, so concurrent sweeps report
+   * each expiry exactly once.
+   */
+  async expireWorker(workerId: string, options: { deadline?: Date; at?: Date } = {}): Promise<{ worker: Worker; claimed: boolean }> {
+    const at = options.at ?? new Date();
+    let claimed = false;
+    const worker = await this.updateWorker(workerId, (candidate) => {
+      if (options.deadline !== undefined) candidate.deadlineAt = options.deadline.toISOString();
+      if (DurableStore.isTerminal(candidate.status)) return;
+      claimed = true;
+      candidate.status = "failed";
+      candidate.stopReason = "deadline_exceeded";
+      candidate.completedAt = at.toISOString();
+      delete candidate.preCancelStatus;
+    });
+    return { worker, claimed };
+  }
+
+  /** Returns every nonterminal worker whose recorded deadline is at or before `now`, oldest deadline first. */
+  async overdueWorkers(now = new Date()): Promise<Worker[]> {
+    const cutoff = now.toISOString();
+    return this.withFreshState(() => structuredClone(this.state.workers
+      .filter((worker) => worker.deadlineAt !== undefined
+        && worker.deadlineAt <= cutoff
+        && !DurableStore.isTerminal(worker.status))
+      .sort((left, right) => left.deadlineAt!.localeCompare(right.deadlineAt!))));
+  }
+
   async reconcile(now = new Date()): Promise<ReconciliationSummary> {
     return this.withLock(async () => {
       await this.load();
@@ -424,6 +615,15 @@ export class DurableStore {
           worker.status = "unknown_outcome";
           worker.completedAt = detectedAt;
           diagnose("unknown_outcome", worker, "Worker process was absent during startup reconciliation");
+        }
+
+        // A canceling worker whose process is provably gone never reported its terminal outcome.
+        if (worker.status === "canceling" && worker.pid !== undefined
+          && !this.isProcessAlive(worker.pid, worker.processStartedAt)) {
+          worker.status = "unknown_outcome";
+          worker.completedAt = detectedAt;
+          delete worker.preCancelStatus;
+          diagnose("unknown_outcome", worker, "Canceling worker process was absent during reconciliation");
         }
 
         if ((worker.status === "succeeded" || worker.status === "failed") && worker.result === undefined) {
@@ -763,6 +963,21 @@ export class DurableStore {
       await this.load();
       return query();
     });
+  }
+
+  private async updateWorker(workerId: string, update: (worker: Worker) => void): Promise<Worker> {
+    return this.withLock(async () => {
+      await this.load();
+      const worker = this.workersById.get(workerId);
+      if (worker === undefined) throw new BatchQueryError("not_found", `Unknown session ID: ${workerId}`);
+      update(worker);
+      await this.persist();
+      return structuredClone(worker);
+    });
+  }
+
+  static isTerminal(status: WorkerStatus): status is TerminalWorkerStatus {
+    return status === "succeeded" || status === "failed" || status === "canceled" || status === "unknown_outcome";
   }
 
   static processStartedAt(pid: number): string | undefined {
