@@ -14,6 +14,11 @@
   only removes long-released rows and never the generation ledger.
 - Verification: `npm run verify` passes 110 of 110 tests after merging `main`,
   including cross-process race and crash tests that spawn real processes.
+- Stabilized the transient-dispatch test by waiting for its durable `launched`
+  state before temporary-store teardown, eliminating a write/cleanup race.
+- Additional verification: configuration contract 3/3 and strict local-routing
+  evidence verification passed. Whole-file Markdown lint remains blocked by
+  pre-existing violations in historical README and status content.
 - Outstanding for writer launch: canonical workspace identity resolution
   (`WORKSPACE_IDENTITY_CHANGED`), read-only sandbox sentinel enforcement, and
   process-group descendant reconciliation. Writer launch stays disabled.
