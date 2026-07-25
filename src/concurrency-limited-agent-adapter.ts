@@ -9,18 +9,32 @@ import type {
 import type { ConcurrencyScheduler, ConcurrencyScope } from "./concurrency-scheduler.js";
 
 export type ScopeResolver = (request: Readonly<LaunchRequest>) => ConcurrencyScope;
+export type RecoveryScopeResolver = (
+  idempotencyKey: string,
+  handle: Readonly<RunHandle>,
+) => ConcurrencyScope | Promise<ConcurrencyScope>;
 
 export class ConcurrencyLimitedAgentAdapter implements AgentAdapter {
   private readonly releases = new Map<string, () => void>();
+  private readonly recoveries = new Map<string, Promise<RunHandle | undefined>>();
 
   constructor(
     private readonly adapter: AgentAdapter,
     private readonly scheduler: ConcurrencyScheduler,
     private readonly resolveScope: ScopeResolver,
+    private readonly resolveRecoveryScope: RecoveryScopeResolver,
   ) {}
 
   findByIdempotencyKey(idempotencyKey: string): Promise<RunHandle | undefined> {
-    return this.adapter.findByIdempotencyKey(idempotencyKey);
+    const existing = this.recoveries.get(idempotencyKey);
+    if (existing !== undefined) return existing;
+    const recovery = this.recover(idempotencyKey);
+    this.recoveries.set(idempotencyKey, recovery);
+    void recovery.then(
+      () => this.recoveries.delete(idempotencyKey),
+      () => this.recoveries.delete(idempotencyKey),
+    );
+    return recovery;
   }
 
   async launch(request: LaunchRequest): Promise<RunHandle> {
@@ -64,6 +78,20 @@ export class ConcurrencyLimitedAgentAdapter implements AgentAdapter {
 
   resumeMetadata(handle: RunHandle): Promise<ResumeMetadata | undefined> {
     return this.adapter.resumeMetadata(handle);
+  }
+
+  private async recover(idempotencyKey: string): Promise<RunHandle | undefined> {
+    const handle = await this.adapter.findByIdempotencyKey(idempotencyKey);
+    if (handle === undefined || this.releases.has(handle.runId)) return handle;
+    const state = await this.adapter.status(handle);
+    if (state.status === "succeeded" || state.status === "failed" || state.status === "cancelled") return handle;
+    const release = await this.scheduler.acquire({
+      id: idempotencyKey,
+      ...await this.resolveRecoveryScope(idempotencyKey, handle),
+    });
+    if (this.releases.has(handle.runId)) release();
+    else this.releases.set(handle.runId, release);
+    return handle;
   }
 
   private release(runId: string): void {

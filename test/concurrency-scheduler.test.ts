@@ -132,6 +132,44 @@ test("resource and rate-limit hooks back off the FIFO head without bypass", asyn
   assert.ok(checks >= 3);
 });
 
+test("pressure rejects structurally when waiting is disabled", async () => {
+  for (const policy of [{ overload: "reject" as const }, { maxQueued: 0 }]) {
+    const scheduler = new ConcurrencyScheduler(policy, [() => ({
+      ready: false, retryAfterMs: 60_000, reason: "memory_pressure",
+    })]);
+    await assert.rejects(
+      scheduler.acquire(base),
+      (error: unknown) => error instanceof ConcurrencyError
+        && error.code === "CONCURRENCY_LIMIT"
+        && error.detail.limits?.includes("memory_pressure") === true,
+    );
+    assert.equal(scheduler.snapshot().queued.length, 0);
+  }
+});
+
+test("cancellation during a pressure check does not remove the next request", async () => {
+  let finishCheck = (_decision: { ready: boolean }): void => undefined;
+  const check = new Promise<{ ready: boolean }>((resolve) => { finishCheck = resolve; });
+  let checks = 0;
+  const scheduler = new ConcurrencyScheduler({}, [() => {
+    checks += 1;
+    return checks === 1 ? check : { ready: true };
+  }]);
+  const abort = new AbortController();
+  const cancelledAdmission = scheduler.acquire({ ...base, signal: abort.signal });
+  const next = scheduler.acquire({ ...base, id: "next", workspaceId: "workspace-2" });
+
+  abort.abort();
+  finishCheck({ ready: false });
+  await assert.rejects(
+    cancelledAdmission,
+    (error: unknown) => error instanceof ConcurrencyError && error.code === "CANCELLED",
+  );
+  const release = await next;
+  assert.equal(scheduler.snapshot().active, 1);
+  release();
+});
+
 test("agent adapter holds capacity until terminal status and releases on cancellation", async () => {
   const scheduler = new ConcurrencyScheduler({ global: 1 });
   const delegate = new FakeAgentAdapter([
@@ -139,6 +177,8 @@ test("agent adapter holds capacity until terminal status and releases on cancell
     { statuses: ["queued", "cancelled"], result: { status: "cancelled" } },
   ]);
   const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => ({
+    hostId: "local", projectId: "project", agentId: "codex", workspaceId: "workspace",
+  }), () => ({
     hostId: "local", projectId: "project", agentId: "codex", workspaceId: "workspace",
   }));
   const first = await adapter.launch({ idempotencyKey: "first", prompt: "first", workspacePath: "/first" });
@@ -156,6 +196,45 @@ test("agent adapter holds capacity until terminal status and releases on cancell
   assert.equal(scheduler.snapshot().active, 0);
 });
 
+test("recovered running retries reacquire capacity without duplicate permits", async () => {
+  const scheduler = new ConcurrencyScheduler({ global: 1 });
+  const delegate = new FakeAgentAdapter([
+    { statuses: ["running", "running", "succeeded"], result: { status: "succeeded", output: "recovered" } },
+  ]);
+  const scope = {
+    hostId: "local", projectId: "project", agentId: "codex", workspaceId: "workspace",
+  };
+  const original = await delegate.launch({ idempotencyKey: "recovered", prompt: "first", workspacePath: "/first" });
+  const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => scope, () => scope);
+
+  const [first, duplicate] = await Promise.all([
+    adapter.findByIdempotencyKey("recovered"),
+    adapter.findByIdempotencyKey("recovered"),
+  ]);
+  assert.deepEqual(first, original);
+  assert.deepEqual(duplicate, original);
+  assert.equal(scheduler.snapshot().active, 1);
+
+  const queued = scheduler.acquire({ ...base, id: "new-work", workspaceId: "workspace-2" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(scheduler.snapshot().queued[0]?.id, "new-work");
+  assert.equal((await adapter.status(original)).status, "running");
+  assert.equal((await adapter.status(original)).status, "succeeded");
+  (await queued)();
+});
+
+test("does not consume capacity for recovered terminal runs", async () => {
+  const scheduler = new ConcurrencyScheduler({ global: 1 });
+  const delegate = new FakeAgentAdapter([
+    { statuses: ["succeeded"], result: { status: "succeeded", output: "complete" } },
+  ]);
+  const handle = await delegate.launch({ idempotencyKey: "complete", prompt: "first", workspacePath: "/first" });
+  const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => base, () => base);
+
+  assert.deepEqual(await adapter.findByIdempotencyKey("complete"), handle);
+  assert.equal(scheduler.snapshot().active, 0);
+});
+
 test("copies admission scope so caller mutation cannot leak capacity", async () => {
   const scheduler = new ConcurrencyScheduler({ global: 1 });
   const mutable = { ...base };
@@ -164,4 +243,11 @@ test("copies admission scope so caller mutation cannot leak capacity", async () 
   mutable.workspaceId = "changed";
   release();
   assert.equal(scheduler.snapshot().active, 0);
+});
+
+test("rejects an invalid overload mode at runtime", () => {
+  assert.throws(
+    () => new ConcurrencyScheduler({ overload: "invalid" as "queue" }),
+    /overload must be either/,
+  );
 });

@@ -93,6 +93,9 @@ export class ConcurrencyScheduler {
         throw new Error(`${name} must be a non-negative integer`);
       }
     }
+    if (this.policy.overload !== "queue" && this.policy.overload !== "reject") {
+      throw new Error('overload must be either "queue" or "reject"');
+    }
     for (const name of ["global", "perHost", "perProject", "perAgent", "perWorkspace"] as const) {
       if (this.policy[name] === 0) throw new Error(`${name} must be greater than zero`);
     }
@@ -134,7 +137,10 @@ export class ConcurrencyScheduler {
       if (request.signal !== undefined) {
         const onAbort = (): void => {
           const index = this.queue.indexOf(pending);
-          if (index !== -1) this.queue.splice(index, 1);
+          if (index !== -1) {
+            this.queue.splice(index, 1);
+            this.clearWakeTimer();
+          }
           reject(cancelled(this.queue.length));
           void this.drain();
         };
@@ -185,14 +191,20 @@ export class ConcurrencyScheduler {
             reason: error instanceof Error ? `pressure_hook_error:${error.message}` : "pressure_hook_error",
           };
         }
+        if (this.queue[0] !== pending) continue;
         if (!pressure.ready) {
           const retryAfterMs = Math.max(1, pressure.retryAfterMs ?? 1_000);
-          pending.pressureReadyAt = this.now().getTime() + retryAfterMs;
           pending.pressureReason = pressure.reason ?? "resource_pressure";
+          if (this.policy.overload === "reject" || this.policy.maxQueued === 0) {
+            this.queue.shift();
+            pending.removeAbortListener?.();
+            pending.reject(overloaded(this.queue.length, [pending.pressureReason]));
+            continue;
+          }
+          pending.pressureReadyAt = this.now().getTime() + retryAfterMs;
           this.scheduleDrain(retryAfterMs);
           return;
         }
-        if (this.queue[0] !== pending) continue;
         this.queue.shift();
         pending.removeAbortListener?.();
         this.active.set(pending.request.id, pending.request);
@@ -224,6 +236,12 @@ export class ConcurrencyScheduler {
       this.wakeTimer = undefined;
       void this.drain();
     }, boundedDelay);
+  }
+
+  private clearWakeTimer(): void {
+    if (this.wakeTimer === undefined) return;
+    clearTimeout(this.wakeTimer);
+    this.wakeTimer = undefined;
   }
 
   private blockedBy(request: AdmissionRequest): string[] {
