@@ -14,6 +14,25 @@
   verification and `git diff --check` passed.
 - Next: deliver through the PER-344 pull request and verify fetched `main`.
 
+## PER-230 vllm-mlx soak safety gate
+
+- Completed: PER-230 pre-test validation and safety-gate report.
+- Result: Three-hour soak skipped because net swap grew 2,065.69 MiB in 5m48s before model start, exceeding the 2 GiB hard-stop threshold.
+- Safety: No model started, port 8001 remained closed, and all three protected hashes were unchanged.
+- Next: Merge the report and return PER-230 to Backlog with exact blocker evidence.
+
+## PER-350 second real response adapter
+
+- Selected the enabled OpenCode preset without enabling or invoking Claude.
+- Added documented OpenCode assistant-response normalization while preserving
+  the existing core domain and MCP contracts.
+- Added shared Codex/OpenCode conformance coverage for launch identity, exact
+  result, attribution, terminal states, and fail-closed malformed responses.
+- Documented the supported boundary and unsupported lifecycle/features.
+- Verification: `npm run verify` passed 101/101 tests, focused Markdown lint,
+  strict local-routing verification, and `git diff --check` passed.
+- Next: deliver through the PER-350 pull request and verify merged `main`.
+
 ## PER-333 workspace lease and writer safety
 
 - Defined exclusive cross-process writer admission using a durable generation and
