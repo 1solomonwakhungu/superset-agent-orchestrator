@@ -12,8 +12,12 @@
 - Verification: `npm run verify` passed 106/106 runnable tests with one explicit
   Superset Desktop skip; `npm run compatibility:probe` returned the expected
   actionable unknown; `git diff --check` passed.
-- Next: deliver through PR, verify exact-head checks and merged main, then
-  reconcile PER-352.
+- Delivery blocker: GitHub rejected the branch push because the active OAuth
+  credential has `repo` but not `workflow` scope, which is required to add
+  `.github/workflows/compatibility.yml`. SSH authentication is unavailable and
+  non-interactive `gh auth refresh --scopes workflow` did not authorize the scope.
+- Next: authorize GitHub workflow write scope, push local head, then verify the
+  exact-head matrix, merge, and verify fetched `main` before closing PER-352.
 
 ## PER-230 vllm-mlx soak safety gate
 
