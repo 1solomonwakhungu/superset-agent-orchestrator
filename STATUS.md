@@ -88,6 +88,15 @@ PER-341 startup reconciliation and batch recovery are complete.
 - GitHub reported the exact head clean and mergeable with no required checks.
 - Next: merge PR 7 and reconcile PER-341 in Linear.
 
+PER-336 embedded persistence implementation is in progress.
+
+- Added typed repositories for every durable SQLite entity.
+- Added transactional repository operations and atomic logical export.
+- Added read-only full integrity diagnostics and executable export/integrity commands.
+- Added repository, rollback, corruption, export, and CLI verification coverage.
+- Current verification: `npm run verify` passed 94/94 tests.
+- Next: reconcile current main, commit, push, open and merge the verified PR, then verify main.
+
 PER-340 exact result capture and attribution are implemented locally.
 
 - Added fail-closed Codex response validation and exact empty/partial handling.
