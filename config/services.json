@@ -1,0 +1,49 @@
+{
+  "services": [
+    {
+      "name": "agency",
+      "url": "https://agency.sullylab.de/",
+      "expected_status": 200,
+      "content_regex": "(?i)(agency|infrastructure)",
+      "timeout_seconds": 15,
+      "certificate_warning_days": 21,
+      "slo": {"availability_percent": 99.5, "window_days": 7}
+    },
+    {
+      "name": "compliance",
+      "url": "https://compliance.sullylab.de/",
+      "expected_status": 200,
+      "content_regex": "(?i)compliance",
+      "timeout_seconds": 15,
+      "certificate_warning_days": 21,
+      "slo": {"availability_percent": 99.5, "window_days": 7}
+    },
+    {
+      "name": "notes",
+      "url": "https://notes.sullylab.de/",
+      "expected_status": 200,
+      "content_regex": "(?i)(note|summar)",
+      "timeout_seconds": 15,
+      "certificate_warning_days": 21,
+      "slo": {"availability_percent": 99.0, "window_days": 7}
+    },
+    {
+      "name": "pricing",
+      "url": "https://pricing.sullylab.de/",
+      "expected_status": 200,
+      "content_regex": "(?i)(pric|cost)",
+      "timeout_seconds": 15,
+      "certificate_warning_days": 21,
+      "slo": {"availability_percent": 99.0, "window_days": 7}
+    },
+    {
+      "name": "roi",
+      "url": "https://roi.sullylab.de/",
+      "expected_status": 200,
+      "content_regex": "(?i)(ROI|return on investment)",
+      "timeout_seconds": 15,
+      "certificate_warning_days": 21,
+      "slo": {"availability_percent": 99.0, "window_days": 7}
+    }
+  ]
+}
