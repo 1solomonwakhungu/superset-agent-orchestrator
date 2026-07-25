@@ -1,5 +1,23 @@
 # Status
 
+## PER-343 workspace lease enforcement
+
+- Added transactional writer acquisition, monotonic generations, private fencing
+  tokens, compare-and-set heartbeats, two-phase release, quarantine, evidence-based
+  repair, and append-only lease audit events. Schema version 3 adds the
+  `workspace_fencing` generation ledger and owner process identity columns.
+- Added the exclusive cross-process lock layer in `WorkspaceSafetyTool`, plus a
+  read-only safety diagnostic that changes no authority.
+- Fixed a denial-audit bug: a refused acquisition rolled back its own
+  `policy_denied` event, so refusals are now recorded outside the transaction.
+- Expiry no longer deletes or releases a potentially live lease; retention cleanup
+  only removes long-released rows and never the generation ledger.
+- Verification: `npm run verify` passes 98 of 98 tests, including cross-process
+  race and crash tests that spawn real operating-system processes.
+- Outstanding for writer launch: canonical workspace identity resolution
+  (`WORKSPACE_IDENTITY_CHANGED`), read-only sandbox sentinel enforcement, and
+  process-group descendant reconciliation. Writer launch stays disabled.
+
 ## PER-333 workspace lease and writer safety
 
 - Defined exclusive cross-process writer admission using a durable generation and
