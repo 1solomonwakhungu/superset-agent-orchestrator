@@ -217,3 +217,26 @@ PER-331 idempotency and restart recovery implementation is complete locally.
   `./scripts/verify-per-323.sh` passed, and `git diff --check` passed.
 - Next: commit, push, open the PER-331 pull request, verify its exact head, merge,
   verify `main`, and mark Linear Done.
+
+PER-336 embedded persistence and migrations is complete and verified locally.
+
+- Reconciled the feature branch with `origin/main` at `90cef0d` via a clean merge
+  commit. No conflicts, no force push, no history rewrite, no data deleted.
+- Durable schema is at version 2 with `batches`, `assignments`, `sessions`,
+  `results`, `events`, `workspace_leases`, `idempotency_records`, and the
+  `schema_migrations` ledger, all `STRICT`.
+- Migrations apply each forward step and its ledger row inside one
+  `BEGIN IMMEDIATE` transaction. An unknown future schema fails closed.
+  `rollback(target, backupPath)` requires and integrity-verifies a distinct
+  backup before stepping down.
+- Typed transactional repositories cover every durable entity, roll entities and
+  events back together, and fail closed on malformed persisted JSON.
+- `exportJson` writes a versioned logical export atomically. `checkIntegrity`
+  opens the registry read-only and verifies SQLite integrity, foreign keys,
+  contiguous migration ledger, and required tables, triggers, and indexes.
+- Corruption diagnostics fail closed at startup and in the CLI without
+  replacing, truncating, or salvaging the original bytes.
+- Verification after clean install: `npm ci` exit 0 (2 moderate audit findings,
+  pre-existing), `npm run build` exit 0, `npm run check` exit 0, `npm test`
+  106/106 passing, storage/migration/corruption suites 12/12 passing.
+- Next: PR review and merge. Linear is owned by the parent factory.
