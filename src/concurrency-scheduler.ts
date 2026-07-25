@@ -1,0 +1,279 @@
+export interface ConcurrencyPolicy {
+  global: number;
+  perHost: number;
+  perProject: number;
+  perAgent: number;
+  perWorkspace: number;
+  maxQueued: number;
+  overload: "queue" | "reject";
+}
+
+export interface ConcurrencyScope {
+  hostId: string;
+  projectId: string;
+  agentId: string;
+  workspaceId: string;
+}
+
+export interface AdmissionRequest extends ConcurrencyScope {
+  id: string;
+  signal?: AbortSignal;
+}
+
+export interface PressureDecision {
+  ready: boolean;
+  retryAfterMs?: number;
+  reason?: string;
+}
+
+export type PressureHook = (request: Readonly<AdmissionRequest>) => PressureDecision | Promise<PressureDecision>;
+
+export interface QueueEntry extends ConcurrencyScope {
+  id: string;
+  position: number;
+  enqueuedAt: string;
+  blockedBy: string[];
+}
+
+export interface SchedulerSnapshot {
+  active: number;
+  queued: QueueEntry[];
+  activeByHost: Record<string, number>;
+  activeByProject: Record<string, number>;
+  activeByAgent: Record<string, number>;
+  activeByWorkspace: Record<string, number>;
+}
+
+export class ConcurrencyError extends Error {
+  constructor(
+    readonly code: "CONCURRENCY_LIMIT" | "CANCELLED",
+    message: string,
+    readonly retryable: boolean,
+    readonly detail: { queueDepth: number; limits?: string[] },
+  ) {
+    super(message);
+  }
+}
+
+interface PendingRequest {
+  request: AdmissionRequest;
+  enqueuedAt: string;
+  resolve: (release: () => void) => void;
+  reject: (error: Error) => void;
+  removeAbortListener?: () => void;
+  pressureReadyAt: number;
+  pressureReason?: string;
+}
+
+const DEFAULT_POLICY: ConcurrencyPolicy = {
+  global: 8,
+  perHost: 4,
+  perProject: 4,
+  perAgent: 2,
+  perWorkspace: 1,
+  maxQueued: 100,
+  overload: "queue",
+};
+
+export class ConcurrencyScheduler {
+  private readonly policy: ConcurrencyPolicy;
+  private readonly queue: PendingRequest[] = [];
+  private readonly active = new Map<string, AdmissionRequest>();
+  private wakeTimer: NodeJS.Timeout | undefined;
+  private draining = false;
+
+  constructor(
+    policy: Partial<ConcurrencyPolicy> = {},
+    private readonly pressureHooks: readonly PressureHook[] = [],
+    private readonly now: () => Date = () => new Date(),
+  ) {
+    this.policy = { ...DEFAULT_POLICY, ...policy };
+    for (const [name, value] of Object.entries(this.policy)) {
+      if (name !== "overload" && (!Number.isInteger(value) || Number(value) < 0)) {
+        throw new Error(`${name} must be a non-negative integer`);
+      }
+    }
+    for (const name of ["global", "perHost", "perProject", "perAgent", "perWorkspace"] as const) {
+      if (this.policy[name] === 0) throw new Error(`${name} must be greater than zero`);
+    }
+  }
+
+  async run<T>(request: AdmissionRequest, operation: () => Promise<T>): Promise<T> {
+    const release = await this.acquire(request);
+    try {
+      if (request.signal?.aborted) throw cancelled(this.queue.length);
+      return await operation();
+    } finally {
+      release();
+    }
+  }
+
+  acquire(request: AdmissionRequest): Promise<() => void> {
+    validateRequest(request);
+    request = { id: request.id, ...scope(request), ...(request.signal !== undefined && { signal: request.signal }) };
+    if (request.signal?.aborted) return Promise.reject(cancelled(this.queue.length));
+    if (this.active.has(request.id) || this.queue.some(({ request: queued }) => queued.id === request.id)) {
+      return Promise.reject(new Error(`Admission ID ${request.id} is already active or queued`));
+    }
+    const limits = this.blockedBy(request);
+    if (this.policy.overload === "reject" && (this.queue.length > 0 || limits.length > 0)) {
+      return Promise.reject(overloaded(this.queue.length, limits));
+    }
+    if (this.queue.length >= this.policy.maxQueued && (this.queue.length > 0 || limits.length > 0)) {
+      return Promise.reject(overloaded(this.queue.length, limits));
+    }
+
+    return new Promise<() => void>((resolve, reject) => {
+      const pending: PendingRequest = {
+        request,
+        enqueuedAt: this.now().toISOString(),
+        resolve,
+        reject,
+        pressureReadyAt: 0,
+      };
+      if (request.signal !== undefined) {
+        const onAbort = (): void => {
+          const index = this.queue.indexOf(pending);
+          if (index !== -1) this.queue.splice(index, 1);
+          reject(cancelled(this.queue.length));
+          void this.drain();
+        };
+        request.signal.addEventListener("abort", onAbort, { once: true });
+        pending.removeAbortListener = () => request.signal?.removeEventListener("abort", onAbort);
+      }
+      this.queue.push(pending);
+      void this.drain();
+    });
+  }
+
+  snapshot(): SchedulerSnapshot {
+    return {
+      active: this.active.size,
+      queued: this.queue.map(({ request, enqueuedAt, pressureReason }, index) => ({
+        ...scope(request),
+        id: request.id,
+        position: index + 1,
+        enqueuedAt,
+        blockedBy: pressureReason !== undefined ? [pressureReason] : this.blockedBy(request),
+      })),
+      activeByHost: this.countBy("hostId"),
+      activeByProject: this.countBy("projectId"),
+      activeByAgent: this.countBy("agentId"),
+      activeByWorkspace: this.countBy("workspaceId"),
+    };
+  }
+
+  private async drain(): Promise<void> {
+    if (this.draining) return;
+    this.draining = true;
+    try {
+      while (this.queue.length > 0) {
+        const pending = this.queue[0];
+        if (pending === undefined || this.blockedBy(pending.request).length > 0) return;
+        const waitMs = pending.pressureReadyAt - this.now().getTime();
+        if (waitMs > 0) {
+          this.scheduleDrain(waitMs);
+          return;
+        }
+        let pressure: PressureDecision;
+        try {
+          pressure = await this.checkPressure(pending.request);
+        } catch (error) {
+          pressure = {
+            ready: false,
+            retryAfterMs: 1_000,
+            reason: error instanceof Error ? `pressure_hook_error:${error.message}` : "pressure_hook_error",
+          };
+        }
+        if (!pressure.ready) {
+          const retryAfterMs = Math.max(1, pressure.retryAfterMs ?? 1_000);
+          pending.pressureReadyAt = this.now().getTime() + retryAfterMs;
+          pending.pressureReason = pressure.reason ?? "resource_pressure";
+          this.scheduleDrain(retryAfterMs);
+          return;
+        }
+        if (this.queue[0] !== pending) continue;
+        this.queue.shift();
+        pending.removeAbortListener?.();
+        this.active.set(pending.request.id, pending.request);
+        let released = false;
+        pending.resolve(() => {
+          if (released) return;
+          released = true;
+          this.active.delete(pending.request.id);
+          void this.drain();
+        });
+      }
+    } finally {
+      this.draining = false;
+    }
+  }
+
+  private async checkPressure(request: AdmissionRequest): Promise<PressureDecision> {
+    for (const hook of this.pressureHooks) {
+      const decision = await hook(request);
+      if (!decision.ready) return decision;
+    }
+    return { ready: true };
+  }
+
+  private scheduleDrain(delayMs: number): void {
+    if (this.wakeTimer !== undefined) return;
+    const boundedDelay = Number.isFinite(delayMs) ? Math.min(Math.max(1, delayMs), 2_147_483_647) : 1_000;
+    this.wakeTimer = setTimeout(() => {
+      this.wakeTimer = undefined;
+      void this.drain();
+    }, boundedDelay);
+  }
+
+  private blockedBy(request: AdmissionRequest): string[] {
+    const blocked: string[] = [];
+    if (this.active.size >= this.policy.global) blocked.push("global");
+    if (this.count("hostId", request.hostId) >= this.policy.perHost) blocked.push("host");
+    if (this.count("projectId", request.projectId) >= this.policy.perProject) blocked.push("project");
+    if (this.count("agentId", request.agentId) >= this.policy.perAgent) blocked.push("agent");
+    if (this.count("workspaceId", request.workspaceId) >= this.policy.perWorkspace) blocked.push("workspace");
+    return blocked;
+  }
+
+  private count(key: keyof ConcurrencyScope, value: string): number {
+    let total = 0;
+    for (const request of this.active.values()) if (request[key] === value) total += 1;
+    return total;
+  }
+
+  private countBy(key: keyof ConcurrencyScope): Record<string, number> {
+    const counts: Record<string, number> = {};
+    for (const request of this.active.values()) counts[request[key]] = (counts[request[key]] ?? 0) + 1;
+    return counts;
+  }
+}
+
+function validateRequest(request: AdmissionRequest): void {
+  for (const [name, value] of Object.entries(scope(request))) {
+    if (value.length === 0) throw new Error(`${name} must not be empty`);
+  }
+  if (request.id.length === 0) throw new Error("id must not be empty");
+}
+
+function scope(request: ConcurrencyScope): ConcurrencyScope {
+  return {
+    hostId: request.hostId,
+    projectId: request.projectId,
+    agentId: request.agentId,
+    workspaceId: request.workspaceId,
+  };
+}
+
+function overloaded(queueDepth: number, limits: string[]): ConcurrencyError {
+  return new ConcurrencyError(
+    "CONCURRENCY_LIMIT",
+    "Concurrency capacity is unavailable",
+    true,
+    { queueDepth, limits },
+  );
+}
+
+function cancelled(queueDepth: number): ConcurrencyError {
+  return new ConcurrencyError("CANCELLED", "Admission was cancelled", false, { queueDepth });
+}
