@@ -19,6 +19,8 @@
     "build": "tsc -p tsconfig.json",
     "schema": "npm run build && node scripts/generate-tool-schema.mjs",
     "compatibility:probe": "node scripts/probe-compatibility.mjs",
+    "test:real:preflight": "node scripts/run-real-superset-codex-e2e.mjs --preflight",
+    "test:real": "node scripts/run-real-superset-codex-e2e.mjs",
     "start": "node dist/src/server.js",
     "test": "tsx --test test/**/*.test.ts test/**/*.test.mjs",
     "verify": "npm run build && npm test",

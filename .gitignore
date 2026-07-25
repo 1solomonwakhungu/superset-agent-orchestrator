@@ -1,5 +1,6 @@
-dist/
+artifacts/
 node_modules/
+dist/
 src/**/*.js
 src/**/*.d.ts
 test/**/*.js
