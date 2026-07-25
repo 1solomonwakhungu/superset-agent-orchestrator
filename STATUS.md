@@ -7,12 +7,15 @@
 - Added observable active/queued scope counts, abortable admission, guaranteed
   release, and resource-pressure/rate-limit backoff hooks that cannot skip the
   FIFO head.
+- Recovered running retries reacquire capacity, duplicate recovery shares one
+  permit, and cancellation during asynchronous pressure checks cannot disturb
+  the next queued request.
 - Added deterministic tests proving retries and batches hold capacity,
   cancellation frees capacity, every scope is enforced, and overload stays
-  bounded.
-- Verification: `npm run verify` passed all 96 tests; strict local-routing
-  verification and `git diff --check` passed.
-- Next: deliver through the PER-344 pull request and verify fetched `main`.
+  bounded or fails structurally when waiting is disabled.
+- Verification: `npm run verify` passed all 113 tests; the 3-test configuration
+  contract, strict local-routing verification, and `git diff --check` passed.
+- Next: deliver through pull request 23 and verify its exact head.
 
 ## PER-230 vllm-mlx soak safety gate
 
