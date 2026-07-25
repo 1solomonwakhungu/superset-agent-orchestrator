@@ -537,6 +537,45 @@ export class DurableStore {
     });
   }
 
+  async acceptLaunchBatch(input: {
+    assignments: Assignment[];
+    sessions: Session[];
+    batch: Batch;
+    events: LaunchAuditEvent[];
+  }): Promise<{ assignments: Assignment[]; created: boolean }> {
+    return this.withLock(async () => {
+      await this.load();
+      input.assignments.forEach((assignment) => assignmentSchema.parse(assignment));
+      input.sessions.forEach((session) => sessionSchema.parse(session));
+      batchSchema.parse(input.batch);
+      input.events.forEach((auditEvent) => auditEventSchema.parse(auditEvent));
+      const existing = input.assignments.map((assignment) =>
+        this.state.assignments.find(({ idempotencyKey }) => idempotencyKey === assignment.idempotencyKey));
+      if (existing.some((assignment) => assignment !== undefined)) {
+        if (existing.some((assignment) => assignment === undefined)) {
+          throw new Error("A batch idempotency replay matched only part of the original batch");
+        }
+        const replay = existing as Assignment[];
+        for (const [index, assignment] of replay.entries()) {
+          if (assignment.requestFingerprint !== input.assignments[index]?.requestFingerprint
+            || assignment.batchId !== input.batch.id) {
+            throw new Error("A batch idempotency key was reused with different launch input");
+          }
+        }
+        return { assignments: structuredClone(replay), created: false };
+      }
+      if (this.state.batches.some(({ id }) => id === input.batch.id)) {
+        throw new Error("A batch idempotency key was reused with different assignments");
+      }
+      this.state.sessions.push(...input.sessions);
+      this.state.batches.push(input.batch);
+      this.state.assignments.push(...input.assignments);
+      this.state.auditEvents.push(...input.events);
+      await this.persist();
+      return { assignments: structuredClone(input.assignments), created: true };
+    });
+  }
+
   async pendingAssignments(): Promise<Assignment[]> {
     return this.withLock(async () => {
       await this.load();
@@ -570,6 +609,20 @@ export class DurableStore {
       if (assignment === undefined) throw new Error(`Unknown assignment: ${assignmentId}`);
       return structuredClone(assignment);
     });
+  }
+
+  async assignmentsForSessions(sessionIds: readonly string[]): Promise<Array<Assignment | undefined>> {
+    return this.withFreshState(() => sessionIds.map((sessionId) => {
+      const assignment = this.state.assignments.find((candidate) => candidate.sessionId === sessionId);
+      return assignment === undefined ? undefined : structuredClone(assignment);
+    }));
+  }
+
+  async resultsForSessions(sessionIds: readonly string[]): Promise<Array<CapturedResult | undefined>> {
+    return this.withFreshState(() => sessionIds.map((sessionId) => {
+      const result = this.state.capturedResults?.find((candidate) => candidate.sessionId === sessionId);
+      return result === undefined ? undefined : structuredClone(result);
+    }));
   }
 
   async captureResult(input: CapturedResult): Promise<{ result: CapturedResult; duplicate: boolean }> {

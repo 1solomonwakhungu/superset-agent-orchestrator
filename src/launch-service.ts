@@ -34,6 +34,13 @@ export interface LaunchAcceptance {
   acceptedAt: string;
 }
 
+export interface AsynchronousBatchLaunchRequest {
+  idempotencyKey: string;
+  clientId: string;
+  batchName: string;
+  assignments: Omit<AsynchronousLaunchRequest, "clientId" | "batchName">[];
+}
+
 export class LaunchService {
   private dispatchTimer: NodeJS.Timeout | undefined;
   private dispatching: Promise<void> | undefined;
@@ -50,6 +57,50 @@ export class LaunchService {
     const accepted = await this.accept(request);
     this.scheduleDispatch(0);
     return accepted;
+  }
+
+  async launchBatch(request: AsynchronousBatchLaunchRequest): Promise<LaunchAcceptance[]> {
+    const accepted = await this.acceptBatch(request);
+    this.scheduleDispatch(0);
+    return accepted;
+  }
+
+  async acceptBatch(request: AsynchronousBatchLaunchRequest): Promise<LaunchAcceptance[]> {
+    if (request.assignments.length === 0 || request.assignments.length > 100) {
+      throw new Error("A launch batch requires between 1 and 100 assignments");
+    }
+    if (new Set(request.assignments.map(({ idempotencyKey }) => idempotencyKey)).size !== request.assignments.length) {
+      throw new Error("Batch assignment idempotency keys must be unique");
+    }
+    const acceptedAt = this.now().toISOString();
+    const batchId = stableId("batch", request.idempotencyKey);
+    const sessions = request.assignments.map((item) => ({
+      id: stableId("session", item.idempotencyKey), clientId: request.clientId,
+      createdAt: acceptedAt, lastSeenAt: acceptedAt,
+    }));
+    const batch: Batch = {
+      id: batchId, name: request.batchName, sessionId: sessions[0]!.id,
+      createdAt: acceptedAt, updatedAt: acceptedAt,
+    };
+    const assignments = request.assignments.map((item, index): Assignment => {
+      const fullRequest: AsynchronousLaunchRequest = {
+        ...item, clientId: request.clientId, batchName: request.batchName,
+      };
+      return {
+        id: stableId("assignment", item.idempotencyKey), idempotencyKey: item.idempotencyKey,
+        requestFingerprint: fingerprint(fullRequest), batchId, sessionId: sessions[index]!.id,
+        status: "accepted", attribution: item.attribution, prompt: item.prompt,
+        workspaceId: item.workspaceId, workspacePath: item.workspacePath,
+        attemptId: stableId("attempt", item.idempotencyKey), attempt: 1,
+        acceptedAt, updatedAt: acceptedAt,
+      };
+    });
+    const stored = await this.store.acceptLaunchBatch({
+      assignments, sessions, batch,
+      events: assignments.map(({ id }) => event(id, "launch_accepted", acceptedAt)),
+    });
+    this.injectCrash("after_acceptance");
+    return stored.assignments.map(acceptance);
   }
 
   async accept(request: AsynchronousLaunchRequest): Promise<LaunchAcceptance> {
@@ -97,6 +148,16 @@ export class LaunchService {
   }
 
   async dispatchPending(): Promise<void> {
+    if (this.dispatching !== undefined) return this.dispatching;
+    this.dispatching = this.dispatchAllPending();
+    try {
+      await this.dispatching;
+    } finally {
+      this.dispatching = undefined;
+    }
+  }
+
+  private async dispatchAllPending(): Promise<void> {
     for (const assignment of await this.store.pendingAssignments()) await this.dispatch(assignment);
   }
 
@@ -104,12 +165,11 @@ export class LaunchService {
     if (this.dispatchTimer !== undefined || this.dispatching !== undefined) return;
     this.dispatchTimer = setTimeout(() => {
       this.dispatchTimer = undefined;
-      this.dispatching = this.dispatchPending();
-      void this.dispatching
+      const dispatching = this.dispatchPending();
+      void dispatching
         .then(
-          () => { this.dispatching = undefined; },
+          () => undefined,
           () => {
-            this.dispatching = undefined;
             this.scheduleDispatch(this.retryDelayMs);
           },
         );
@@ -164,7 +224,6 @@ function stableId(kind: string, key: string): string {
 function fingerprint(request: AsynchronousLaunchRequest): string {
   const canonical = JSON.stringify({
     idempotencyKey: request.idempotencyKey,
-    clientId: request.clientId,
     batchName: request.batchName,
     attribution: { agent: request.attribution.agent, task: request.attribution.task },
     prompt: request.prompt,

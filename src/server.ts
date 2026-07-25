@@ -5,6 +5,9 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { BatchQueryError, DurableStore } from "./store.js";
+import { LaunchService } from "./launch-service.js";
+import { ResultCaptureService } from "./result-capture.js";
+import { SupersetProcessAdapter, SupersetProcessError } from "./superset-process-adapter.js";
 
 const statePath = process.env.SUPERSET_ORCHESTRATOR_STATE
   ?? join(homedir(), ".local", "share", "superset-agent-orchestrator", "state.json");
@@ -38,6 +41,127 @@ async function main(): Promise<void> {
   reconciliationTimer.unref();
 
   const server = new McpServer({ name: "superset-agent-orchestrator", version: "0.1.0" });
+  const providerExecutable = process.env.SUPERSET_ORCHESTRATOR_PROVIDER_EXECUTABLE;
+  const provider = providerExecutable === undefined ? undefined : new SupersetProcessAdapter({
+    executable: providerExecutable,
+    args: JSON.parse(process.env.SUPERSET_ORCHESTRATOR_PROVIDER_ARGS ?? "[]") as string[],
+    timeoutMs: Number(process.env.SUPERSET_ORCHESTRATOR_PROVIDER_TIMEOUT_MS ?? 30_000),
+  });
+  const launches = provider === undefined ? undefined : new LaunchService(store, provider);
+  const capture = provider === undefined ? undefined : new ResultCaptureService(store, provider);
+  if (launches !== undefined) await launches.dispatchPending();
+
+  const integrationAssignment = z.object({
+    label: z.string().min(1), prompt: z.string().min(1), workspace_id: z.string().min(1),
+    agent_preset_id: z.string().min(1), idempotency_key: z.string().min(1),
+  }).strict();
+  server.registerTool(
+    "provider_batches_launch",
+    {
+      description: "Durably launch one real batch through the configured Superset provider",
+      inputSchema: {
+        request_id: z.string().min(1), name: z.string().min(1), idempotency_key: z.string().min(1),
+        assignments: z.array(integrationAssignment).min(1).max(100),
+      },
+    },
+    async ({ request_id, name, idempotency_key, assignments }) => {
+      if (launches === undefined) return providerError(request_id, "PROVIDER_UNAVAILABLE", "No Superset provider is configured");
+      try {
+        const accepted = await launches.acceptBatch({
+          idempotencyKey: idempotency_key, clientId: request_id, batchName: name,
+          assignments: assignments.map((assignment) => ({
+            idempotencyKey: assignment.idempotency_key,
+            attribution: { agent: assignment.agent_preset_id, task: assignment.label },
+            prompt: assignment.prompt, workspaceId: assignment.workspace_id,
+            workspacePath: assignment.workspace_id,
+          })),
+        });
+        await launches.dispatchPending();
+        return result({ request_id, batch_id: accepted[0]!.batchId, sessions: accepted });
+      } catch (error) {
+        return processFailure(request_id, error);
+      }
+    },
+  );
+  server.registerTool(
+    "provider_sessions_results",
+    {
+      description: "Refresh and return exact attributed results for up to 100 sessions",
+      inputSchema: { request_id: z.string().min(1), session_ids: z.array(z.string().min(1)).min(1).max(100) },
+    },
+    async ({ request_id, session_ids }) => {
+      if (capture === undefined) return providerError(request_id, "PROVIDER_UNAVAILABLE", "No Superset provider is configured");
+      const assignments = await store.assignmentsForSessions(session_ids);
+      const items = [];
+      for (const [index, assignment] of assignments.entries()) {
+        const sessionId = session_ids[index]!;
+        if (assignment === undefined) {
+          items.push({ session_id: sessionId, error: { code: "SESSION_NOT_FOUND", message: "Unknown session" } });
+          continue;
+        }
+        if (assignment.status === "launched") {
+          try {
+            await capture.collect(assignment.id, `provider:${assignment.attemptId}`);
+          } catch (error) {
+            if (error instanceof SupersetProcessError) {
+              items.push({ session_id: sessionId, error: { code: error.code, message: error.message } });
+              continue;
+            }
+            throw error;
+          }
+        }
+        const captured = (await store.resultsForSessions([sessionId]))[0];
+        items.push({
+          session_id: sessionId, assignment_id: assignment.id, batch_id: assignment.batchId,
+          status: assignment.status, attribution: assignment.attribution,
+          workspace_id: assignment.workspaceId, run_id: assignment.runId,
+          ...(captured === undefined ? {} : { result: captured }),
+          ...(assignment.error === undefined ? {} : { error: { code: "LAUNCH_REJECTED", message: assignment.error } }),
+        });
+      }
+      return result({ request_id, items });
+    },
+  );
+  server.registerTool(
+    "provider_sessions_cancel",
+    {
+      description: "Cancel configured Superset provider sessions without retries",
+      inputSchema: {
+        request_id: z.string().min(1), session_ids: z.array(z.string().min(1)).min(1).max(100),
+        reason: z.string().min(1).optional(),
+      },
+    },
+    async ({ request_id, session_ids, reason }) => {
+      if (provider === undefined) return providerError(request_id, "PROVIDER_UNAVAILABLE", "No Superset provider is configured");
+      const assignments = await store.assignmentsForSessions(session_ids);
+      const captured = await store.resultsForSessions(session_ids);
+      const items = [];
+      for (const [index, assignment] of assignments.entries()) {
+        const sessionId = session_ids[index]!;
+        if (assignment === undefined || assignment.runId === undefined) {
+          items.push({ session_id: sessionId, error: { code: "SESSION_NOT_FOUND", message: "Session has no provider execution" } });
+          continue;
+        }
+        if (captured[index] !== undefined) {
+          items.push({
+            session_id: sessionId,
+            error: { code: "INVALID_TRANSITION", message: "A terminal session cannot be canceled" },
+          });
+          continue;
+        }
+        try {
+          await provider.cancel({ runId: assignment.runId }, reason);
+          items.push({ session_id: sessionId, canceled: true });
+        } catch (error) {
+          const failure = error instanceof SupersetProcessError
+            ? { code: error.code, message: error.message }
+            : { code: "PROVIDER_UNAVAILABLE", message: error instanceof Error ? error.message : String(error) };
+          items.push({ session_id: sessionId, error: failure });
+        }
+      }
+      return result({ request_id, items });
+    },
+  );
   const pageSchema = {
     batchId: z.string().min(1),
     sessionIds: z.array(z.string().min(1)).max(250).optional(),
@@ -112,6 +236,16 @@ async function main(): Promise<void> {
   );
 
   await server.connect(new StdioServerTransport());
+}
+
+function providerError(requestId: string, code: string, message: string) {
+  return { ...result({ request_id: requestId, error: { code, message } }), isError: true };
+}
+
+function processFailure(requestId: string, error: unknown) {
+  return error instanceof SupersetProcessError
+    ? providerError(requestId, error.code, error.message)
+    : providerError(requestId, "INTERNAL_ERROR", error instanceof Error ? error.message : String(error));
 }
 
 main().catch((error: unknown) => {
