@@ -1,5 +1,17 @@
 # Status
 
+## PER-350 second real response adapter
+
+- Selected the enabled OpenCode preset without enabling or invoking Claude.
+- Added documented OpenCode assistant-response normalization while preserving
+  the existing core domain and MCP contracts.
+- Added shared Codex/OpenCode conformance coverage for launch identity, exact
+  result, attribution, terminal states, and fail-closed malformed responses.
+- Documented the supported boundary and unsupported lifecycle/features.
+- Verification: `npm run verify` passed 101/101 tests, focused Markdown lint,
+  strict local-routing verification, and `git diff --check` passed.
+- Next: deliver through the PER-350 pull request and verify merged `main`.
+
 ## PER-333 workspace lease and writer safety
 
 - Defined exclusive cross-process writer admission using a durable generation and
