@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "issue": "PER-343",
+  "policy": "docs/workspace-lease-and-writer-safety.md",
+  "recordedAt": "2026-07-25",
+  "environment": {
+    "os": "darwin",
+    "osRelease": "25.5.0",
+    "node": "22.23.1",
+    "npm": "10.9.8"
+  },
+  "command": "npm run verify",
+  "totals": { "tests": 98, "pass": 98, "fail": 0 },
+  "coverage": [
+    {
+      "requirement": "T-LEASE-01",
+      "status": "partial",
+      "test": "test/workspace-lease-concurrency.test.ts: simultaneous acquisitions from separate processes yield exactly one writer",
+      "evidence": "five separate operating-system processes race one barrier; one lease row, one lease_acquired event, generation 1, four policy_denied events",
+      "gap": "path, case, and symlink aliases are not yet resolved to one canonical lease key, and no child process is launched"
+    },
+    {
+      "requirement": "T-LEASE-02",
+      "status": "covered",
+      "test": "test/workspace-leases.test.ts: heartbeat and release require the current token, owner, and row version",
+      "evidence": "stale token, stale generation, foreign server instance, foreign batch, and superseded row version are all fenced; generations increase monotonically and are never reused"
+    },
+    {
+      "requirement": "T-LEASE-03",
+      "status": "partial",
+      "test": "test/workspace-lease-concurrency.test.ts: a crashed owner keeps its lease until process absence is proven; test/workspace-leases.test.ts: expiry alone never releases a lease and recovery needs owner-process proof, a live owner is quarantined rather than displaced, an unverifiable owner identity quarantines instead of admitting a writer",
+      "evidence": "a killed owner process keeps its lease past expiry; recovery requires expiry plus proven pid and start-token absence; a live or unverifiable owner is quarantined and repaired only with evidence",
+      "gap": "process-group and descendant reconciliation, clock-jump cases, and backend-outcome ambiguity are not yet exercised"
+    }
+  ],
+  "notCovered": [
+    "read-only sentinel enforcement on each supported platform",
+    "canonical workspace identity resolution and WORKSPACE_IDENTITY_CHANGED",
+    "launch-path integration: writer launch remains disabled"
+  ]
+}
