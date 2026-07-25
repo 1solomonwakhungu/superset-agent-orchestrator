@@ -2,7 +2,8 @@
 
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, realpath, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { resourceUsage } from "node:process";
 import { fileURLToPath } from "node:url";
@@ -47,25 +48,34 @@ function childEnvironment(relayOutage = false) {
 
 async function run(name, command, args, options = {}) {
   const began = performance.now();
-  const result = await new Promise((resolveResult, reject) => {
-    const child = spawn(command, args, {
-      cwd: options.cwd ?? root,
-      env: childEnvironment(options.relayOutage),
-      shell: false,
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
+  const directory = await mkdtemp(join(tmpdir(), "superset-real-e2e-"));
+  const stdoutPath = join(directory, "stdout");
+  const stdoutFile = await open(stdoutPath, "wx", 0o600);
+  let result;
+  try {
+    result = await new Promise((resolveResult, reject) => {
+      const child = spawn(command, args, {
+        cwd: options.cwd ?? root,
+        env: childEnvironment(options.relayOutage),
+        shell: false,
+        stdio: ["ignore", stdoutFile.fd, "pipe"],
+        windowsHide: true,
+      });
+      let stderr = "";
+      const timer = setTimeout(() => child.kill("SIGKILL"), options.timeoutMs ?? 20_000);
+      child.stderr.on("data", (chunk) => { stderr += chunk; });
+      child.once("error", reject);
+      child.once("close", (exitCode, signal) => {
+        clearTimeout(timer);
+        resolveResult({ exitCode: exitCode ?? -1, signal, stderr });
+      });
     });
-    let stdout = "";
-    let stderr = "";
-    const timer = setTimeout(() => child.kill("SIGKILL"), options.timeoutMs ?? 20_000);
-    child.stdout.on("data", (chunk) => { stdout += chunk; });
-    child.stderr.on("data", (chunk) => { stderr += chunk; });
-    child.once("error", reject);
-    child.once("close", (exitCode, signal) => {
-      clearTimeout(timer);
-      resolveResult({ exitCode: exitCode ?? -1, signal, stdout, stderr });
-    });
-  });
+    await stdoutFile.close();
+    result.stdout = await readFile(stdoutPath, "utf8");
+  } finally {
+    await stdoutFile.close().catch(() => undefined);
+    await rm(directory, { recursive: true, force: true });
+  }
   const evidence = {
     name,
     status: result.exitCode === 0 ? "passed" : "failed",
