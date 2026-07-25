@@ -17,8 +17,21 @@
   partial output with exact completeness.
 - Added MCP tools `batches_cancel`, `batches_wait`, `sessions_set_deadline`, and
   `deadlines_enforce`, plus a background deadline sweep.
-- Verification: `npm run verify` passed 122/122; focused lifecycle and race tests
-  passed 33/33 across 10 consecutive runs.
+- Merged current `main` (`90cef0d`); the only conflict was additive `STATUS.md`
+  sections and both sides were kept.
+- Made offline verification deterministic: the live Superset smoke test now skips
+  only when the executable is genuinely absent (spawn `ENOENT`). A present but
+  broken, unhealthy, or malformed CLI still fails, and the run is mandatory when
+  `SUPERSET_ORCHESTRATOR_EXECUTABLE` is set or
+  `SUPERSET_ORCHESTRATOR_REQUIRE_LIVE_SMOKE=1`.
+- Kept real discovery schema coverage offline by recording sanitized Superset
+  1.16.1 responses in `test/fixtures/`, replaying them through the real adapter
+  against the same contract assertions, and pinning the real CLI key sets plus
+  observed optional-field variation.
+- Verification: `npm run verify` passed 136/136 with the Superset CLI present and
+  135/136 with 1 declared skip and exit code 0 with the CLI absent from `PATH`;
+  focused lifecycle and race tests passed 33/33 across 10 consecutive runs;
+  `npm run check` and `git diff --check` passed.
 
 ## PER-258 agency availability monitoring
 

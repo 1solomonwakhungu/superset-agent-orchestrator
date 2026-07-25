@@ -83,6 +83,16 @@ Every child command is launched with an argument array and no shell. Discovery
 probes the CLI version, applies per-command timeouts, validates structured
 responses, and rejects ambiguous or remote-only results with normalized errors.
 
+Discovery schema coverage runs offline. `test/fixtures/` holds sanitized Superset
+1.16.1 responses that are replayed through the real adapter, so `npm run verify`
+is deterministic on machines without the CLI installed.
+
+The live smoke test additionally runs the real CLI when it is installed. It is
+skipped only when the executable cannot be found at all; a CLI that is present
+but broken, unhealthy, or returning malformed responses still fails the suite. To
+require the live run, set `SUPERSET_ORCHESTRATOR_REQUIRE_LIVE_SMOKE=1` or point
+`SUPERSET_ORCHESTRATOR_EXECUTABLE` at a specific binary.
+
 ## Agency availability monitor
 
 Read-only HTTPS synthetic monitoring for the agency properties. A run records
