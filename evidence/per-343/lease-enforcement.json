@@ -42,5 +42,5 @@
     "canonical workspace identity resolution and WORKSPACE_IDENTITY_CHANGED",
     "launch-path integration: writer launch remains disabled"
   ],
-  "note": "Totals are for the full npm suite after merging origin/main at 90cef0d. The Python suite under tests/ belongs to PER-258 and was not run here: pytest is not installed in this environment."
+  "note": "Totals are for the full npm suite at b1f9594 after merging origin/main. The transient-dispatch test now waits for its durable launched state before teardown. The Python suite under tests/ belongs to PER-258 and was not run here: pytest is not installed in this environment."
 }
