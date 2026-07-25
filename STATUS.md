@@ -200,11 +200,18 @@ locally.
   Superset's local inventory, never supplied by a client.
 - Added `docs/security/path-command-environment-audit-controls.md` mapping each
   implemented control and its proving test.
-- Verification: `npm run verify` passed 107 tests including 15 new adversarial
+- Hardened the implementation review gaps: real process spawning now requires a
+  canonical absolute regular-file executable; relative inventory paths fail closed;
+  adapters receive only the child environment allowlist and must revalidate the
+  workspace at their actual launch boundary; result claims are redacted before
+  persistence and egress; and typed audit integrity checks run on load and append
+  against a persisted chain head so suffix truncation is detected.
+- Verification: `npm run verify` passed 110 tests including 18 new adversarial
   tests for traversal, symlink and prefix escape, time-of-check/time-of-use
   retargeting, shell-free spawning, executable and argument injection, malicious
   environment seeding, secret canaries in state and audit, audit chain tampering,
   and tool-surface drift. `npm run schema` produced no snapshot change and
-  Markdown lint passed for `docs/security`.
-- Next: push the branch, open the PER-345 pull request, and reconcile Linear from
-  the parent factory.
+  `./scripts/verify-per-323.sh`, Markdown lint for `docs/security`, and
+  `git diff --check` passed.
+- Next: commit and push the hardening follow-up, open the PER-345 pull request, and
+  reconcile Linear from the parent factory.

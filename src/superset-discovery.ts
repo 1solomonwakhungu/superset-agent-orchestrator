@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, open, readFile, rm } from "node:fs/promises";
+import { accessSync, constants, realpathSync } from "node:fs";
+import { mkdtemp, open, readFile, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import {
   agentPresetListSchema,
   type AgentPreset,
@@ -19,6 +20,7 @@ import {
   assertPinnedExecutable,
   childEnvironment,
   safeErrorMessage,
+  SecurityError,
   type WorkspaceInventory,
 } from "./security.js";
 
@@ -69,8 +71,30 @@ export interface SupersetDiscoveryResult {
 
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const MINIMUM_SUPPORTED_MAJOR = 1;
+
+function discoverExecutable(): string {
+  for (const directory of (process.env.PATH ?? "").split(delimiter)) {
+    if (directory.length === 0) continue;
+    try {
+      const candidate = realpathSync(join(directory, process.platform === "win32" ? "superset.exe" : "superset"));
+      accessSync(candidate, constants.X_OK);
+      return assertPinnedExecutable(candidate);
+    } catch {
+      // Continue until an executable canonical path is found.
+    }
+  }
+  throw new SecurityError("POLICY_DENIED", "Superset executable could not be pinned to an absolute path");
+}
+
 export const runProcess: ProcessRunner = async (executable, args, timeoutMs) => {
-  const program = assertPinnedExecutable(executable);
+  const configuredProgram = assertPinnedExecutable(executable);
+  let program: string;
+  try {
+    program = assertPinnedExecutable(await realpath(configuredProgram));
+    if (!(await stat(program)).isFile()) throw new Error("not a regular file");
+  } catch (error) {
+    throw new SecurityError("POLICY_DENIED", "Executable cannot be pinned to a canonical regular file", false, { cause: error });
+  }
   const argv = assertFixedArguments(args);
   const directory = await mkdtemp(join(tmpdir(), "superset-discovery-"));
   const stdoutPath = join(directory, "stdout");
@@ -145,7 +169,7 @@ export class SupersetDiscoveryAdapter {
   private readonly runner: ProcessRunner;
 
   constructor(options: SupersetDiscoveryOptions = {}) {
-    this.executable = options.executable ?? "superset";
+    this.executable = options.executable ?? discoverExecutable();
     this.timeoutMs = options.timeoutMs ?? 5_000;
     this.runner = options.runner ?? runProcess;
   }

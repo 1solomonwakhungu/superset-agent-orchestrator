@@ -4,6 +4,7 @@ import type { DurableStore, LaunchIntent, WorkerAttribution } from "./store.js";
 import {
   assertBoundedText,
   assertDataOperand,
+  childEnvironment,
   reasonCode,
   redactText,
   safeErrorMessage,
@@ -78,6 +79,8 @@ export class LaunchCoordinator {
         idempotencyKey: request.idempotencyKey,
         prompt,
         workspacePath: assertDataOperand(grant.canonicalPath, "workspace path"),
+        environment: childEnvironment(),
+        revalidateWorkspace: grant.revalidate,
         ...(request.resume === undefined ? {} : { resume: request.resume }),
       });
       this.failpoints.afterExternalAcceptance?.(handle);

@@ -11,6 +11,7 @@ import {
 import {
   assertBoundedText,
   assertDataOperand,
+  childEnvironment,
   reasonCode,
   redactText,
   safeErrorMessage,
@@ -172,9 +173,12 @@ export class LaunchService {
         idempotencyKey: assignment.idempotencyKey,
         prompt: assignment.prompt,
         workspacePath: assertDataOperand(grant.canonicalPath, "workspace path"),
+        environment: childEnvironment(),
+        revalidateWorkspace: grant.revalidate,
       });
     } catch (error) {
       if (error instanceof InjectedCrash) throw error;
+      await this.auditAssignment(assignment, "failed", reasonCode(error), grant.projectId);
       const message = safeErrorMessage(error);
       const failedAt = this.now().toISOString();
       await this.store.recordLaunchEvent(
@@ -196,7 +200,7 @@ export class LaunchService {
 
   private audit(
     request: AsynchronousLaunchRequest,
-    decision: "allowed" | "denied",
+    decision: "allowed" | "denied" | "failed",
     reason: string,
     assignmentId?: string,
     projectId?: string,
@@ -212,7 +216,7 @@ export class LaunchService {
 
   private auditAssignment(
     assignment: Assignment,
-    decision: "allowed" | "denied",
+    decision: "allowed" | "denied" | "failed",
     reason: string,
     projectId?: string,
   ): Promise<unknown> {

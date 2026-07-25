@@ -113,6 +113,8 @@ test("T-PATH-01 fails closed on ambiguous, remote, and unavailable registrations
       ["unregistered project path", inventory([project(null)], [inside]), "WORKSPACE_UNAVAILABLE"],
       ["missing worktree", inventory([project(projectPath)], [{ ...inside, worktreeExists: false }]), "WORKSPACE_UNAVAILABLE"],
       ["absent directory", inventory([project(projectPath)], [{ ...inside, worktreePath: join(base, "gone") }]), "WORKSPACE_UNAVAILABLE"],
+      ["relative project path", inventory([project("project")], [inside]), "WORKSPACE_UNAVAILABLE"],
+      ["relative worktree path", inventory([project(projectPath)], [{ ...inside, worktreePath: "worktrees/per-345" }]), "WORKSPACE_UNAVAILABLE"],
     ];
 
     for (const [label, records, code] of cases) {
@@ -219,7 +221,7 @@ test("T-CMD-02 only a pinned executable and a control-free argument vector can s
     assert.throws(() => assertPinnedExecutable(executable), SecurityError);
     await assert.rejects(runProcess(executable, ["--version"], 1_000), SecurityError);
   }
-  assert.equal(assertPinnedExecutable("superset"), "superset");
+  assert.throws(() => assertPinnedExecutable("superset"), SecurityError);
   assert.equal(assertPinnedExecutable(process.execPath), process.execPath);
 
   for (const argument of ["a\nb", "a\u0000b", "a\u001b[2Jb", "a\rb"]) {
@@ -338,6 +340,25 @@ test("T-SECRET-01 a launch prompt secret never reaches state, audit, or diagnost
   });
 });
 
+test("T-SECRET-01 adapter result secrets are redacted before persistence", async () => {
+  await withStore(async (path) => {
+    const store = new DurableStore(path);
+    const adapter = new FakeAgentAdapter([{
+      statuses: ["succeeded"],
+      result: { status: "succeeded", output: `result ${TOKEN_CANARY}`, resume: { adapter: "fake", token: TOKEN_CANARY } },
+    }]);
+    const service = new LaunchService(store, adapter, allowingAuthorizer());
+    const accepted = await service.accept(launchRequest());
+    await service.dispatchPending();
+    const { ResultCaptureService } = await import("../src/result-capture.js");
+    await new ResultCaptureService(store, adapter).collect(accepted.assignmentId, "delivery-secret");
+
+    const persisted = await readFile(path, "utf8");
+    assert.doesNotMatch(persisted, new RegExp(TOKEN_CANARY));
+    assert.match(persisted, /\[REDACTED:token\]/);
+  });
+});
+
 test("T-AUDIT-01 allowed and denied launches produce a chained attributable trail", async () => {
   await withStore(async (path) => {
     const store = new DurableStore(path);
@@ -383,18 +404,62 @@ test("T-AUDIT-02 chain verification detects an edited, deleted, or reordered eve
     assert.deepEqual(store.verifySecurityAuditChain(), { valid: true, length: 2 });
 
     const tampered = JSON.parse(await readFile(path, "utf8")) as DurableState;
+    const original = structuredClone(tampered);
     tampered.securityAuditEvents![1]!.decision = "allowed";
     await writeFile(path, JSON.stringify(tampered), "utf8");
     const reopened = new DurableStore(path);
-    await reopened.reconcile();
-    assert.deepEqual(reopened.verifySecurityAuditChain(), { valid: false, length: 2, brokenAtSequence: 2 });
+    await assert.rejects(reopened.reconcile(), /Security audit integrity failure at sequence 2/);
 
-    const truncated = JSON.parse(await readFile(path, "utf8")) as DurableState;
+    const truncated = structuredClone(original);
     truncated.securityAuditEvents = [truncated.securityAuditEvents![1]!];
     await writeFile(path, JSON.stringify(truncated), "utf8");
     const shortened = new DurableStore(path);
-    await shortened.reconcile();
-    assert.deepEqual(shortened.verifySecurityAuditChain(), { valid: false, length: 1, brokenAtSequence: 1 });
+    await assert.rejects(shortened.reconcile(), /Security audit integrity failure at sequence 1/);
+  });
+});
+
+test("T-AUDIT-02 loading fails closed when the audit suffix is truncated", async () => {
+  await withStore(async (path) => {
+    const store = new DurableStore(path);
+    await store.appendSecurityAudit({
+      requesterId: "client-1", operation: "sessions_launch", decision: "allowed",
+      reasonCode: "launch_intent", correlationId: "operation-1",
+    });
+    await store.appendSecurityAudit({
+      requesterId: "client-1", operation: "sessions_launch", decision: "failed",
+      reasonCode: "POLICY_DENIED", correlationId: "operation-2",
+    });
+    const truncated = JSON.parse(await readFile(path, "utf8")) as DurableState;
+    truncated.securityAuditEvents!.pop();
+    await writeFile(path, JSON.stringify(truncated), "utf8");
+
+    await assert.rejects(new DurableStore(path).reconcile(), /Security audit integrity failure at sequence 2/);
+  });
+});
+
+test("T-ENV-01 launch adapters receive only allowlisted environment and final revalidation", async () => {
+  await withStore(async (path) => {
+    const store = new DurableStore(path);
+    const adapter = new FakeAgentAdapter([{ statuses: ["succeeded"], result: { status: "succeeded", output: "done" } }]);
+    let validations = 0;
+    const authorizer = {
+      authorize: async (workspaceId: string): Promise<WorkspaceGrant> => ({
+        workspaceId, projectId: "project-1", canonicalPath: "/base/project/worktrees/per-345",
+        revalidate: async () => { validations += 1; },
+      }),
+    };
+    const previous = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = TOKEN_CANARY;
+    try {
+      const service = new LaunchService(store, adapter, authorizer);
+      await service.accept(launchRequest());
+      await service.dispatchPending();
+      assert.equal(validations, 2);
+      assert.equal(adapter.launches[0]?.environment.GITHUB_TOKEN, undefined);
+    } finally {
+      if (previous === undefined) delete process.env.GITHUB_TOKEN;
+      else process.env.GITHUB_TOKEN = previous;
+    }
   });
 });
 
