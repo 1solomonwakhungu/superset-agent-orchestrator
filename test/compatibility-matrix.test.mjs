@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
 
@@ -65,4 +66,49 @@ test("probe classifies out-of-envelope Node versions as unsupported", () => {
   const source = readFileSync(resolve(root, "scripts/probe-compatibility.mjs"), "utf8");
   assert.match(source, /unsupportedDimensions\.push\("Node\.js major"\)/);
   assert.match(source, /classification = unsupportedDimensions\.length > 0 \? "unsupported"/);
+});
+
+test("Windows is explicitly unsupported and excluded from CI", () => {
+  const windows = matrix.combinations.find(({ id }) => id === "windows-native-stdio");
+  assert.equal(windows?.classification, "unsupported");
+  const packageJson = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
+  assert.deepEqual(packageJson.os, ["darwin", "linux"]);
+  const workflow = readFileSync(resolve(root, ".github/workflows/compatibility.yml"), "utf8");
+  assert.doesNotMatch(workflow, /windows-/i);
+  assert.match(workflow, /ubuntu-24\.04/);
+  assert.match(workflow, /macos-14/);
+});
+
+test("generated compatibility reports require all four passing exact-head lanes", () => {
+  const directory = mkdtempSync(resolve(tmpdir(), "compatibility-report-"));
+  const output = resolve(directory, "report.md");
+  const commit = "a".repeat(40);
+  try {
+    for (const [runner, node, platform] of [
+      ["ubuntu-24.04", 22, "linux"],
+      ["ubuntu-24.04", 24, "linux"],
+      ["macos-14", 22, "darwin"],
+      ["macos-14", 24, "darwin"],
+    ]) {
+      const lane = resolve(directory, `${runner}-${node}`);
+      mkdirSync(lane);
+      writeFileSync(resolve(lane, "result.json"), JSON.stringify({
+        commit, runner, requestedNode: node, conclusion: "success",
+        detected: { platform, release: "tested", architecture: "x64", node: `${node}.0.0`, npm: "10.9.8" },
+      }));
+    }
+    execFileSync(process.execPath, [resolve(root, "scripts/generate-compatibility-report.mjs"), directory, output]);
+    const report = readFileSync(output, "utf8");
+    assert.match(report, new RegExp(commit));
+    assert.match(report, /Windows is unsupported/);
+
+    rmSync(resolve(directory, "macos-14-24"), { recursive: true });
+    assert.throws(() => execFileSync(
+      process.execPath,
+      [resolve(root, "scripts/generate-compatibility-report.mjs"), directory, output],
+      { stdio: "pipe" },
+    ));
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -35,7 +35,7 @@ test("a replacement MCP client reopens an attributed batch from a killed server"
   const connect = async () => {
     const transport = new StdioClientTransport({
       command: process.execPath,
-      args: [resolve("dist/src/server.js")],
+      args: [join(import.meta.dirname, "..", "dist", "src", "server.js")],
       env: {
         ...process.env,
         SUPERSET_ORCHESTRATOR_STATE: statePath,

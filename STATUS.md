@@ -1,5 +1,20 @@
 # Status
 
+## PER-352 cross-platform compatibility CI
+
+- Added exact-head macOS 14 and Ubuntu 24.04 CI lanes for Node.js 22 and 24 with
+  npm 10.9.8, plus a report job that accepts only four passing same-commit results.
+- Added real portable filesystem, process, timeout, signal, and process-identity
+  tests and removed ambient-working-directory assumptions from stdio tests.
+- Made the Superset Desktop smoke skip visible and justified on generic runners.
+- Made Windows explicitly unsupported in package metadata, startup, probe policy,
+  matrix evidence, documentation, and tests.
+- Verification: `npm run verify` passed 93/93 runnable tests with one explicit
+  Superset Desktop skip; `npm run compatibility:probe` returned the expected
+  actionable unknown; `git diff --check` passed.
+- Next: deliver through PR, verify exact-head checks and merged main, then
+  reconcile PER-352.
+
 ## PER-333 workspace lease and writer safety
 
 - Defined exclusive cross-process writer admission using a durable generation and
