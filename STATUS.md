@@ -17,6 +17,17 @@
   contract, strict local-routing verification, and `git diff --check` passed.
 - Next: deliver through pull request 23 and verify its exact head.
 
+## PER-258 agency availability monitoring
+
+- Completed: Implemented and verified the PER-258 monitor, production service
+  configuration, incident state machine, weekly report, fixture tests, CI, and
+  runbook.
+- Next: Push, merge after exact-head CI, and verify the merged main.
+- Key results: 5/5 live properties returned HTTP 200 with matching content and
+  valid TLS at 2026-07-25T03:00:23Z to 03:00:24Z, 3/3 monitor tests and 101/101
+  repository tests passed, all sampled SLOs were 100%, and 0 schedulers or
+  notification integrations exist. Evidence is under `evidence/per-258/`.
+
 ## PER-230 vllm-mlx soak safety gate
 
 - Completed: PER-230 pre-test validation and safety-gate report.
