@@ -1,5 +1,7 @@
 export * from "./agent-adapter.js";
 export * from "./codex-response-adapter.js";
+export * from "./concurrency-limited-agent-adapter.js";
+export * from "./concurrency-scheduler.js";
 export * from "./fake-agent-adapter.js";
 export * from "./launch-service.js";
 export * from "./result-capture.js";

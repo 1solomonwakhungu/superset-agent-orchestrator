@@ -1,5 +1,19 @@
 # Status
 
+## PER-344 concurrency limits and backpressure
+
+- Added configurable global, per-host, per-project, per-agent, and per-workspace
+  admission limits with a bounded FIFO queue and structured overload errors.
+- Added observable active/queued scope counts, abortable admission, guaranteed
+  release, and resource-pressure/rate-limit backoff hooks that cannot skip the
+  FIFO head.
+- Added deterministic tests proving retries and batches hold capacity,
+  cancellation frees capacity, every scope is enforced, and overload stays
+  bounded.
+- Verification: `npm run verify` passed all 96 tests; strict local-routing
+  verification and `git diff --check` passed.
+- Next: deliver through the PER-344 pull request and verify fetched `main`.
+
 ## PER-333 workspace lease and writer safety
 
 - Defined exclusive cross-process writer admission using a durable generation and
