@@ -1,5 +1,5 @@
 import { realpath, stat } from "node:fs/promises";
-import { isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, relative } from "node:path";
 import type { Project, Workspace } from "./discovery-parser.js";
 
 export const SECURITY_POLICY_VERSION = "2026-07-24";
@@ -111,20 +111,17 @@ export function assertBoundedText(value: string, name: string, maxBytes = MAX_PR
   return value;
 }
 
-const BARE_EXECUTABLE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-
 /**
- * Requires a pinned executable: either an absolute path or a bare command name.
- * A client-influenced command string, shell fragment, or relative path is refused
- * so that no request can select the program that runs.
+ * Requires an absolute executable path. PATH lookup is intentionally forbidden so
+ * a hostile parent environment cannot substitute a different program.
  */
 export function assertPinnedExecutable(executable: string): string {
   if (executable.length === 0 || executable.includes("\0")
     || CONTROL_CHARACTERS.test(executable) || /[\n\r]/.test(executable)) {
     throw new SecurityError("INVALID_ARGUMENT", "Executable must be a printable single-line path");
   }
-  if (!isAbsolute(executable) && !BARE_EXECUTABLE.test(executable)) {
-    throw new SecurityError("POLICY_DENIED", "Executable must be a pinned absolute path or bare command name");
+  if (!isAbsolute(executable)) {
+    throw new SecurityError("POLICY_DENIED", "Executable must be a pinned absolute path");
   }
   return executable;
 }
@@ -266,8 +263,8 @@ export class RegisteredWorkspaceAuthorizer implements WorkspaceAuthorizer {
     if (!workspace.worktreeExists || project.path === null) {
       throw new SecurityError("WORKSPACE_UNAVAILABLE", "Registered workspace is unavailable", true);
     }
-    const projectDirectory = await canonicalDirectory(resolve(project.path), "Registered project path is unavailable");
-    const workspaceDirectory = await canonicalDirectory(resolve(workspace.worktreePath), "Registered workspace path is unavailable");
+    const projectDirectory = await canonicalDirectory(project.path, "Registered project path is unavailable");
+    const workspaceDirectory = await canonicalDirectory(workspace.worktreePath, "Registered workspace path is unavailable");
     if (!contained(projectDirectory.path, workspaceDirectory.path)) {
       throw new SecurityError("POLICY_DENIED", "Registered workspace escapes its project boundary");
     }
@@ -278,7 +275,7 @@ export class RegisteredWorkspaceAuthorizer implements WorkspaceAuthorizer {
       projectId: project.id,
       canonicalPath: workspaceDirectory.path,
       revalidate: async () => {
-        const current = await canonicalDirectory(resolve(workspace.worktreePath), "Registered workspace path is unavailable");
+        const current = await canonicalDirectory(workspace.worktreePath, "Registered workspace path is unavailable");
         if (!contained(projectDirectory.path, current.path)
           || current.path !== workspaceDirectory.path
           || current.identity.device !== workspaceDirectory.identity.device

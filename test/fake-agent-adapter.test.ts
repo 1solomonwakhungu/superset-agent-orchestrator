@@ -9,8 +9,13 @@ const terminalScripts: FakeRunScript[] = [
   { statuses: ["cancelled"], result: { status: "cancelled", reason: "upstream stopped" } },
 ];
 
+const launch = (idempotencyKey: string, prompt = "task") => ({
+  idempotencyKey, prompt, workspacePath: "/workspace", environment: {},
+  revalidateWorkspace: async () => undefined,
+});
+
 async function runToCompletion(adapter: AgentAdapter, prompt: string): Promise<RunResult> {
-  const handle = await adapter.launch({ idempotencyKey: prompt, prompt, workspacePath: "/workspace" });
+  const handle = await adapter.launch(launch(prompt, prompt));
   let state = await adapter.status(handle);
   while (state.status === "queued" || state.status === "running") state = await adapter.status(handle);
   const result = await adapter.result(handle);
@@ -35,7 +40,7 @@ test("supports cancellation and resume metadata", async () => {
   const adapter = new FakeAgentAdapter([
     { statuses: ["queued", "running", "succeeded"], result: { status: "succeeded", output: "unreachable" }, resume },
   ]);
-  const handle = await adapter.launch({ idempotencyKey: "cancel", prompt: "task", workspacePath: "/workspace" });
+  const handle = await adapter.launch(launch("cancel"));
 
   assert.equal(await adapter.result(handle), undefined);
   await adapter.cancel(handle, "operator request");
@@ -48,7 +53,7 @@ test("supports cancellation and resume metadata", async () => {
 
 test("rejects missing scripts and unknown handles", async () => {
   const adapter = new FakeAgentAdapter([]);
-  await assert.rejects(adapter.launch({ idempotencyKey: "empty", prompt: "task", workspacePath: "/workspace" }), /No fake run script/);
+  await assert.rejects(adapter.launch(launch("empty")), /No fake run script/);
   await assert.rejects(adapter.status({ runId: "missing" }), /Unknown fake run/);
 });
 
@@ -56,24 +61,24 @@ test("rejects invalid lifecycle scripts", async () => {
   const nonTerminal = new FakeAgentAdapter([
     { statuses: ["running"], result: { status: "succeeded", output: "done" } },
   ]);
-  await assert.rejects(nonTerminal.launch({ idempotencyKey: "nonterminal", prompt: "task", workspacePath: "/workspace" }), /must end/);
+  await assert.rejects(nonTerminal.launch(launch("nonterminal")), /must end/);
 
   const mismatch = new FakeAgentAdapter([
     { statuses: ["failed"], result: { status: "succeeded", output: "done" } },
   ]);
-  await assert.rejects(mismatch.launch({ idempotencyKey: "mismatch", prompt: "task", workspacePath: "/workspace" }), /result is succeeded/);
+  await assert.rejects(mismatch.launch(launch("mismatch")), /result is succeeded/);
 
   const regression = new FakeAgentAdapter([
     { statuses: ["succeeded", "failed"], result: { status: "failed", error: "boom", retryable: false } },
   ]);
-  await assert.rejects(regression.launch({ idempotencyKey: "regression", prompt: "task", workspacePath: "/workspace" }), /cannot transition/);
+  await assert.rejects(regression.launch(launch("regression")), /cannot transition/);
 });
 
 test("does not overwrite a completed run with late cancellation", async () => {
   const adapter = new FakeAgentAdapter([
     { statuses: ["succeeded"], result: { status: "succeeded", output: "done" } },
   ]);
-  const handle = await adapter.launch({ idempotencyKey: "resume", prompt: "task", workspacePath: "/workspace" });
+  const handle = await adapter.launch(launch("resume"));
   await adapter.status(handle);
   await adapter.cancel(handle, "too late");
 

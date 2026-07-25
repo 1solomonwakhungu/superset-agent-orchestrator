@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import { dirname } from "node:path";
 import lockfile from "proper-lockfile";
 import { z } from "zod";
-import { auditField, SECURITY_POLICY_VERSION } from "./security.js";
+import { auditField, SecurityError, SECURITY_POLICY_VERSION } from "./security.js";
 
 export type WorkerStatus = "requested" | "running" | "succeeded" | "failed" | "unknown_outcome";
 export type DiagnosticKind = "orphan" | "unknown_outcome" | "missing_result";
@@ -206,6 +206,7 @@ export interface DurableState {
   launchIntents: LaunchIntent[];
   capturedResults?: CapturedResult[];
   securityAuditEvents?: SecurityAuditEvent[];
+  securityAuditHead?: { sequence: number; eventHash: string };
   reconciledAt?: string;
 }
 
@@ -297,6 +298,9 @@ const stateSchema = z.object({
   assignments: z.array(assignmentSchema).default([]), auditEvents: z.array(auditEventSchema).default([]),
   launchIntents: z.array(launchIntentSchema).default([]), capturedResults: z.array(capturedResultSchema).default([]),
   securityAuditEvents: z.array(securityAuditEventSchema).default([]),
+  securityAuditHead: z.object({
+    sequence: z.number().int().nonnegative(), eventHash: z.string().regex(/^[a-f0-9]{64}$/),
+  }).optional(),
   reconciledAt: z.iso.datetime().optional(),
 }).superRefine((state, context) => {
   for (const [kind, records] of [["session", state.sessions], ["batch", state.batches], ["worker", state.workers],
@@ -333,6 +337,7 @@ const EMPTY_STATE: DurableState = {
   launchIntents: [],
   capturedResults: [],
   securityAuditEvents: [],
+  securityAuditHead: { sequence: 0, eventHash: GENESIS_AUDIT_HASH },
 };
 
 export class DurableStore {
@@ -600,6 +605,7 @@ export class DurableStore {
     return this.withLock(async () => {
       await this.load();
       const audit = this.state.securityAuditEvents ??= [];
+      this.assertSecurityAuditChain();
       const previous = audit.at(-1);
       const body = {
         id: randomUUID(),
@@ -619,6 +625,7 @@ export class DurableStore {
       const event: SecurityAuditEvent = { ...body, eventHash: securityAuditEventHash(body) };
       securityAuditEventSchema.parse(event);
       audit.push(event);
+      this.state.securityAuditHead = { sequence: event.sequence, eventHash: event.eventHash };
       await this.persist();
       return structuredClone(event);
     });
@@ -640,7 +647,18 @@ export class DurableStore {
       }
       previousHash = eventHash;
     }
+    const head = this.state.securityAuditHead;
+    if (head !== undefined && (head.sequence !== events.length || head.eventHash !== previousHash)) {
+      return { valid: false, length: events.length, brokenAtSequence: events.length + 1 };
+    }
     return { valid: true, length: events.length };
+  }
+
+  private assertSecurityAuditChain(): void {
+    const verification = this.verifySecurityAuditChain();
+    if (!verification.valid) {
+      throw new SecurityError("INTEGRITY_FAILURE", `Security audit integrity failure at sequence ${verification.brokenAtSequence}`);
+    }
   }
 
   async pendingAssignments(): Promise<Assignment[]> {
@@ -717,7 +735,9 @@ export class DurableStore {
     try {
       const parsed: unknown = JSON.parse(await readFile(this.path, "utf8"));
       this.state = stateSchema.parse(parsed) as DurableState;
+      this.assertSecurityAuditChain();
     } catch (error) {
+      if (error instanceof SecurityError) throw error;
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         throw new Error(`Cannot load orchestrator state at ${this.path}: ${(error as Error).message}`, { cause: error });
       }

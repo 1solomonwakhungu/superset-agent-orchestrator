@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { AgentAdapter, RunResult, TerminalRunStatus } from "./agent-adapter.js";
+import { redactValue } from "./security.js";
 import { DurableStore, type AgentResultClaim, type CapturedResult } from "./store.js";
 
 export type ResultDelivery =
@@ -48,7 +49,8 @@ export class ResultCaptureService {
     const assignment = await this.store.assignmentForResult(assignmentId);
     if (assignment.runId === undefined) throw new Error("Result ingestion requires a bound run ID");
     requireExactIdentities(assignment);
-    const claim = normalize(delivery);
+    const rawClaim = normalize(delivery);
+    const claim = redactValue(rawClaim) as AgentResultClaim;
     const deliveryFingerprint = createHash("sha256").update(canonical({
       assignmentId: assignment.id,
       batchId: assignment.batchId,
@@ -59,7 +61,7 @@ export class ResultCaptureService {
       attempt: assignment.attempt,
       runId: assignment.runId,
       attribution: assignment.attribution,
-      claim,
+      claim: rawClaim,
     })).digest("hex");
     return this.store.captureResult({
       deliveryId,

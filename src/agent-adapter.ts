@@ -5,6 +5,8 @@ export interface LaunchRequest {
   idempotencyKey: string;
   prompt: string;
   workspacePath: string;
+  environment: NodeJS.ProcessEnv;
+  revalidateWorkspace(): Promise<void>;
   resume?: ResumeMetadata;
 }
 
@@ -30,6 +32,7 @@ export type RunResult =
 export interface AgentAdapter {
   /** Returns the one run previously accepted for this key, or undefined when absence is authoritative. */
   findByIdempotencyKey(idempotencyKey: string): Promise<RunHandle | undefined>;
+  /** Must revalidate the workspace immediately before spawning and use only the supplied environment. */
   launch(request: LaunchRequest): Promise<RunHandle>;
   status(handle: RunHandle): Promise<RunState>;
   result(handle: RunHandle): Promise<RunResult | undefined>;
