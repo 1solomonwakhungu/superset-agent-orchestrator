@@ -9,15 +9,13 @@
 - Made the Superset Desktop smoke skip visible and justified on generic runners.
 - Made Windows explicitly unsupported in package metadata, startup, probe policy,
   matrix evidence, documentation, and tests.
-- Verification: `npm run verify` passed 106/106 runnable tests with one explicit
+- Verification: `npm run verify` passed 106 runnable tests with one explicit
   Superset Desktop skip; `npm run compatibility:probe` returned the expected
-  actionable unknown; `git diff --check` passed.
-- Delivery blocker: GitHub rejected the branch push because the active OAuth
-  credential has `repo` but not `workflow` scope, which is required to add
-  `.github/workflows/compatibility.yml`. SSH authentication is unavailable and
-  non-interactive `gh auth refresh --scopes workflow` did not authorize the scope.
-- Next: authorize GitHub workflow write scope, push local head, then verify the
-  exact-head matrix, merge, and verify fetched `main` before closing PER-352.
+  actionable unknown; focused Markdown lint and `git diff --check` passed.
+- GitHub Actions run `30173122494` passed all four macOS 14/Ubuntu 24.04 and
+  Node.js 22/24 lanes plus the generated compatibility report job.
+- Pull request: https://github.com/1solomonwakhungu/superset-agent-orchestrator/pull/32
+- Next: review and merge PR 32, then verify fetched `main` before closing PER-352.
 
 ## PER-258 agency availability monitoring
 
