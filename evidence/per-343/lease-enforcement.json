@@ -10,7 +10,11 @@
     "npm": "10.9.8"
   },
   "command": "npm run verify",
-  "totals": { "tests": 98, "pass": 98, "fail": 0 },
+  "totals": {
+    "tests": 110,
+    "pass": 110,
+    "fail": 0
+  },
   "coverage": [
     {
       "requirement": "T-LEASE-01",
@@ -37,5 +41,6 @@
     "read-only sentinel enforcement on each supported platform",
     "canonical workspace identity resolution and WORKSPACE_IDENTITY_CHANGED",
     "launch-path integration: writer launch remains disabled"
-  ]
+  ],
+  "note": "Totals are for the full npm suite after merging origin/main at 90cef0d. The Python suite under tests/ belongs to PER-258 and was not run here: pytest is not installed in this environment."
 }
