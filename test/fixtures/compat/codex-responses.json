@@ -1,0 +1,76 @@
+{
+  "$comment": "Frozen Codex payloads captured from the documented response shape. Changing an expectation here is a compatibility change and must be reviewed as one.",
+  "adapter": "codex",
+  "cases": [
+    {
+      "name": "completed run with output and a resumable thread",
+      "input": { "thread_id": "thread-1", "status": "completed", "output_text": "Applied the migration." },
+      "expect": { "kind": "result", "value": { "status": "succeeded", "output": "Applied the migration.", "resume": { "adapter": "codex", "token": "thread-1" } } }
+    },
+    {
+      "name": "completed run with deliberately empty output",
+      "input": { "status": "completed", "output_text": "" },
+      "expect": { "kind": "result", "value": { "status": "succeeded", "output": "" } }
+    },
+    {
+      "name": "failed run marked retryable",
+      "input": { "thread_id": "thread-2", "status": "failed", "error": { "message": "upstream timeout", "retryable": true }, "output_text": "partial" },
+      "expect": { "kind": "result", "value": { "status": "failed", "error": "upstream timeout", "retryable": true, "output": "partial", "resume": { "adapter": "codex", "token": "thread-2" } } }
+    },
+    {
+      "name": "failed run defaults to non-retryable",
+      "input": { "status": "failed", "error": { "message": "invalid request" } },
+      "expect": { "kind": "result", "value": { "status": "failed", "error": "invalid request", "retryable": false } }
+    },
+    {
+      "name": "cancelled run keeps its reason and partial output",
+      "input": { "status": "cancelled", "cancellation_reason": "user requested", "output_text": "half done" },
+      "expect": { "kind": "result", "value": { "status": "cancelled", "reason": "user requested", "output": "half done" } }
+    },
+    {
+      "name": "cancelled run without a reason",
+      "input": { "status": "cancelled" },
+      "expect": { "kind": "result", "value": { "status": "cancelled" } }
+    },
+    {
+      "name": "queued run is not yet terminal",
+      "input": { "status": "queued" },
+      "expect": { "kind": "non_terminal" }
+    },
+    {
+      "name": "in-progress run is not yet terminal",
+      "input": { "thread_id": "thread-3", "status": "in_progress" },
+      "expect": { "kind": "non_terminal" }
+    },
+    {
+      "name": "completed run without output text is malformed",
+      "input": { "status": "completed" },
+      "expect": { "kind": "malformed", "message": "output_text is required" }
+    },
+    {
+      "name": "failed run without an error is malformed",
+      "input": { "status": "failed" },
+      "expect": { "kind": "malformed", "message": "error is required" }
+    },
+    {
+      "name": "missing status is malformed",
+      "input": { "output_text": "orphaned output" },
+      "expect": { "kind": "malformed", "message": "status is required" }
+    },
+    {
+      "name": "unknown status is malformed rather than guessed",
+      "input": { "status": "exploded" },
+      "expect": { "kind": "malformed", "message": "unknown status" }
+    },
+    {
+      "name": "undeclared response fields are refused",
+      "input": { "status": "completed", "output_text": "ok", "usage": { "tokens": 10 } },
+      "expect": { "kind": "malformed", "message": "Malformed Codex response" }
+    },
+    {
+      "name": "a non-object response is refused",
+      "input": "completed",
+      "expect": { "kind": "malformed", "message": "Malformed Codex response" }
+    }
+  ]
+}

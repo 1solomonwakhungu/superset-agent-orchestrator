@@ -21,7 +21,9 @@
     "compatibility:probe": "node scripts/probe-compatibility.mjs",
     "start": "node dist/src/server.js",
     "test": "tsx --test test/**/*.test.ts test/**/*.test.mjs",
-    "verify": "npm run build && npm test",
+    "test:coverage": "tsx --test --experimental-test-coverage --test-coverage-exclude=test/** --test-coverage-exclude=scripts/** --test-coverage-exclude=dist/** --test-coverage-lines=95 --test-coverage-branches=88 --test-coverage-functions=92 test/**/*.test.ts test/**/*.test.mjs",
+    "test:race": "bash scripts/run-race-tests.sh",
+    "verify": "npm run build && npm run check && npm run test:coverage && npm run test:race",
     "check": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

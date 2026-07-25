@@ -1,0 +1,145 @@
+{
+  "$comment": "Frozen OpenCode assistant-message payloads. Each documented error variant appears exactly once so a provider-side rename is caught here first.",
+  "adapter": "opencode",
+  "cases": [
+    {
+      "name": "completed message joins ordered text parts and skips ignored ones",
+      "input": {
+        "info": { "id": "message-1", "sessionID": "session-1", "role": "assistant", "time": { "created": 1, "completed": 2 } },
+        "parts": [
+          { "id": "part-1", "sessionID": "session-1", "messageID": "message-1", "type": "text", "text": "Hello " },
+          { "id": "part-2", "sessionID": "session-1", "messageID": "message-1", "type": "reasoning", "text": "hidden" },
+          { "id": "part-3", "sessionID": "session-1", "messageID": "message-1", "type": "text", "text": "world" },
+          { "id": "part-4", "sessionID": "session-1", "messageID": "message-1", "type": "text", "text": "dropped", "ignored": true }
+        ]
+      },
+      "expect": { "kind": "result", "value": { "status": "succeeded", "output": "Hello world", "resume": { "adapter": "opencode", "token": "session-1" } } }
+    },
+    {
+      "name": "completed message with no text parts yields empty output",
+      "input": {
+        "info": { "id": "message-2", "sessionID": "session-2", "role": "assistant", "time": { "created": 1, "completed": 2 } },
+        "parts": []
+      },
+      "expect": { "kind": "result", "value": { "status": "succeeded", "output": "", "resume": { "adapter": "opencode", "token": "session-2" } } }
+    },
+    {
+      "name": "aborted message maps to cancellation with its reason",
+      "input": {
+        "info": {
+          "id": "message-3", "sessionID": "session-3", "role": "assistant", "time": { "created": 1, "completed": 2 },
+          "error": { "name": "MessageAbortedError", "data": { "message": "aborted by operator" } }
+        },
+        "parts": [{ "id": "part-1", "sessionID": "session-3", "messageID": "message-3", "type": "text", "text": "partial" }]
+      },
+      "expect": { "kind": "result", "value": { "status": "cancelled", "reason": "aborted by operator", "output": "partial", "resume": { "adapter": "opencode", "token": "session-3" } } }
+    },
+    {
+      "name": "retryable API error preserves the provider retry signal",
+      "input": {
+        "info": {
+          "id": "message-4", "sessionID": "session-4", "role": "assistant", "time": { "created": 1, "completed": 2 },
+          "error": { "name": "APIError", "data": { "message": "rate limited", "isRetryable": true } }
+        },
+        "parts": []
+      },
+      "expect": { "kind": "result", "value": { "status": "failed", "error": "rate limited", "retryable": true, "resume": { "adapter": "opencode", "token": "session-4" } } }
+    },
+    {
+      "name": "non-retryable API error stays non-retryable",
+      "input": {
+        "info": {
+          "id": "message-5", "sessionID": "session-5", "role": "assistant", "time": { "created": 1, "completed": 2 },
+          "error": { "name": "APIError", "data": { "message": "bad request", "isRetryable": false } }
+        },
+        "parts": []
+      },
+      "expect": { "kind": "result", "value": { "status": "failed", "error": "bad request", "retryable": false, "resume": { "adapter": "opencode", "token": "session-5" } } }
+    },
+    {
+      "name": "provider authentication failure is never retryable",
+      "input": {
+        "info": {
+          "id": "message-6", "sessionID": "session-6", "role": "assistant", "time": { "created": 1, "completed": 2 },
+          "error": { "name": "ProviderAuthError", "data": { "message": "missing credentials" } }
+        },
+        "parts": []
+      },
+      "expect": { "kind": "result", "value": { "status": "failed", "error": "missing credentials", "retryable": false, "resume": { "adapter": "opencode", "token": "session-6" } } }
+    },
+    {
+      "name": "unknown provider error is surfaced verbatim",
+      "input": {
+        "info": {
+          "id": "message-7", "sessionID": "session-7", "role": "assistant", "time": { "created": 1, "completed": 2 },
+          "error": { "name": "UnknownError", "data": { "message": "unexpected provider failure" } }
+        },
+        "parts": []
+      },
+      "expect": { "kind": "result", "value": { "status": "failed", "error": "unexpected provider failure", "retryable": false, "resume": { "adapter": "opencode", "token": "session-7" } } }
+    },
+    {
+      "name": "output length overflow gets a stable orchestrator message",
+      "input": {
+        "info": {
+          "id": "message-8", "sessionID": "session-8", "role": "assistant", "time": { "created": 1, "completed": 2 },
+          "error": { "name": "MessageOutputLengthError", "data": {} }
+        },
+        "parts": [{ "id": "part-1", "sessionID": "session-8", "messageID": "message-8", "type": "text", "text": "truncated" }]
+      },
+      "expect": { "kind": "result", "value": { "status": "failed", "error": "OpenCode response exceeded the model output limit", "retryable": false, "output": "truncated", "resume": { "adapter": "opencode", "token": "session-8" } } }
+    },
+    {
+      "name": "an incomplete message is not yet terminal",
+      "input": {
+        "info": { "id": "message-9", "sessionID": "session-9", "role": "assistant", "time": { "created": 1 } },
+        "parts": [{ "id": "part-1", "sessionID": "session-9", "messageID": "message-9", "type": "text", "text": "streaming" }]
+      },
+      "expect": { "kind": "non_terminal" }
+    },
+    {
+      "name": "a part from another session is refused",
+      "input": {
+        "info": { "id": "message-10", "sessionID": "session-10", "role": "assistant", "time": { "created": 1, "completed": 2 } },
+        "parts": [{ "id": "part-1", "sessionID": "session-other", "messageID": "message-10", "type": "text", "text": "foreign" }]
+      },
+      "expect": { "kind": "malformed", "message": "part attribution does not match" }
+    },
+    {
+      "name": "a part from another message is refused",
+      "input": {
+        "info": { "id": "message-11", "sessionID": "session-11", "role": "assistant", "time": { "created": 1, "completed": 2 } },
+        "parts": [{ "id": "part-1", "sessionID": "session-11", "messageID": "message-other", "type": "text", "text": "foreign" }]
+      },
+      "expect": { "kind": "malformed", "message": "part attribution does not match" }
+    },
+    {
+      "name": "a non-assistant message is refused",
+      "input": {
+        "info": { "id": "message-12", "sessionID": "session-12", "role": "user", "time": { "created": 1, "completed": 2 } },
+        "parts": []
+      },
+      "expect": { "kind": "malformed", "message": "Malformed OpenCode response" }
+    },
+    {
+      "name": "an undocumented error variant is refused",
+      "input": {
+        "info": {
+          "id": "message-13", "sessionID": "session-13", "role": "assistant", "time": { "created": 1, "completed": 2 },
+          "error": { "name": "TeapotError", "data": { "message": "short and stout" } }
+        },
+        "parts": []
+      },
+      "expect": { "kind": "malformed", "message": "Malformed OpenCode response" }
+    },
+    {
+      "name": "undeclared top-level fields are refused",
+      "input": {
+        "info": { "id": "message-14", "sessionID": "session-14", "role": "assistant", "time": { "created": 1, "completed": 2 } },
+        "parts": [],
+        "usage": { "tokens": 10 }
+      },
+      "expect": { "kind": "malformed", "message": "Malformed OpenCode response" }
+    }
+  ]
+}
