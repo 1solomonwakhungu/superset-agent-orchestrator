@@ -160,11 +160,16 @@ test("retries transient background dispatch failure without another launch reque
       return pending();
     };
     const service = new LaunchService(store, adapter, () => new Date(), () => undefined, 5);
-    await service.launch(request);
+    const accepted = await service.launch(request);
 
-    for (let attempt = 0; attempt < 100 && adapter.launches.length === 0; attempt += 1) {
+    // Wait for the durable effect rather than the adapter call alone. Dispatch
+    // records the launch after the adapter returns, so leaving this block on the
+    // adapter signal would race the temporary directory cleanup.
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      if ((await store.assignmentForResult(accepted.assignmentId)).status === "launched") break;
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
+    assert.equal((await store.assignmentForResult(accepted.assignmentId)).status, "launched");
     assert.equal(adapter.launches.length, 1);
     assert.ok(attempts >= 2);
   });

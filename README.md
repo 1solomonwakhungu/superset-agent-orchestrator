@@ -54,6 +54,8 @@ node --test test/configuration-contract.test.mjs
 - [Local control-plane threat model](docs/security/local-control-plane-threat-model.md)
 - [Idempotency and reconciliation contract](docs/idempotency-and-reconciliation.md)
 - [Workspace lease and writer-safety policy](docs/workspace-lease-and-writer-safety.md)
+- [Testing strategy and coverage thresholds](docs/testing-strategy.md)
+- [Flaky-test policy](docs/flaky-test-policy.md)
 
 The MCP contract publishes typed TypeScript/Zod schemas and a client-neutral JSON Schema catalog. It defines asynchronous launch, stable IDs, batches of 100 sessions, pagination, bounded wait, cancellation, results, and restart recovery. The contract is normative; tools not listed under Recovery above are not yet registered runtime handlers.
 
@@ -63,7 +65,27 @@ The MCP contract publishes typed TypeScript/Zod schemas and a client-neutral JSO
 
 `FakeAgentAdapter` accepts ordered run scripts and a caller-controlled clock. Integration tests can therefore drive queued, running, succeeded, failed, and cancelled paths without timing or network dependencies.
 
-Run `npm run verify` to type-check the complete implementation and execute all tests.
+Run `npm run verify` to build, type-check, run the full suite with enforced
+coverage thresholds, and repeat the concurrency-sensitive suites.
+
+## Tests
+
+The suite is deterministic and offline: no network access, no installed Superset
+CLI, injected clocks, and seeded generators. See
+[`docs/testing-strategy.md`](docs/testing-strategy.md) for the layer map and
+[`docs/flaky-test-policy.md`](docs/flaky-test-policy.md) for how a flake is
+triaged and when quarantine is permitted.
+
+| Command | Purpose |
+| --- | --- |
+| `npm test` | Full suite |
+| `npm run test:coverage` | Full suite, failing below 95% lines, 88% branches, 92% functions over `src/**` |
+| `npm run test:race` | Repeats the concurrency-sensitive suites (`RACE_REPEATS`, default 10) |
+| `npm run check` | Type checking with no emit |
+
+Frozen provider payloads and durable state files from earlier releases live in
+`test/fixtures/compat/`. Changing an expectation there is a compatibility change
+and must be reviewed as one.
 
 ## Superset discovery
 

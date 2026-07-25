@@ -1,5 +1,22 @@
 # Status
 
+## PER-346 deterministic offline test hardening
+
+- Completed: Added property-style domain-invariant tests, durable-state schema
+  and malformed-payload rejection tests, MCP schema contract tests, frozen
+  compatibility fixtures for Codex, OpenCode, and two earlier durable state
+  shapes, state-transition tests, concurrency and workspace-lease exclusivity
+  tests, and adversarial security-control tests. Added enforced coverage
+  thresholds, a repeated race-test runner, a testing strategy document, and a
+  flaky-test policy. No product code was added to satisfy a test.
+- Key results: 164/164 tests pass (101 before). Coverage over `src/**` rose from
+  88.96% lines, 80.00% branches, 86.64% functions to 98.65% lines, 92.64%
+  branches, 97.35% functions, enforced at 95/88/92. 15 repeated race runs of the
+  six concurrency-sensitive suites passed. Fixed one load-sensitive flake in
+  `test/launch-service.test.ts` that raced temporary-directory cleanup against a
+  background durable write.
+- Next: Merge after exact-head CI and verify merged `main`.
+
 ## PER-258 agency availability monitoring
 
 - Completed: Implemented and verified the PER-258 monitor, production service
