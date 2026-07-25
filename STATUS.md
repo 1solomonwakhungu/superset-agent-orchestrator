@@ -15,5 +15,10 @@
   opt-in refusal.
 - Verification: `npm run verify` passed build and all 92 tests; focused harness
   tests passed 3/3; `git diff --check` passed.
-- Next: commit the clean baseline, run real preflight, and run the authorized real
-  launch only if the isolated workspace and configured Codex preset are present.
+- Real preflight passed against Superset CLI 1.16.1 with zero failures.
+- Authorized relay-outage launch passed in 86.97 ms and returned session
+  `4236efff-a9c8-4941-9eb8-00a657ead0ec`; target HEAD/status remained unchanged.
+- Real classification is `blocked`, not passed: exact sentinel retrieval and
+  backend restart recovery are unsupported, while cancellation passed through
+  the explicitly allowed unsupported-cancel outcome.
+- Next: deliver the commits through an unmerged pull request.
