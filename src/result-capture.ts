@@ -90,7 +90,11 @@ function requireExactIdentities(assignment: {
   }
 }
 
-function normalize(delivery: ResultDelivery): AgentResultClaim {
+/**
+ * Projects one delivery into the exact claim persisted for a session, including completeness.
+ * Canceled and failed runs keep whatever output they produced, marked `partial`.
+ */
+export function normalize(delivery: ResultDelivery): AgentResultClaim {
   if (delivery.kind === "malformed") {
     return { status: "malformed", completeness: "malformed", error: delivery.error };
   }

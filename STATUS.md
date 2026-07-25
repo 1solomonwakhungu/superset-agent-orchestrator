@@ -1,5 +1,25 @@
 # Status
 
+## PER-342 cancellation, timeouts, and bounded wait
+
+- Added `LifecycleService` owning cancel-one, cancel-batch, deadline expiry, and
+  bounded wait on top of the durable single-writer store.
+- Made cancellation honest: capability is checked before any mutation, a backend
+  that rejects a cancel it advertised is rolled back, an undispatched session is
+  canceled locally, and an unreachable provider returns `PROVIDER_UNAVAILABLE`
+  while retaining intent.
+- Made races deterministic: cancellation intent and deadline expiry are claimed
+  under the store lock, so concurrent callers issue exactly one provider stop and
+  report each transition once. Terminal state is monotonic and late results are
+  retained as audited late observations without regression.
+- Mapped deadlines to `failed`/`deadline_exceeded` per the authoritative state
+  machine instead of inventing a terminal state; canceled and failed sessions keep
+  partial output with exact completeness.
+- Added MCP tools `batches_cancel`, `batches_wait`, `sessions_set_deadline`, and
+  `deadlines_enforce`, plus a background deadline sweep.
+- Verification: `npm run verify` passed 122/122; focused lifecycle and race tests
+  passed 33/33 across 10 consecutive runs.
+
 ## PER-333 workspace lease and writer safety
 
 - Defined exclusive cross-process writer admission using a durable generation and

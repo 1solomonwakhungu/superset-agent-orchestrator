@@ -278,6 +278,10 @@ export const resultsResultSchema = z.object({
 
 export const cancelRequestSchema = idsRequestSchema.extend({ reason: z.string().min(1).max(1000).optional() }).strict();
 export const cancelResultSchema = statusResultSchema;
+export const batchCancelRequestSchema = versionedRequest.extend({
+  batch_ids: uniqueIdentifiers,
+  reason: z.string().min(1).max(1000).optional(),
+}).strict();
 
 export const pageRequestSchema = versionedRequest.extend({
   batch_id: identifier,
@@ -322,6 +326,7 @@ export const waitResultSchema = z.object({
   const ids = data.items.map(({ batch_id }) => batch_id);
   if (new Set(ids).size !== ids.length) context.addIssue({ code: "custom", message: "item batch_ids must be unique" });
 });
+export const batchCancelResultSchema = waitResultSchema;
 
 export const recoveryRequestSchema = pageRequestSchema;
 export const recoveryResultSchema = batchGetResultSchema;
@@ -339,6 +344,7 @@ export const toolContract = {
   sessions_status: { input: idsRequestSchema, output: z.union([statusResultSchema, failureResultSchema]) },
   sessions_results: { input: idsRequestSchema, output: z.union([resultsResultSchema, failureResultSchema]) },
   sessions_cancel: { input: cancelRequestSchema, output: z.union([cancelResultSchema, failureResultSchema]) },
+  batches_cancel: { input: batchCancelRequestSchema, output: z.union([batchCancelResultSchema, failureResultSchema]) },
   batches_get: { input: pageRequestSchema, output: z.union([batchGetResultSchema, failureResultSchema]) },
   batches_wait: { input: waitRequestSchema, output: z.union([waitResultSchema, failureResultSchema]) },
   batches_recover: { input: recoveryRequestSchema, output: z.union([recoveryResultSchema, failureResultSchema]) },
@@ -351,6 +357,7 @@ const semanticRules = {
   sessions_status: ["session_ids MUST be unique", "data.items[].session_id MUST be unique", "an item's session.session_id MUST equal its session_id"],
   sessions_results: ["session_ids MUST be unique", "data.items[].session_id MUST be unique", "completed results MUST have complete=true", "failed and canceled results MUST have complete=false"],
   sessions_cancel: ["session_ids MUST be unique", "data.items[].session_id MUST be unique", "an item's session.session_id MUST equal its session_id"],
+  batches_cancel: ["batch_ids MUST be unique", "data.items[].batch_id MUST be unique"],
   batches_get: ["next_cursor MUST be present exactly when has_more=true", "terminal sessions MUST have a state-appropriate stop_reason", "completed sessions MUST have artifact_manifest_id"],
   batches_wait: ["batch_ids MUST be unique", "data.items[].batch_id MUST be unique"],
   batches_recover: ["next_cursor MUST be present exactly when has_more=true", "terminal sessions MUST have a state-appropriate stop_reason", "completed sessions MUST have artifact_manifest_id"],
