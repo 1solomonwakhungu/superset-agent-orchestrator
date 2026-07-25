@@ -1,4 +1,8 @@
 artifacts/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+var/
 node_modules/
 dist/
 src/**/*.js
