@@ -11,7 +11,7 @@ The harness refuses to launch unless:
 - `SUPERSET_REAL_E2E_WORKSPACE_PATH` exactly matches its canonical path;
 - the target is an existing `worktree`, not a main workspace;
 - the harness repository is inside that workspace;
-- the repository root is the target Git top level and uses a linked-worktree Git directory distinct from the shared common directory;
+- the authorized Superset workspace is an enclosing Git top level whose linked-worktree Git directory is distinct from its shared common directory;
 - exactly one Codex preset is configured; and
 - the target repository is clean.
 
