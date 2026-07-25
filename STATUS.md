@@ -193,12 +193,19 @@ locally.
   workspace, attempt, run, agent, and task attribution.
 - Added a persisted command ledger and exact call-count assertions so no retry can
   hide timeout, malformed-output, launch-rejection, or cancellation failures.
-- Verification: focused integration tests passed 4/4; `npm run verify` passed
-  93/93 tests; the configuration contract passed 3/3; strict PER-323 routing and
-  `git diff --check` passed.
-- Remaining scope: the production MCP server does not wire the launch and result
-  services to its transport, and `LaunchService` creates one batch per launch.
-  Consequently this suite proves the provider boundary, not complete MCP
-  lifecycle transport or one true 100-session launch batch.
-- Next: commit, push, open the verified PR, and address the production MCP wiring
-  gap in the owning implementation task before claiming complete MCP coverage.
+- Added explicit provider-integration stdio MCP tools for atomic batch launch,
+  exact result refresh, and cancellation without claiming the not-yet-implemented
+  published lifecycle contract.
+- Added a second integration layer that drives the built production server with
+  the official MCP client and fake Superset subprocess.
+- Proved one true 100-session batch, mixed terminal outcomes, process restart,
+  semantic concurrent replay, terminal cancellation refusal, exact persisted
+  attribution, and all four provider error codes with one failed command
+  invocation and no hidden retry.
+- Verification: production MCP integration tests passed 4/4; `npm run verify`
+  passed 97/97 tests; the configuration contract passed 3/3; strict PER-323
+  routing and `git diff --check` passed.
+- Remaining risk: this wiring exposes the implemented provider lifecycle subset;
+  discovery, bounded wait, lease admission, and the complete published versioned
+  contract remain owned by their production implementation tasks.
+- Next: commit, push, open the verified pull request, and report exact head checks.

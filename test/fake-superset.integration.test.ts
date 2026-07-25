@@ -108,10 +108,14 @@ test("fake Superset completes and attributes a deterministic 100-session batch",
   await withHarness({ defaultScript: successScript() }, async ({ adapter, statePath, calls }) => {
     const store = new DurableStore(statePath);
     const launches = new LaunchService(store, adapter, now);
-    const accepted: LaunchAcceptance[] = [];
-    for (let index = 0; index < 100; index += 1) {
-      accepted.push(await launches.accept(request(index, `task-${index}`)));
-    }
+    const accepted = await launches.acceptBatch({
+      idempotencyKey: "batch-100", clientId: "integration", batchName: "fake-superset",
+      assignments: Array.from({ length: 100 }, (_, index) => {
+        const { clientId: _clientId, batchName: _batchName, ...assignment } = request(index, `task-${index}`);
+        return assignment;
+      }),
+    });
+    assert.equal(new Set(accepted.map(({ batchId }) => batchId)).size, 1);
     await launches.dispatchPending();
     const capture = new ResultCaptureService(store, adapter, now);
     for (const item of accepted) await capture.collect(item.assignmentId, `delivery-${item.assignmentId}`);
