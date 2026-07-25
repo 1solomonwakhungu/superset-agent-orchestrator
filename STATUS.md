@@ -18,6 +18,7 @@
   non-interactive `gh auth refresh --scopes workflow` did not authorize the scope.
 - Next: authorize GitHub workflow write scope, push local head, then verify the
   exact-head matrix, merge, and verify fetched `main` before closing PER-352.
+
 ## PER-258 agency availability monitoring
 
 - Completed: Implemented and verified the PER-258 monitor, production service
@@ -28,6 +29,7 @@
   valid TLS at 2026-07-25T03:00:23Z to 03:00:24Z, 3/3 monitor tests and 101/101
   repository tests passed, all sampled SLOs were 100%, and 0 schedulers or
   notification integrations exist. Evidence is under `evidence/per-258/`.
+
 ## PER-230 vllm-mlx soak safety gate
 
 - Completed: PER-230 pre-test validation and safety-gate report.
