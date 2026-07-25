@@ -1,5 +1,14 @@
 # Status
 
+## PER-362 MiniCPM5 reproducible environment
+
+- Added a uv 0.8.3 lock for Python 3.12 across Linux x86-64 and macOS arm64.
+- Pinned MiniCPM5-1B, llama.cpp, MLX, container bases, and Python dependencies.
+- Two independent frozen installs produced identical 29-package manifests.
+- Two full runs produced logits SHA256 `869e1202f1c042e479ded488fbefc7fd14d83abcb74ff4eeac860b6bdf8e2c45`.
+- Unit tests passed 2/2 and native MLX imported at 0.29.0.
+- Remaining: execute the image build on a host with a running Docker daemon.
+
 ## PER-258 agency availability monitoring
 
 - Completed: Implemented and verified the PER-258 monitor, production service

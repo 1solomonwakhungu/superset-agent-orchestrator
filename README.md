@@ -14,6 +14,8 @@ launch-ledger technical preview that reports unobservable work as
 
 See the [product boundary and measurable release gates](docs/adr/0002-product-boundary-and-mvp-gates.md).
 
+The repository also contains the [reproducible MiniCPM5-1B baseline](docs/minicpm5-reproducible-environment.md).
+
 ## Recovery
 
 The server reconciles its durable JSON state before accepting MCP requests and periodically while
