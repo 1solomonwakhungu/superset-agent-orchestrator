@@ -182,7 +182,7 @@
     },
     {
       "id": "windows-native-stdio",
-      "classification": "unknown",
+      "classification": "unsupported",
       "environment": {
         "os": "win32",
         "osVersion": "any",
@@ -196,8 +196,15 @@
         "agentPreset": "unknown"
       },
       "claims": [],
-      "evidence": [],
-      "limitations": ["Windows support is unclaimed until a native stdio lane passes."]
+      "evidence": [
+        {
+          "kind": "decision",
+          "revision": "0678406d2b57c812cea91604d16ec494f8cb0b22",
+          "artifact": "docs/adr/0001-mcp-sdk-and-local-transport.md",
+          "probe": "npm run compatibility:probe"
+        }
+      ],
+      "limitations": ["Windows remains unsupported until native process, signal, filesystem, discovery, and stdio lanes are validated."]
     },
     {
       "id": "mcp-sdk-v2-prerelease",
