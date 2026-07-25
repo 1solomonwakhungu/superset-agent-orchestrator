@@ -8,12 +8,13 @@
   release, and resource-pressure/rate-limit backoff hooks that cannot skip the
   FIFO head.
 - Recovered running retries reacquire capacity, duplicate recovery shares one
-  permit, and cancellation during asynchronous pressure checks cannot disturb
-  the next queued request.
+  permit, and terminal transitions while recovery waits cannot leak capacity.
+- Cancellation interrupts asynchronous pressure checks, including hooks that
+  never settle, without disturbing the next queued request.
 - Added deterministic tests proving retries and batches hold capacity,
   cancellation frees capacity, every scope is enforced, and overload stays
   bounded or fails structurally when waiting is disabled.
-- Verification: `npm run verify` passed all 113 tests; the 3-test configuration
+- Verification: `npm run verify` passed all 116 tests; the 3-test configuration
   contract, strict local-routing verification, and `git diff --check` passed.
 - Next: deliver through pull request 23 and verify its exact head.
 

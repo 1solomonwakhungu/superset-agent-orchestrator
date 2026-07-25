@@ -63,6 +63,8 @@ interface PendingRequest {
   removeAbortListener?: () => void;
   pressureReadyAt: number;
   pressureReason?: string;
+  interruptPressureCheck: () => void;
+  pressureInterrupted: Promise<void>;
 }
 
 const DEFAULT_POLICY: ConcurrencyPolicy = {
@@ -127,12 +129,15 @@ export class ConcurrencyScheduler {
     }
 
     return new Promise<() => void>((resolve, reject) => {
+      let interruptPressureCheck = (): void => undefined;
       const pending: PendingRequest = {
         request,
         enqueuedAt: this.now().toISOString(),
         resolve,
         reject,
         pressureReadyAt: 0,
+        interruptPressureCheck: () => interruptPressureCheck(),
+        pressureInterrupted: new Promise<void>((done) => { interruptPressureCheck = done; }),
       };
       if (request.signal !== undefined) {
         const onAbort = (): void => {
@@ -141,6 +146,7 @@ export class ConcurrencyScheduler {
             this.queue.splice(index, 1);
             this.clearWakeTimer();
           }
+          pending.interruptPressureCheck();
           reject(cancelled(this.queue.length));
           void this.drain();
         };
@@ -181,9 +187,14 @@ export class ConcurrencyScheduler {
           this.scheduleDrain(waitMs);
           return;
         }
-        let pressure: PressureDecision;
+        let pressure: PressureDecision | undefined;
         try {
-          pressure = await this.checkPressure(pending.request);
+          pressure = this.pressureHooks.length === 0
+            ? { ready: true }
+            : await Promise.race([
+                this.checkPressure(pending.request),
+                pending.pressureInterrupted.then(() => undefined),
+              ]);
         } catch (error) {
           pressure = {
             ready: false,
@@ -192,6 +203,7 @@ export class ConcurrencyScheduler {
           };
         }
         if (this.queue[0] !== pending) continue;
+        if (pressure === undefined) continue;
         if (!pressure.ready) {
           const retryAfterMs = Math.max(1, pressure.retryAfterMs ?? 1_000);
           pending.pressureReason = pressure.reason ?? "resource_pressure";
