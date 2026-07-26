@@ -44,6 +44,41 @@ test("request hashes are canonical across nested property insertion order", () =
   }));
 });
 
+test("request hashes normalize optional schema fields and reject unknown fields", () => {
+  assert.equal(
+    LaunchCoordinator.requestHash(request),
+    LaunchCoordinator.requestHash({ ...request, resume: undefined } as unknown as AttributedLaunchRequest),
+  );
+  assert.throws(
+    () => LaunchCoordinator.requestHash({ ...request, command: "rm -rf /" } as AttributedLaunchRequest),
+    /Unrecognized key/,
+  );
+  assert.throws(
+    () => LaunchCoordinator.requestHash({
+      ...request,
+      attribution: { ...request.attribution, token: "secret" },
+    } as AttributedLaunchRequest),
+    /Unrecognized key/,
+  );
+});
+
+test("request hashes change for every semantic launch field but not the idempotency key", () => {
+  const baseline = LaunchCoordinator.requestHash(request);
+  assert.equal(baseline, LaunchCoordinator.requestHash({ ...request, idempotencyKey: "another-key" }));
+  for (const changed of [
+    { ...request, prompt: "Different prompt" },
+    { ...request, workspaceId: "workspace-other" },
+    { ...request, sessionId: "session-other" },
+    { ...request, batchId: "batch-other" },
+    { ...request, workerId: "worker-other" },
+    { ...request, attribution: { ...request.attribution, agent: "opencode" } },
+    { ...request, attribution: { ...request.attribution, task: "Different task" } },
+    { ...request, resume: { adapter: "codex", token: "resume-token" } },
+  ]) {
+    assert.notEqual(baseline, LaunchCoordinator.requestHash(changed));
+  }
+});
+
 async function harness(run: (path: string, store: DurableStore, adapter: FakeAgentAdapter) => Promise<void>): Promise<void> {
   const directory = await mkdtemp(join(tmpdir(), "orchestrator-idempotency-"));
   const path = join(directory, "state.json");
