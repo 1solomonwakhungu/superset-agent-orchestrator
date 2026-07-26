@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { SupersetDiscoveryAdapter } from "../src/superset-discovery.js";
 
+const smokeEnabled = process.env.SUPERSET_DISCOVERY_SMOKE === "1";
+
 test("real Superset CLI responses match supported discovery schemas", {
-  skip: process.env.SUPERSET_ORCHESTRATOR_EXECUTABLE === undefined
-    ? "Set SUPERSET_ORCHESTRATOR_EXECUTABLE to explicitly enable the external smoke test"
-    : false,
+  skip: smokeEnabled
+    ? false
+    : "requires an explicit executable and a healthy local Desktop host; generic CI validates the injected-runner contract",
 }, async () => {
   const executable = process.env.SUPERSET_ORCHESTRATOR_EXECUTABLE;
   const result = await new SupersetDiscoveryAdapter({
