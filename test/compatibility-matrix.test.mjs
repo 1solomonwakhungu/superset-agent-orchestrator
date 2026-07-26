@@ -102,6 +102,16 @@ test("generated compatibility reports require all four passing exact-head lanes"
     assert.match(report, new RegExp(commit));
     assert.match(report, /Windows is unsupported/);
 
+    const mismatched = resolve(directory, "ubuntu-24.04-22", "result.json");
+    const result = JSON.parse(readFileSync(mismatched, "utf8"));
+    writeFileSync(mismatched, JSON.stringify({ ...result, detected: { ...result.detected, node: "24.0.0" } }));
+    assert.throws(() => execFileSync(
+      process.execPath,
+      [resolve(root, "scripts/generate-compatibility-report.mjs"), directory, output],
+      { stdio: "pipe" },
+    ));
+    writeFileSync(mismatched, JSON.stringify(result));
+
     rmSync(resolve(directory, "macos-14-24"), { recursive: true });
     assert.throws(() => execFileSync(
       process.execPath,

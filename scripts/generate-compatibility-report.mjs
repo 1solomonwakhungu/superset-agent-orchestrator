@@ -12,11 +12,20 @@ const results = files.map((file) => JSON.parse(readFileSync(file, "utf8")));
 const expected = new Set(["ubuntu-24.04:22", "ubuntu-24.04:24", "macos-14:22", "macos-14:24"]);
 const commits = new Set(results.map(({ commit }) => commit));
 const actual = results.map(({ runner, requestedNode }) => `${runner}:${requestedNode}`);
+const expectedPlatforms = new Map([["ubuntu-24.04", "linux"], ["macos-14", "darwin"]]);
 if (results.length !== expected.size || new Set(actual).size !== expected.size || actual.some((lane) => !expected.has(lane))) {
   throw new Error(`expected exactly ${[...expected].join(", ")}; received ${actual.join(", ")}`);
 }
 if (commits.size !== 1 || results.some(({ conclusion }) => conclusion !== "success")) {
   throw new Error("compatibility documentation requires one exact commit and four successful lanes");
+}
+for (const result of results) {
+  const detectedNode = Number.parseInt(result.detected?.node, 10);
+  if (result.detected?.platform !== expectedPlatforms.get(result.runner)
+    || detectedNode !== result.requestedNode
+    || result.detected?.npm !== "10.9.8") {
+    throw new Error(`detected environment does not match declared lane ${result.runner}:${result.requestedNode}`);
+  }
 }
 results.sort((left, right) => left.runner.localeCompare(right.runner) || left.requestedNode - right.requestedNode);
 const lines = [

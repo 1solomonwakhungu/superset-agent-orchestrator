@@ -144,41 +144,55 @@
     },
     {
       "id": "node-22-sdk-1.29.0-stdio-linux",
-      "classification": "unknown",
+      "classification": "verified",
       "environment": {
         "os": "linux",
-        "osVersion": "unknown",
-        "architecture": "arm64 or x64",
+        "osVersion": "ubuntu-24.04 GitHub runner",
+        "architecture": "x64",
         "node": "22.x",
         "npm": "10.x",
-        "supersetDesktop": "unknown",
-        "supersetCli": "unknown",
+        "supersetDesktop": "not exercised",
+        "supersetCli": "not exercised",
         "mcpSdk": "1.29.0",
         "transport": "stdio",
-        "agentPreset": "unknown"
+        "agentPreset": "not exercised"
       },
-      "claims": [],
-      "evidence": [],
-      "limitations": ["No Linux CI or packaged stdio probe evidence is recorded."]
+      "claims": ["The build and complete portable test suite pass on the declared CI runner and runtime."],
+      "evidence": [
+        {
+          "kind": "repository",
+          "revision": "2652cfc5a4b2ecd68de2294b401fdbffeb8dae6a",
+          "artifact": "https://github.com/1solomonwakhungu/superset-agent-orchestrator/actions/runs/30173164039",
+          "probe": "npm run verify"
+        }
+      ],
+      "limitations": ["Generic CI does not exercise Superset Desktop, a configured agent preset, or packaged stdio negotiation."]
     },
     {
       "id": "node-24-sdk-1.29.0-stdio",
-      "classification": "unknown",
+      "classification": "verified",
       "environment": {
         "os": "darwin or linux",
-        "osVersion": "unknown",
-        "architecture": "arm64 or x64",
+        "osVersion": "macos-14 and ubuntu-24.04 GitHub runners",
+        "architecture": "arm64 or x64 as provided by the runners",
         "node": "24.x",
         "npm": "10.x",
-        "supersetDesktop": "unknown",
-        "supersetCli": "unknown",
+        "supersetDesktop": "not exercised",
+        "supersetCli": "not exercised",
         "mcpSdk": "1.29.0",
         "transport": "stdio",
-        "agentPreset": "unknown"
+        "agentPreset": "not exercised"
       },
-      "claims": [],
-      "evidence": [],
-      "limitations": ["The forward-compatibility lane has no recorded CI probe evidence."]
+      "claims": ["The build and complete portable test suite pass on the declared macOS and Linux CI runners and runtime."],
+      "evidence": [
+        {
+          "kind": "repository",
+          "revision": "2652cfc5a4b2ecd68de2294b401fdbffeb8dae6a",
+          "artifact": "https://github.com/1solomonwakhungu/superset-agent-orchestrator/actions/runs/30173164039",
+          "probe": "npm run verify"
+        }
+      ],
+      "limitations": ["Generic CI does not exercise Superset Desktop, a configured agent preset, or packaged stdio negotiation."]
     },
     {
       "id": "windows-native-stdio",
