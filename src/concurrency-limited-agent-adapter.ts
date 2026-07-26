@@ -145,6 +145,10 @@ export class ConcurrencyLimitedAgentAdapter implements AgentAdapter {
       if (existing.idempotencyKey !== idempotencyKey) throw new Error(`Run ${handle.runId} is already bound to another idempotency key`);
       return handle;
     }
+    if (retainedPermit !== undefined && retainedRunId === handle.runId) {
+      // Only a terminal status or result can remove a retained permit while lookup is pending.
+      return handle;
+    }
     this.recoveringRuns.add(handle.runId);
     try {
       if (recoveryRelease === undefined) throw new Error("Recovery permit was not reserved");
