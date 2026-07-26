@@ -6,4 +6,11 @@ if (contract.contractId !== "disklm-eval-v1") {
   );
 }
 
-export default Object.freeze(contract);
+const deepFreeze = (value) => {
+  for (const nested of Object.values(value)) {
+    if (nested && typeof nested === "object") deepFreeze(nested);
+  }
+  return Object.freeze(value);
+};
+
+export default deepFreeze(contract);
