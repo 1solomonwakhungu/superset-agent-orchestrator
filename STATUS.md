@@ -17,6 +17,27 @@
 - Next: push the resolved final PR head, verify exact-head CI, merge PR 28, and
   synchronize the canonical Linear comment and status.
 
+## PER-345 integration with current main, 2026-07-26
+
+- Integrated exact `origin/main` `76ac850d70b42cafeaaf2c058916b0d8f7e5abfe` into rewritten integration head `26351a418ab06e81457ddbc82e6fc36df484eb74`.
+- Retained main's merged PER-342 lifecycle validation and cancellation semantics together with PER-345 security, PER-343 lease/fencing, and PER-351 load behavior.
+- Verification: `npm run check` passed 299 tests with 298 passing and one explicit live-discovery skip, 92.46% statement coverage, six Python tests with one skip, schema no-diff, provenance verification, and DiskLM research verification of 28 cited works.
+
+## PER-345/PER-342 current-head integration, 2026-07-26
+
+- Preserved primary PR ancestry by merging exact PR head `e7db756cf45bf71caedae2a07c8d7071571d62c1`, then integrated exact current main `6791ae4cc5f74a187495dfe2bb63ac8b0ce06fe7`.
+- Composed PER-345 authorization, revalidation, environment isolation, redaction, private state, and atomic security audits with PER-342 lifecycle contracts, PER-343 transactional lease fencing, and PER-351 bounded load validation.
+- Updated the synthetic load benchmark to resolve opaque workspace IDs through an authorizer rather than accepting client-supplied canonical paths.
+- Focused security, lifecycle, launch idempotency, lease/fencing, concurrency, repository, and load tests passed 176/176.
+- `npm run check` passed 297 tests with 296 passing and one explicit live-discovery skip, 92.38% statement coverage, six Python tests with one skip, schema no-diff, and provenance verification.
+
+## PER-345/PER-342 final integration, 2026-07-26
+
+- Integrated current `origin/main` and exact PER-342 head `13f88233b898ab0ed04119155499ef05b7c26363`.
+- Preserved cross-process idempotent launch dispatch together with workspace authorization and revalidation, isolated child environments, redaction, private state paths, and atomic hash-chained security audits.
+- Connected PER-342 lifecycle workers atomically to secured launch acceptance and retained strict provider cancellation, timeout, bounded-wait, result, and late-observation contracts.
+- Verification: `npm ci` passed with two moderate advisories; the focused launch, lifecycle, protocol, result, security, concurrency, and resilience suite passed 145/145; `npm run check` passed 275 tests with 274 passing and one explicit live-discovery skip, coverage, six Python tests with one skip, schema no-diff, and provenance verification.
+
 ## PER-345 canonical hash and PER-342 tool compatibility, 2026-07-26
 
 - Strictly schema-normalized launch requests before versioned canonical hashing;
@@ -308,7 +329,6 @@ Verification completed:
 No host cleanup, Hermes access, or destructive operation was executed. The
 implementation is ready for review; invoke a dry-run from an appropriately
 authorized host before considering `--execute`.
-
 ## PER-352 cross-platform compatibility CI
 
 - Added exact-head macOS 14 and Ubuntu 24.04 CI lanes for Node.js 22 and 24 with
@@ -361,17 +381,42 @@ authorized host before considering `--execute`.
 
 ## PER-333 workspace lease and writer safety
 
-- Defined exclusive cross-process writer admission using a durable generation and
-  continuously held OS lock over stable canonical worktree identity.
-- Defined acquisition, heartbeat, two-phase release, fencing, crash recovery,
-  quarantine, evidence-based operator repair, and typed fail-closed refusals.
-- Allowed shared read-only work only behind verified mechanical write prevention;
-  unsupported agent launches remain disabled rather than relying on prompts.
-- Prohibited every warning, force, expiry, configuration, request, and state-edit
-  override and added contract tests for the critical safety invariants.
-- Verification: focused policy tests passed 7/7; `npm run verify` passed 81/81;
-  Markdown lint, strict local-routing verification, and `git diff --check` passed.
-- Next: deliver through the PER-333 pull request and verify fetched `main`.
+## PER-349 real Superset and Codex end-to-end tests
+
+- Added an opt-in real-system harness with explicit workspace identity, linked
+  Git worktree, clean-checkout, Codex preset, and launch authorization gates.
+- Relay-outage discovery and launch use dead proxies with loopback retained in
+  `NO_PROXY`; command evidence includes versions, timings, resources, hashes,
+  selected non-secret observations, failures, and workspace/session attribution.
+- Result, cancellation, and backend recovery remain fail-closed and explicitly
+  unsupported on Superset CLI 1.16.1. A real run cannot claim the exact sentinel
+  passed without a supported result API.
+- Executable fake-Superset tests prove preflight, launch/receipt attribution,
+  unsupported lifecycle reporting, sentinel redaction, workspace isolation, and
+  opt-in refusal.
+- Verification: build and typecheck passed; all 105 deterministic tests passed;
+  focused harness tests passed 5/5; `git diff --check` passed. The one excluded
+  smoke test requires the unavailable live Superset executable.
+- Real preflight passed again at 2026-07-25T20:06:57Z against Superset CLI
+  1.16.1 and Node 22.23.1 with zero failures, unchanged HEAD/status, and the
+  current isolated workspace resolved by exact canonical path.
+- Authorized relay-outage launch passed in 86.97 ms and returned session
+  `4236efff-a9c8-4941-9eb8-00a657ead0ec`; target HEAD/status remained unchanged.
+- Real classification is `blocked`, not passed: exact sentinel retrieval and
+  backend restart recovery are unsupported, while cancellation passed through
+  the explicitly allowed unsupported-cancel outcome.
+- PR review fixes require the capability-vetted CLI version, keep reports
+  outside the target worktree, and avoid claiming isolation after an
+  asynchronous launch receipt without a supported completion API.
+- Companion safety slice now requires separate preflight/launch opt-ins,
+  validates exact live tools without model startup, bounds output and time,
+  kills timed-out process groups, redacts diagnostics, records deterministic
+  command attribution, and tests cleanup guarantees.
+- Companion verification: build and focused real-E2E harness tests pass 7/7;
+  the full suite passes 107/108 with only the pre-existing opt-in live Superset
+  smoke test unavailable in the isolated clone.
+- Next: integrate current main, run all safe gates, and merge PR 31 with
+  exact-head protection.
 
 ## PER-327 compatibility evidence matrix
 
@@ -726,6 +771,19 @@ Historical PER-336 quality-gate reconciliation before PR 26 merged:
 - Verification: clean `npm ci` passed with 2 pre-existing moderate advisories; focused persistence tests passed 18/18; `npm run check` passed formatting, ESLint, typecheck, build, 119 tests (118 pass, 0 fail, 1 optional live skip), coverage, Python 3/3, and schema no-diff; `git diff --check` passed.
 - Next: commit and push the current-main integration, verify exact-head Quality and Compatibility checks and review threads, then leave PR 26 unmerged for independent verification.
 
+PER-336 security hotfix is complete locally after insecure PR 26 merged as `8989716`.
+
+- Work continues on new branch `1solomonwakhungu/per-336-storage-permissions-hotfix`, rooted at exact merged main `8989716`; the obsolete PR 26 branch is not reused.
+- Missing dedicated registry, backup, and export directories are created as `0700`. Preexisting directories must already be owner-only and are never chmodded; permissive cwd, `/tmp`, and other shared parents fail closed unchanged.
+- Newly created registry, sidecar, backup, and export files are `0600`; preexisting registry and sidecar files must already be singly linked owner-only regular files. No-follow descriptor checks reject symlinks, dangling links, multiply linked files, existing output destinations, live/sidecar destinations, and hard-link aliases of the database or sidecars without chmodding them.
+- Read-only diagnostics validate permissions without mutating them. Invalid retention configuration touches no filesystem path. Backup/export diagnostics include foreign-key details.
+- Discovery recording now has a bounded exact-version parser and a closed recursive field classifier. Unknown fields fail even when null or empty containers; identifying values, process/endpoint metadata, timestamps, commands, arguments, preset labels/IDs, and environment names/values are deterministic pseudonyms. The checked fixture passes a complete privacy scan.
+- Docs now describe explicit live-discovery opt-in, full backup validation, dedicated private CLI paths, permission refusal semantics, and the same-user residual threat boundary.
+- Verification: clean `npm ci` passed with 2 pre-existing moderate advisories; `npm run check` passed format, ESLint, typecheck, build, 130 tests (129 pass, 0 fail, 1 optional live skip), coverage, Python 3/3, and schema no-diff. The focused security/persistence suite passed 30 runnable tests plus 1 optional skip in three consecutive runs; `git diff --check` passed.
+- Follow-up PR 38 was opened at `2ae84ac`, then verifier review required committed no-overwrite concurrency coverage. New deterministic worker-barrier tests prove two simultaneous exports produce exactly one valid `0600` output and one refusal, while preexisting backup/export files and hard-link sources retain exact bytes and modes. The storage-focused 20/20 suite passed five consecutive runs.
+- Exact-head review then found missing ownership checks. Preexisting directories, registries, and sidecars now fail closed unless their UID matches the effective process UID where the platform exposes ownership; generated artifacts are explicitly ownership-tested.
+- Next: push the coverage follow-up to PR 38 and leave it unmerged for independent verification.
+
 ## PER-342 companion runtime protocol hardening
 
 - Added strict runtime schemas for provider status, result, and cancellation
@@ -744,16 +802,3 @@ Historical PER-336 quality-gate reconciliation before PR 26 merged:
   `git diff --check` passed.
 - Next: deliver the companion PR into the primary PER-342 branch and verify its
   exact-head CI.
-
-PER-336 security hotfix is complete locally after insecure PR 26 merged as `8989716`.
-
-- Work continues on new branch `1solomonwakhungu/per-336-storage-permissions-hotfix`, rooted at exact merged main `8989716`; the obsolete PR 26 branch is not reused.
-- Missing dedicated registry, backup, and export directories are created as `0700`. Preexisting directories must already be owner-only and are never chmodded; permissive cwd, `/tmp`, and other shared parents fail closed unchanged.
-- Newly created registry, sidecar, backup, and export files are `0600`; preexisting registry and sidecar files must already be singly linked owner-only regular files. No-follow descriptor checks reject symlinks, dangling links, multiply linked files, existing output destinations, live/sidecar destinations, and hard-link aliases of the database or sidecars without chmodding them.
-- Read-only diagnostics validate permissions without mutating them. Invalid retention configuration touches no filesystem path. Backup/export diagnostics include foreign-key details.
-- Discovery recording now has a bounded exact-version parser and a closed recursive field classifier. Unknown fields fail even when null or empty containers; identifying values, process/endpoint metadata, timestamps, commands, arguments, preset labels/IDs, and environment names/values are deterministic pseudonyms. The checked fixture passes a complete privacy scan.
-- Docs now describe explicit live-discovery opt-in, full backup validation, dedicated private CLI paths, permission refusal semantics, and the same-user residual threat boundary.
-- Verification: clean `npm ci` passed with 2 pre-existing moderate advisories; `npm run check` passed format, ESLint, typecheck, build, 130 tests (129 pass, 0 fail, 1 optional live skip), coverage, Python 3/3, and schema no-diff. The focused security/persistence suite passed 30 runnable tests plus 1 optional skip in three consecutive runs; `git diff --check` passed.
-- Follow-up PR 38 was opened at `2ae84ac`, then verifier review required committed no-overwrite concurrency coverage. New deterministic worker-barrier tests prove two simultaneous exports produce exactly one valid `0600` output and one refusal, while preexisting backup/export files and hard-link sources retain exact bytes and modes. The storage-focused 20/20 suite passed five consecutive runs.
-- Exact-head review then found missing ownership checks. Preexisting directories, registries, and sidecars now fail closed unless their UID matches the effective process UID where the platform exposes ownership; generated artifacts are explicitly ownership-tested.
-- Next: push the coverage follow-up to PR 38 and leave it unmerged for independent verification.

@@ -115,7 +115,12 @@ node --test test/configuration-contract.test.mjs
 - [Idempotency and reconciliation contract](docs/idempotency-and-reconciliation.md)
 - [Workspace lease and writer-safety policy](docs/workspace-lease-and-writer-safety.md)
 
-The MCP contract publishes typed TypeScript/Zod schemas and a client-neutral JSON Schema catalog. It defines asynchronous launch, stable IDs, batches of 100 sessions, pagination, bounded wait, cancellation, deadlines, results, and restart recovery. The versioned lifecycle tools listed above are registered runtime handlers; other normative tools remain contract-only until their implementations land.
+The MCP contract publishes typed TypeScript/Zod schemas and a client-neutral JSON
+Schema catalog. It defines asynchronous launch, stable IDs, batches of 100
+sessions, pagination, bounded wait, cancellation, deadlines, results, and restart
+recovery. The versioned lifecycle tools listed above are registered runtime
+handlers; other normative tools remain contract-only until their implementations
+land.
 
 ## Agent adapter boundary
 
@@ -129,6 +134,8 @@ Integration tests can therefore drive queued, running, succeeded, failed, and
 cancelled paths without timing or network dependencies.
 
 Run `npm run verify` to type-check the complete implementation and execute all tests.
+
+Real Superset and Codex verification is opt-in because it launches an agent in an exact isolated worktree. See [the real-system harness guide](docs/real-superset-codex-e2e.md) for safety gates, commands, evidence, and currently unsupported lifecycle operations.
 
 ## Contributions
 

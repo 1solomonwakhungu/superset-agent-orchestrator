@@ -7,6 +7,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { RedactionPolicy } from "./security.js";
 import { BatchQueryError, DurableStore } from "./store.js";
+import { assertRegisteredToolNames, assertSafeToolNames } from "./tool-security.js";
 import type { AgentAdapter } from "./agent-adapter.js";
 import { LifecycleService } from "./lifecycle-service.js";
 import {
@@ -24,7 +25,6 @@ import {
   waitResultSchema,
   type ErrorCode,
 } from "./tool-contract.js";
-import { assertRegisteredToolNames, assertSafeToolNames } from "./tool-security.js";
 
 const statePath = process.env.SUPERSET_ORCHESTRATOR_STATE
   ?? join(homedir(), ".local", "share", "superset-agent-orchestrator", "state.json");
