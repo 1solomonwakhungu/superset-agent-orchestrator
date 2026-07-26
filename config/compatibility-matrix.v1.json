@@ -1,0 +1,307 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schemaVersion": 1,
+  "matrixVersion": "2026-07-24",
+  "evidenceReviewedAt": "2026-07-24",
+  "classifications": {
+    "verified": "A repeatable probe passed for the exact recorded combination.",
+    "contract-supported": "Primary documentation supports the claim, but the complete combination has not passed every required lane.",
+    "experimental": "Commit-pinned research evidence that is opt-in, disabled by default, and not production support.",
+    "unsupported": "A known incompatible dimension or an operation excluded by the supported contract.",
+    "unknown": "The combination has not produced qualifying evidence and must fail before mutation."
+  },
+  "supportPolicy": {
+    "defaultClassification": "unknown",
+    "failBeforeMutation": true,
+    "allowImplicitVersionCoverage": false,
+    "allowFallback": false,
+    "compatibilityError": {
+      "code": "UNSUPPORTED_COMBINATION",
+      "requiredFields": [
+        "classification",
+        "detected",
+        "unsupportedDimensions",
+        "supportedAlternatives",
+        "probeCommand"
+      ],
+      "probeCommand": "npm run compatibility:probe"
+    },
+    "revalidationTriggers": [
+      "operating-system lane change",
+      "Node.js or npm version change",
+      "MCP SDK lockfile version change",
+      "MCP protocol negotiation change",
+      "Superset Desktop or CLI version change",
+      "Desktop and bundled CLI version mismatch",
+      "agent preset or harness version change",
+      "upstream evidence revision change"
+    ],
+    "evidenceRedactions": [
+      "user names and home paths",
+      "organization, host, project, and workspace identifiers",
+      "workspace and repository names",
+      "prompts, transcripts, results, and terminal output",
+      "credentials, tokens, environment values, and process arguments"
+    ]
+  },
+  "supportedEnvelope": {
+    "operatingSystems": ["darwin", "linux"],
+    "nodeMajors": [22, 24],
+    "npmMajor": 10,
+    "mcpSdk": {
+      "package": "@modelcontextprotocol/sdk",
+      "major": 1,
+      "lockedVersion": "1.29.0"
+    },
+    "transport": "stdio",
+    "superset": {
+      "desktopCliPairs": ["1.16.1/1.16.1"],
+      "stableOperations": ["configured-agent-discovery", "launch-metadata"],
+      "unavailableOperations": ["session-list", "session-status", "exact-result", "stop-reason", "cancellation", "backend-recovery"]
+    }
+  },
+  "combinations": [
+    {
+      "id": "macos-26-superset-1.16.1-local-routing",
+      "classification": "verified",
+      "environment": {
+        "os": "darwin",
+        "osVersion": "26.5.1",
+        "architecture": "arm64",
+        "node": "22.23.1",
+        "npm": "10.9.8",
+        "supersetDesktop": "1.16.1",
+        "supersetCli": "1.16.1",
+        "mcpSdk": "not exercised",
+        "transport": "CLI local routing",
+        "agentPreset": "not exercised"
+      },
+      "claims": [
+        "Local workspace list and exact get succeed while relay access is blocked.",
+        "Missing workspace get and terminal create fail without creating a terminal."
+      ],
+      "evidence": [
+        {
+          "kind": "repository",
+          "revision": "0701437b5d031c67f4fbc33cf604acf2b6b80d57",
+          "artifact": "docs/local-routing-relay-failure.md",
+          "probe": "./scripts/verify-per-323.sh"
+        }
+      ],
+      "limitations": ["No remote-only fixture or mutating success path was exercised."]
+    },
+    {
+      "id": "superset-1.16.1-codex-launch",
+      "classification": "verified",
+      "environment": {
+        "os": "darwin",
+        "osVersion": "26.5.1",
+        "architecture": "arm64",
+        "node": "22.23.1",
+        "npm": "10.9.8",
+        "supersetDesktop": "1.16.1",
+        "supersetCli": "1.16.1",
+        "mcpSdk": "not exercised",
+        "transport": "Superset bundled CLI",
+        "agentPreset": "Codex"
+      },
+      "claims": ["Configured-agent discovery and launch metadata were observed."],
+      "evidence": [
+        {
+          "kind": "upstream-source",
+          "revision": "b0d3411665ff5b9241dee7aef0e23a19c265dfbc",
+          "artifact": "docs/superset-lifecycle-result-api-evidence.md",
+          "probe": "npm test -- test/superset-lifecycle-capabilities.test.mjs"
+        }
+      ],
+      "limitations": ["Launch does not prove completion, exact result, cancellation, or recovery."]
+    },
+    {
+      "id": "node-22-sdk-1.29.0-stdio-macos",
+      "classification": "contract-supported",
+      "environment": {
+        "os": "darwin",
+        "osVersion": "any tested release",
+        "architecture": "arm64 or x64",
+        "node": "22.x",
+        "npm": "10.x",
+        "supersetDesktop": "capability-gated",
+        "supersetCli": "capability-gated",
+        "mcpSdk": "1.29.0",
+        "transport": "stdio",
+        "agentPreset": "capability-gated"
+      },
+      "claims": ["This is the MVP release baseline after the packaged MCP smoke contract passes."],
+      "evidence": [
+        {
+          "kind": "decision",
+          "revision": "0678406d2b57c812cea91604d16ec494f8cb0b22",
+          "artifact": "docs/adr/0001-mcp-sdk-and-local-transport.md",
+          "probe": "npm run verify"
+        }
+      ],
+      "limitations": ["The packaged stdio smoke contract is not yet implemented, so this row is not verified."]
+    },
+    {
+      "id": "node-22-sdk-1.29.0-stdio-linux",
+      "classification": "unknown",
+      "environment": {
+        "os": "linux",
+        "osVersion": "unknown",
+        "architecture": "arm64 or x64",
+        "node": "22.x",
+        "npm": "10.x",
+        "supersetDesktop": "unknown",
+        "supersetCli": "unknown",
+        "mcpSdk": "1.29.0",
+        "transport": "stdio",
+        "agentPreset": "unknown"
+      },
+      "claims": [],
+      "evidence": [],
+      "limitations": ["No Linux CI or packaged stdio probe evidence is recorded."]
+    },
+    {
+      "id": "node-24-sdk-1.29.0-stdio",
+      "classification": "unknown",
+      "environment": {
+        "os": "darwin or linux",
+        "osVersion": "unknown",
+        "architecture": "arm64 or x64",
+        "node": "24.x",
+        "npm": "10.x",
+        "supersetDesktop": "unknown",
+        "supersetCli": "unknown",
+        "mcpSdk": "1.29.0",
+        "transport": "stdio",
+        "agentPreset": "unknown"
+      },
+      "claims": [],
+      "evidence": [],
+      "limitations": ["The forward-compatibility lane has no recorded CI probe evidence."]
+    },
+    {
+      "id": "windows-native-stdio",
+      "classification": "unknown",
+      "environment": {
+        "os": "win32",
+        "osVersion": "any",
+        "architecture": "any",
+        "node": "22.x or 24.x",
+        "npm": "10.x",
+        "supersetDesktop": "unknown",
+        "supersetCli": "unknown",
+        "mcpSdk": "1.29.0",
+        "transport": "stdio",
+        "agentPreset": "unknown"
+      },
+      "claims": [],
+      "evidence": [],
+      "limitations": ["Windows support is unclaimed until a native stdio lane passes."]
+    },
+    {
+      "id": "mcp-sdk-v2-prerelease",
+      "classification": "unsupported",
+      "environment": {
+        "os": "any",
+        "osVersion": "any",
+        "architecture": "any",
+        "node": "any",
+        "npm": "any",
+        "supersetDesktop": "any",
+        "supersetCli": "any",
+        "mcpSdk": "2.x prerelease",
+        "transport": "any",
+        "agentPreset": "any"
+      },
+      "claims": [],
+      "evidence": [
+        {
+          "kind": "decision",
+          "revision": "0678406d2b57c812cea91604d16ec494f8cb0b22",
+          "artifact": "docs/adr/0001-mcp-sdk-and-local-transport.md",
+          "probe": "npm run compatibility:probe"
+        }
+      ],
+      "limitations": ["Adoption requires a stable upstream release and a superseding ADR."]
+    },
+    {
+      "id": "http-transports",
+      "classification": "unsupported",
+      "environment": {
+        "os": "any",
+        "osVersion": "any",
+        "architecture": "any",
+        "node": "22.x or 24.x",
+        "npm": "10.x",
+        "supersetDesktop": "any",
+        "supersetCli": "any",
+        "mcpSdk": "1.x",
+        "transport": "Streamable HTTP or legacy HTTP+SSE",
+        "agentPreset": "any"
+      },
+      "claims": [],
+      "evidence": [
+        {
+          "kind": "decision",
+          "revision": "0678406d2b57c812cea91604d16ec494f8cb0b22",
+          "artifact": "docs/adr/0001-mcp-sdk-and-local-transport.md",
+          "probe": "npm run compatibility:probe"
+        }
+      ],
+      "limitations": ["A superseding transport and security ADR is required."]
+    },
+    {
+      "id": "superset-public-post-launch-lifecycle",
+      "classification": "unsupported",
+      "environment": {
+        "os": "any",
+        "osVersion": "any",
+        "architecture": "any",
+        "node": "any",
+        "npm": "any",
+        "supersetDesktop": "1.16.1",
+        "supersetCli": "1.16.1",
+        "mcpSdk": "any",
+        "transport": "public Superset surfaces",
+        "agentPreset": "ordinary terminal agent"
+      },
+      "claims": [],
+      "evidence": [
+        {
+          "kind": "upstream-source",
+          "revision": "b0d3411665ff5b9241dee7aef0e23a19c265dfbc",
+          "artifact": "docs/superset-lifecycle-result-api-evidence.md",
+          "probe": "npm test -- test/superset-lifecycle-capabilities.test.mjs"
+        }
+      ],
+      "limitations": ["Return UNSUPPORTED_OPERATION for status, exact result, stop reason, cancellation, and backend recovery."]
+    },
+    {
+      "id": "superset-private-acp",
+      "classification": "experimental",
+      "environment": {
+        "os": "any",
+        "osVersion": "any",
+        "architecture": "any",
+        "node": "any",
+        "npm": "any",
+        "supersetDesktop": "canary or dev at pinned commit",
+        "supersetCli": "not applicable",
+        "mcpSdk": "not applicable",
+        "transport": "private ACP",
+        "agentPreset": "ACP harness only"
+      },
+      "claims": ["Private commit-pinned research may inspect typed ACP messages."],
+      "evidence": [
+        {
+          "kind": "upstream-source",
+          "revision": "b0d3411665ff5b9241dee7aef0e23a19c265dfbc",
+          "artifact": "docs/superset-lifecycle-result-api-evidence.md",
+          "probe": "manual quarantined research only"
+        }
+      ],
+      "limitations": ["Never automatically selected or represented as production support."]
+    }
+  ]
+}

@@ -1,0 +1,108 @@
+{
+  "generated_at": "2026-07-25T03:00:23Z",
+  "open_incidents": [],
+  "overall_status": "operational",
+  "schema_version": 1,
+  "services": [
+    {
+      "certificate_days_remaining": 48,
+      "certificate_expires_at": "2026-09-11T20:12:15Z",
+      "checked_at": "2026-07-25T03:00:23Z",
+      "content_signature_match": true,
+      "errors": [],
+      "latency_ms": 243.3,
+      "name": "agency",
+      "ok": true,
+      "slo": {
+        "availability_percent": 100.0,
+        "met": true,
+        "sample_count": 1,
+        "successful_samples": 1,
+        "target_percent": 99.5,
+        "window_days": 7
+      },
+      "status_code": 200,
+      "url": "https://agency.sullylab.de/"
+    },
+    {
+      "certificate_days_remaining": 48,
+      "certificate_expires_at": "2026-09-11T20:12:15Z",
+      "checked_at": "2026-07-25T03:00:23Z",
+      "content_signature_match": true,
+      "errors": [],
+      "latency_ms": 183.2,
+      "name": "compliance",
+      "ok": true,
+      "slo": {
+        "availability_percent": 100.0,
+        "met": true,
+        "sample_count": 1,
+        "successful_samples": 1,
+        "target_percent": 99.5,
+        "window_days": 7
+      },
+      "status_code": 200,
+      "url": "https://compliance.sullylab.de/"
+    },
+    {
+      "certificate_days_remaining": 48,
+      "certificate_expires_at": "2026-09-11T20:12:15Z",
+      "checked_at": "2026-07-25T03:00:23Z",
+      "content_signature_match": true,
+      "errors": [],
+      "latency_ms": 226.3,
+      "name": "notes",
+      "ok": true,
+      "slo": {
+        "availability_percent": 100.0,
+        "met": true,
+        "sample_count": 1,
+        "successful_samples": 1,
+        "target_percent": 99.0,
+        "window_days": 7
+      },
+      "status_code": 200,
+      "url": "https://notes.sullylab.de/"
+    },
+    {
+      "certificate_days_remaining": 48,
+      "certificate_expires_at": "2026-09-11T20:12:15Z",
+      "checked_at": "2026-07-25T03:00:24Z",
+      "content_signature_match": true,
+      "errors": [],
+      "latency_ms": 149.5,
+      "name": "pricing",
+      "ok": true,
+      "slo": {
+        "availability_percent": 100.0,
+        "met": true,
+        "sample_count": 1,
+        "successful_samples": 1,
+        "target_percent": 99.0,
+        "window_days": 7
+      },
+      "status_code": 200,
+      "url": "https://pricing.sullylab.de/"
+    },
+    {
+      "certificate_days_remaining": 48,
+      "certificate_expires_at": "2026-09-11T20:12:15Z",
+      "checked_at": "2026-07-25T03:00:24Z",
+      "content_signature_match": true,
+      "errors": [],
+      "latency_ms": 172.2,
+      "name": "roi",
+      "ok": true,
+      "slo": {
+        "availability_percent": 100.0,
+        "met": true,
+        "sample_count": 1,
+        "successful_samples": 1,
+        "target_percent": 99.0,
+        "window_days": 7
+      },
+      "status_code": 200,
+      "url": "https://roi.sullylab.de/"
+    }
+  ]
+}
