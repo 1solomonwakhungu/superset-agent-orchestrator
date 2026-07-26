@@ -173,6 +173,16 @@ export class ExperimentRegistry {
         )
       )
         throw new Error(`Experiment already exists: ${record.experimentId}`);
+      const conflictingLineage = records.find(
+        (existing) =>
+          existing.checkpointSha === record.checkpointSha &&
+          existing.lineage !== record.lineage,
+      );
+      if (conflictingLineage) {
+        throw new Error(
+          `Checkpoint ${record.checkpointSha} already belongs to lineage ${conflictingLineage.lineage}`,
+        );
+      }
       const serialized = `${JSON.stringify(record)}\n`;
       if (Buffer.byteLength(serialized) > 1_048_576)
         throw new Error("Experiment record exceeds 1 MiB");
@@ -243,9 +253,18 @@ export class ExperimentRegistry {
 
   private async readBaselines(): Promise<BaselineRecord[]> {
     try {
-      return baselineCatalogSchema.parse(
+      const baselines = baselineCatalogSchema.parse(
         JSON.parse(await readFile(this.baselineCatalogPath, "utf8")),
       );
+      const fingerprints = new Set<string>();
+      for (const baseline of baselines) {
+        if (fingerprints.has(baseline.fingerprint))
+          throw new Error(
+            `Duplicate baseline fingerprint: ${baseline.fingerprint}`,
+          );
+        fingerprints.add(baseline.fingerprint);
+      }
+      return baselines;
     } catch (error) {
       throw new Error(`Invalid baseline catalog: ${this.baselineCatalogPath}`, {
         cause: error,
@@ -263,7 +282,7 @@ export class ExperimentRegistry {
     }
     if (contents.length > 0 && !contents.endsWith("\n"))
       throw new Error("Registry has a truncated final line");
-    return contents
+    const records = contents
       .split("\n")
       .filter(Boolean)
       .map((line, index) => {
@@ -275,6 +294,15 @@ export class ExperimentRegistry {
           });
         }
       });
+    const ids = new Set<string>();
+    for (const record of records) {
+      if (ids.has(record.experimentId))
+        throw new Error(
+          `Duplicate experiment ID in registry: ${record.experimentId}`,
+        );
+      ids.add(record.experimentId);
+    }
+    return records;
   }
 
   private async withLock<T>(operation: () => Promise<T>): Promise<T> {

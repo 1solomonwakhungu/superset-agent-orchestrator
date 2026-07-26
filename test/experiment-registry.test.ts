@@ -145,6 +145,30 @@ test("rejects unknown baselines and path aliases share one lock", async () => {
   assert.equal((await new ExperimentRegistry(path, catalog).query()).length, 1);
 });
 
+test("fails closed on mixed checkpoint lineages and duplicate baseline fingerprints", async () => {
+  const { path, catalog } = await paths();
+  const registry = new ExperimentRegistry(path, catalog);
+  await registry.add(
+    input({ experimentId: "exp_00000000-0000-4000-8000-000000000010" }),
+  );
+  await assert.rejects(
+    registry.add(
+      input({
+        experimentId: "exp_00000000-0000-4000-8000-000000000011",
+        lineage: "callforge",
+      }),
+    ),
+    /already belongs to lineage disklm/,
+  );
+  const baselines = JSON.parse(await readFile(catalog, "utf8")) as unknown[];
+  await writeFile(
+    catalog,
+    JSON.stringify([...baselines, ...baselines]),
+    "utf8",
+  );
+  await assert.rejects(registry.query(), /Invalid baseline catalog/);
+});
+
 test("parallel processes do not lose records", async () => {
   const { path, catalog } = await paths();
   const writer = fileURLToPath(
@@ -204,4 +228,18 @@ test("fails closed on malformed and truncated existing records", async () => {
     /Invalid registry record on line 1/,
   );
   assert.equal(await readFile(path, "utf8"), "{}\n");
+  const validPath = await paths();
+  const validRegistry = new ExperimentRegistry(
+    validPath.path,
+    validPath.catalog,
+  );
+  const record = await validRegistry.add(
+    input({ experimentId: "exp_00000000-0000-4000-8000-000000000012" }),
+  );
+  const line = `${JSON.stringify(record)}\n`;
+  await writeFile(validPath.path, `${line}${line}`, "utf8");
+  await assert.rejects(
+    validRegistry.query(),
+    /Duplicate experiment ID in registry/,
+  );
 });
