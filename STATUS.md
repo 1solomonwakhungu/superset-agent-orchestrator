@@ -21,7 +21,7 @@
 - Verification: `npm run verify` passed 163/163 active tests with 1 opt-in smoke
   test skipped and all 10 race runs; focused Markdown lint, PER-323 policy
   verification, and `git diff --check` passed.
-- Pushed head: `f4f2cd6a52684ad1467f39990f3bddce9fe65273`.
+- Verified implementation commit: `f4f2cd6a52684ad1467f39990f3bddce9fe65273`.
 - Next: External branch protection remains blocked with no checks reported;
   merge after the required external approval or policy gate is satisfied.
 
