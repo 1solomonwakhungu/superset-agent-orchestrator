@@ -226,6 +226,7 @@ export class LaunchService {
           event(assignment.id, "launch_reserved", startedAt),
         );
         if (!reserved.transitioned) return;
+        assignment = reserved.assignment;
       }
       this.injectCrash("after_launch_started");
       this.injectCrash("before_adapter_launch");
@@ -261,7 +262,7 @@ export class LaunchService {
         }
         if (!hasErrorCode(error, "LAUNCH_REJECTED")) throw error;
         const message = error instanceof Error ? error.message : String(error);
-        await this.recordLaunchFailure(assignment, message);
+        await this.recordLaunchFailure(assignment, message, error.code);
         return;
       }
       if (handle === undefined) {
@@ -279,11 +280,14 @@ export class LaunchService {
     });
   }
 
-  private async recordLaunchFailure(assignment: Assignment, error: string): Promise<void> {
+  private async recordLaunchFailure(assignment: Assignment, error: string, errorCode?: string): Promise<void> {
     await this.store.recordLaunchEvent(
       assignment.id,
       "failed",
-      event(assignment.id, "launch_failed", this.now().toISOString(), { error }),
+      event(assignment.id, "launch_failed", this.now().toISOString(), {
+        error,
+        ...(errorCode === undefined ? {} : { errorCode }),
+      }),
     );
   }
 }

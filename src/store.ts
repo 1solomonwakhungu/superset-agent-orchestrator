@@ -329,7 +329,7 @@ const stateSchema = z.object({
   }
   for (const assignment of state.assignments) {
     const batch = batches.get(assignment.batchId);
-    if (!sessions.has(assignment.sessionId) || batch === undefined || batch.sessionId !== assignment.sessionId) {
+    if (!sessions.has(assignment.sessionId) || batch === undefined) {
       context.addIssue({ code: "custom", message: `Assignment ${assignment.id} has inconsistent durable identity` });
     }
   }
