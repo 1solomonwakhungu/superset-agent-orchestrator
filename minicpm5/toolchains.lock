@@ -1,0 +1,5 @@
+# Native toolchains are pinned by immutable Git commit, not moving releases.
+LLAMA_CPP_REPOSITORY=https://github.com/ggml-org/llama.cpp.git
+LLAMA_CPP_COMMIT=c812c543f8ab480661bd10b9546515b608b4747f
+MLX_REPOSITORY=https://github.com/ml-explore/mlx.git
+MLX_COMMIT=973e27f82ffe68dbd626cda31ba34997045d1eb7
