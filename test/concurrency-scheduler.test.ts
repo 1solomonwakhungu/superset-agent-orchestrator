@@ -339,7 +339,7 @@ test("agent adapter preserves cancellation capability, outcomes, and abort signa
     resumeMetadata: (candidate) => scripted.resumeMetadata(candidate),
   };
   const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => base, () => base);
-  const handle = await adapter.launch(launchRequest("first"));
+  const handle = await adapter.launch(launchRequest("first", "first", "/first"));
   const abort = new AbortController();
   abort.abort();
 
@@ -426,7 +426,7 @@ test("sequential recovery lookups reuse one active permit", async () => {
   const delegate = new FakeAgentAdapter([
     { statuses: ["running", "running", "succeeded"], result: { status: "succeeded", output: "recovered" } },
   ]);
-  const handle = await delegate.launch(launchRequest("recovered", "first"));
+  const handle = await delegate.launch(launchRequest("recovered", "first", "/first"));
   const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => base, () => base);
 
   assert.deepEqual(await adapter.findByIdempotencyKey("recovered"), handle);
@@ -442,7 +442,7 @@ test("terminal status can release a retained permit during a sequential recovery
   const delegate = new FakeAgentAdapter([
     { statuses: ["running", "succeeded"], result: { status: "succeeded", output: "recovered" } },
   ]);
-  const handle = await delegate.launch(launchRequest("recovered", "first"));
+  const handle = await delegate.launch(launchRequest("recovered", "first", "/first"));
   const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => base, () => base);
 
   assert.deepEqual(await adapter.findByIdempotencyKey("recovered"), handle);
@@ -470,7 +470,7 @@ test("retries recovery after a transient status failure without duplicating its 
   const delegate = new FakeAgentAdapter([
     { statuses: ["running", "succeeded"], result: { status: "succeeded", output: "recovered" } },
   ]);
-  const handle = await delegate.launch(launchRequest("recovered", "first"));
+  const handle = await delegate.launch(launchRequest("recovered", "first", "/first"));
   const status = delegate.status.bind(delegate);
   let attempts = 0;
   delegate.status = async (candidate) => {
