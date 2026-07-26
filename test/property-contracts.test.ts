@@ -7,7 +7,6 @@ import test from "node:test";
 import fc from "fast-check";
 import type { LaunchRequest } from "../src/agent-adapter.js";
 import { FakeAgentAdapter, type FakeRunScript } from "../src/fake-agent-adapter.js";
-import { OrchestratorStorage } from "../src/storage.js";
 import { DurableStore, type LaunchStatus } from "../src/store.js";
 
 const propertyOptions = { seed: 346, numRuns: 100, endOnFailure: true } as const;
@@ -116,25 +115,6 @@ test("launch state transitions accept only monotonic paths and require a run ID 
       }
     },
   ), propertyOptions);
-});
-
-test("the SQLite lease constraint permits readers but never two active writers per workspace", () => {
-  fc.assert(fc.property(fc.array(fc.uuid(), { minLength: 2, maxLength: 20 }), (leaseIds) => {
-    const storage = new OrchestratorStorage(":memory:");
-    try {
-      const db = storage.database;
-      db.prepare("INSERT INTO batches VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
-        "batch", "property", "test", "running", "{}", "2026-07-24T00:00:00.000Z", "2026-07-24T00:00:00.000Z", null,
-      );
-      const insert = db.prepare("INSERT INTO workspace_leases VALUES (?, 'workspace', ?, NULL, 'batch', ?, ?, NULL)");
-      for (const id of leaseIds) insert.run(id, "read-only", "2026-07-24T00:00:00.000Z", "2026-07-25T00:00:00.000Z");
-      insert.run("writer-1", "writer", "2026-07-24T00:00:00.000Z", "2026-07-25T00:00:00.000Z");
-      assert.throws(() => insert.run("writer-2", "writer", "2026-07-24T00:00:00.000Z", "2026-07-25T00:00:00.000Z"), /UNIQUE/);
-      assert.equal((db.prepare("SELECT COUNT(*) count FROM workspace_leases").get() as { count: number }).count, leaseIds.length + 1);
-    } finally {
-      storage.close();
-    }
-  }), propertyOptions);
 });
 
 test("compatibility fixture is sanitized and fail-closed", async () => {

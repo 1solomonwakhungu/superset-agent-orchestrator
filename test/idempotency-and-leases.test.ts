@@ -19,7 +19,6 @@ const ATTRIBUTION = { agent: "codex", task: "migrate" } as const;
 const HEX64 = "e".repeat(64);
 const CONTENDERS = 8;
 const AT = "2026-07-01T00:00:00.000Z";
-const LATER = "2026-08-01T00:00:00.000Z";
 
 test("concurrent identical batch creations produce exactly one batch", async () => {
   await withTemporaryDirectory("orchestrator-race", async (directory) => {
@@ -220,97 +219,16 @@ test("concurrent acceptances of one idempotency key create one assignment", asyn
   });
 });
 
-test("simultaneous worker threads prove the database writer-lease constraint", async () => {
-  await withTemporaryDirectory("orchestrator-lease", async (directory) => {
-    const path = join(directory, "registry.sqlite");
-    const owner = new OrchestratorStorage(path);
-    try {
-      seedLeaseFixture(owner);
-      owner.close();
-      const barrier = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 2);
-      const outcomes = await Promise.all(Array.from({ length: CONTENDERS }, (_, index) =>
-        contendForWriterLease(path, `lease-${index}`, barrier, CONTENDERS)));
-      assert.equal(outcomes.filter((outcome) => outcome === "acquired").length, 1);
-      assert.equal(outcomes.filter((outcome) => outcome === "refused").length, CONTENDERS - 1);
-
-      const verifier = new OrchestratorStorage(path);
-      try {
-        const active = verifier.database
-          .prepare("SELECT id FROM workspace_leases WHERE mode = 'writer' AND released_at IS NULL").all();
-        assert.equal(active.length, 1);
-      } finally {
-        verifier.close();
-      }
-    } finally {
-      try { owner.close(); } catch { /* already closed before worker contention */ }
-    }
-  });
-});
-
-test("expiry alone never releases a writer lease", async () => {
-  await withTemporaryDirectory("orchestrator-lease", async (directory) => {
-    const storage = new OrchestratorStorage(join(directory, "registry.sqlite"));
-    try {
-      seedLeaseFixture(storage);
-      insertLease(storage, "lease-expired", "writer", null, AT, "2026-07-01T00:00:01.000Z");
-
-      assert.throws(
-        () => insertLease(storage, "lease-successor", "writer", null),
-        /UNIQUE/,
-        "an expired but unreleased writer still blocks admission, so recovery fails closed",
-      );
-
-      storage.database.prepare("UPDATE workspace_leases SET released_at = ? WHERE id = 'lease-expired'").run(LATER);
-      insertLease(storage, "lease-successor", "writer", null);
-      assert.equal(storage.database
-        .prepare("SELECT COUNT(*) count FROM workspace_leases WHERE mode = 'writer' AND released_at IS NULL")
-        .get()?.count, 1);
-    } finally {
-      storage.close();
-    }
-  });
-});
-
-test("cleanup preserves every unreleased lease, including an expired writer", async () => {
-  await withTemporaryDirectory("orchestrator-lease", async (directory) => {
-    const storage = new OrchestratorStorage(join(directory, "registry.sqlite"));
-    try {
-      seedLeaseFixture(storage);
-      for (const index of [1, 2, 3]) insertLease(storage, `reader-${index}`, "read-only", null);
-      assert.equal(storage.database.prepare("SELECT COUNT(*) count FROM workspace_leases").get()?.count, 3);
-
-      assert.throws(() => insertLease(storage, "invalid-mode", "read_write", null), /CHECK/);
-      assert.throws(
-        () => insertLease(storage, "unknown-batch", "writer", null, AT, LATER, "batch-absent"),
-        /FOREIGN KEY/,
-        "a lease cannot outlive or precede its batch",
-      );
-
-      insertLease(storage, "expired-writer", "writer", null, AT, "2026-07-01T00:00:01.000Z");
-      insertLease(storage, "released-reader", "read-only", LATER);
-      const summary = storage.cleanup(new Date("2026-07-02T00:00:00.000Z"));
-      assert.equal(summary.leasesDeleted, 1, "cleanup reclaims released leases but cannot infer writer death from expiry");
-      assert.equal(storage.database.prepare("SELECT COUNT(*) count FROM workspace_leases").get()?.count, 4);
-      assert.equal(
-        storage.database.prepare("SELECT COUNT(*) count FROM workspace_leases WHERE id = 'expired-writer'").get()?.count,
-        1,
-      );
-    } finally {
-      storage.close();
-    }
-  });
-});
-
 test("registry migration targets are validated before any schema change", async () => {
   await withTemporaryDirectory("orchestrator-lease", async (directory) => {
     const storage = new OrchestratorStorage(join(directory, "registry.sqlite"));
     try {
-      for (const target of [3, -1, 1.5, Number.NaN]) {
+      for (const target of [4, -1, 1.5, Number.NaN]) {
         assert.throws(() => storage.migrate(target), /Unsupported schema version/, `target ${target}`);
       }
       assert.throws(() => storage.migrate(1), /Use rollback\(\) to move to an older schema/);
       assert.throws(() => storage.rollback(-1, join(directory, "backup.sqlite")), /non-negative integer/);
-      assert.throws(() => storage.rollback(2, join(directory, "backup.sqlite")), /must be below current version/);
+      assert.throws(() => storage.rollback(3, join(directory, "backup.sqlite")), /must be below current version/);
       assert.throws(() => storage.backup(join(directory, "registry.sqlite")), /must differ from the live registry/);
     } finally {
       storage.close();
@@ -318,88 +236,13 @@ test("registry migration targets are validated before any schema change", async 
 
     const memory = new OrchestratorStorage(":memory:");
     try {
-      assert.equal(memory.schemaVersion(), 2);
+      assert.equal(memory.schemaVersion(), 3);
       assert.throws(() => memory.backup(join(directory, "memory-backup.sqlite")), /unavailable for an in-memory registry/);
     } finally {
       memory.close();
     }
   });
 });
-
-function seedLeaseFixture(storage: OrchestratorStorage): void {
-  storage.database.prepare("INSERT INTO batches VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-    .run("batch-1", "overnight", "solomon", "running", "{}", AT, AT, null);
-  storage.database.prepare("INSERT INTO assignments VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-    .run("assignment-1", "batch-1", "lease", "prompt", "workspace-1", "PR", AT, null);
-  storage.database.prepare("INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-    .run("session-1", "assignment-1", "superset", "backend-1", 1, "running", AT, AT, null);
-}
-
-function insertLease(
-  storage: OrchestratorStorage,
-  id: string,
-  mode: string,
-  releasedAt: string | null,
-  acquiredAt = AT,
-  expiresAt = LATER,
-  batchId = "batch-1",
-): void {
-  storage.database.prepare("INSERT INTO workspace_leases VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-    .run(id, "workspace-1", mode, "session-1", batchId, acquiredAt, expiresAt, releasedAt);
-}
-
-async function contendForWriterLease(
-  path: string,
-  leaseId: string,
-  barrier: SharedArrayBuffer,
-  contenders: number,
-): Promise<string> {
-  const worker = new Worker(`
-    const { parentPort, workerData } = require("node:worker_threads");
-    const { DatabaseSync } = require("node:sqlite");
-    const barrier = new Int32Array(workerData.barrier);
-    const db = new DatabaseSync(workerData.path, { timeout: 5000 });
-    const arrived = Atomics.add(barrier, 0, 1) + 1;
-    if (arrived === workerData.contenders) {
-      Atomics.store(barrier, 1, 1);
-      Atomics.notify(barrier, 1, workerData.contenders);
-    }
-    while (Atomics.load(barrier, 1) === 0) Atomics.wait(barrier, 1, 0);
-    let outcome;
-    try {
-      db.prepare("INSERT INTO workspace_leases VALUES (?, 'workspace-1', 'writer', 'session-1', 'batch-1', ?, ?, NULL)")
-        .run(workerData.leaseId, workerData.at, workerData.later);
-      outcome = "acquired";
-    } catch (error) {
-      outcome = String(error).includes("UNIQUE") ? "refused" : { error: String(error) };
-    } finally {
-      db.close();
-    }
-    parentPort.postMessage(outcome);
-  `, { eval: true, workerData: { path, leaseId, barrier, contenders, at: AT, later: LATER } });
-  const outcome = await new Promise<string | { error: string }>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      void worker.terminate();
-      reject(new Error(`writer contender ${leaseId} timed out`));
-    }, 5_000);
-    worker.once("message", (message: string | { error: string }) => {
-      clearTimeout(timer);
-      resolve(message);
-    });
-    worker.once("error", (error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
-    worker.once("exit", (code) => {
-      if (code !== 0) {
-        clearTimeout(timer);
-        reject(new Error(`writer contender ${leaseId} exited with code ${code}`));
-      }
-    });
-  });
-  if (typeof outcome !== "string") throw new Error(outcome.error);
-  return outcome;
-}
 
 type BatchContentionOutcome =
   | { type: "result"; ok: true; duplicate: boolean; batchId: string; attributions: Array<{ agent: string; task: string }> }
