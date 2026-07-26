@@ -880,8 +880,16 @@ test("an ignored cancellation abort retains delivery ownership until the stop se
   await service.reconcileCancellations();
   assert.equal(cancelCalls, 1, "reconciliation must not overlap a timed-out stop that is still active");
 
+  const releaseCancellationDelivery = store.releaseCancellationDelivery.bind(store);
+  let releaseAttempts = 0;
+  store.releaseCancellationDelivery = async (sessionId) => {
+    releaseAttempts += 1;
+    if (releaseAttempts === 1) throw new Error("transient release failure");
+    return releaseCancellationDelivery(sessionId);
+  };
   release?.();
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(releaseAttempts, 2, "a transient deferred release failure must be retried");
   await service.reconcileCancellations();
   assert.equal(cancelCalls, 2, "delivery becomes retryable after the original stop settles");
 }));
