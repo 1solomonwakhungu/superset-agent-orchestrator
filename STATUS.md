@@ -56,6 +56,40 @@
   94.78% statement / 87.47% branch / 92.47% function coverage. Focused
   launch/lifecycle/MCP tests passed 52/52 across 10 runs (520 checks), and
   `git diff --check` passed.
+## PER-351 performance and load validation
+
+- Added reproducible 100-session fake-backend and staged 30-agent controlled-load
+  harnesses with machine-readable and reviewer-readable reports.
+- The fake benchmark accepted, completed, attributed, persisted, queried, and
+  restart-recovered 100/100 results with 0 failures and 0 attribution mismatches.
+- Measured launch p95 28.195 ms, indexed-query p95 0.126 ms, 115,343,360-byte RSS,
+  683.715 CPU ms, 0 descriptor growth, and 11.732 ms restart recovery.
+- The 30-real-agent run is blocked: only this assigned writer workspace is in
+  scope, while the harness requires 30 authorized isolated workspaces and public
+  Superset APIs cannot observe completion, results, cancellation, recovery, or
+  aggregate agent resource use. The safe dry-run launched 0 paid agents.
+- Hardened CLI argument handling and fail-closed report validation so incomplete,
+  failed, aborted, misattributed, or internally inconsistent runs cannot pass.
+- Fixed all three review findings: paid runs pre-resolve every target from one
+  local-only workspace snapshot, fake reports enforce the fixed one-second p95
+  ceiling, and load reports reject duplicate session IDs.
+- Verification after merging current `origin/main`: `npm run check` passed 139
+  tests with one explicit live-Superset skip plus 3 Python tests and coverage;
+  the benchmark, safe dry-run, report verification, Markdown lint, and diff check
+  passed.
+- Integrated current `main` and all load-validation companion work, including
+  deterministic bounded-load CI, injected measurements, admission/backpressure
+  evidence, timeout enforcement, and success/overload report verification.
+- Final isolated validation: the focused performance suite passed 10/10; bounded
+  CI generated and verified fake, admitted, and overload reports with 0 paid
+  agents; `npm run check` passed 196/197 tests with one explicit live-Superset
+  skip, 6 Python tests with one model-dependent skip, coverage, schemas, and
+  provenance verification.
+- The measured 100-session run completed and attributed 100/100 at 106.46
+  sessions/second with 75.77 ms launch p95 and 0.114 ms query p95. The safe
+  30-session dry-run launched 0 agents and withheld all 30 admissions.
+- Next: push the integrated head, verify exact-head GitHub CI, merge PR #35, and
+  reconcile Linear.
 ## PER-343 workspace lease enforcement
 
 - Added transactional writer acquisition, monotonic generations, private fencing
