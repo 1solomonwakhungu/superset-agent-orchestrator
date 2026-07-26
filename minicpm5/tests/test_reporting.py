@@ -170,3 +170,16 @@ def test_markdown_safely_renders_provenance_delimiters(source) -> None:
     markdown = script.render_markdown(report)
     assert '"stop": "`stop|here`"' in markdown
     assert markdown.count("```json") == 2
+    assert "**Schema version:** `1`" in markdown
+    assert "**Float precision:** `8`" in markdown
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("contract_id", "disklm-eval-v2"), ("raw_trace_hashes", [""]), ("raw_trace_hashes", [3])],
+)
+def test_contract_and_trace_schema_violations_are_rejected(source, field, value) -> None:
+    script = load_script("report_result.py")
+    source["provenance"][field] = value
+    with pytest.raises(ValueError, match=field):
+        script.build_report(source, 8)

@@ -74,12 +74,16 @@ def build_report(source: dict[str, Any], precision: int) -> tuple[dict[str, Any]
     ]
     if invalid_strings:
         raise ValueError(f"provenance fields must be non-empty strings: {', '.join(invalid_strings)}")
+    if source["provenance"]["contract_id"] != "disklm-eval-v1":
+        raise ValueError("contract_id must be disklm-eval-v1")
     for key in OBJECT_PROVENANCE:
         if not isinstance(source["provenance"][key], dict):
             raise ValueError(f"{key} must be an object")
     for key in ARRAY_PROVENANCE:
         if not isinstance(source["provenance"][key], list):
             raise ValueError(f"{key} must be an array")
+    if any(not isinstance(item, str) or not item for item in source["provenance"]["raw_trace_hashes"]):
+        raise ValueError("raw_trace_hashes entries must be non-empty strings")
     if not isinstance(source["provenance"]["direct_io"], bool):
         raise ValueError("direct_io must be a boolean")
 
@@ -98,6 +102,8 @@ def render_markdown(report: dict[str, Any]) -> str:
     return (
         "# Baseline Result\n\n"
         f"**RESULT fingerprint:** `{report['result_fingerprint']}`\n\n"
+        f"**Schema version:** `{report['schema_version']}`  \n"
+        f"**Float precision:** `{report['float_precision']}`\n\n"
         "## Provenance\n\n```json\n"
         f"{json.dumps(provenance, ensure_ascii=True, sort_keys=True, indent=2)}\n```\n\n"
         "## Canonical Results\n\n```json\n"
