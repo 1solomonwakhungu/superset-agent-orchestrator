@@ -19,6 +19,11 @@ const ATTRIBUTION = { agent: "codex", task: "migrate" } as const;
 const HEX64 = "e".repeat(64);
 const CONTENDERS = 8;
 const AT = "2026-07-01T00:00:00.000Z";
+const authorizer = {
+  authorize: async (workspaceId: string) => ({
+    workspaceId, projectId: "project-test", canonicalPath: `/tmp/${workspaceId}`, revalidate: async () => undefined,
+  }),
+};
 
 test("concurrent identical batch creations produce exactly one batch", async () => {
   await withTemporaryDirectory("orchestrator-race", async (directory) => {
@@ -107,15 +112,14 @@ test("concurrent result deliveries store exactly one authoritative result", asyn
     const path = join(directory, "state.json");
     const store = new DurableStore(path);
     const clock = steadyClock();
-    const service = new LaunchService(store, new FakeAgentAdapter([]), clock);
+    const service = new LaunchService(store, new FakeAgentAdapter([]), authorizer, clock);
     const accepted = await service.accept({
       idempotencyKey: "capture-key",
       clientId: "client-1",
       batchName: "capture",
       attribution: ATTRIBUTION,
       prompt: "Do the work",
-      workspaceId: "workspace-1",
-      workspacePath: "/tmp/capture",
+      workspaceId: "capture",
     });
     await store.recordLaunchEvent(accepted.assignmentId, "launching", {
       id: `${accepted.assignmentId}:launch_reserved`, assignmentId: accepted.assignmentId,
@@ -158,15 +162,14 @@ test("concurrent launch bookkeeping records one execution start", async () => {
     const path = join(directory, "state.json");
     const store = new DurableStore(path);
     const clock = steadyClock();
-    const service = new LaunchService(store, new FakeAgentAdapter([]), clock);
+    const service = new LaunchService(store, new FakeAgentAdapter([]), authorizer, clock);
     const accepted = await service.accept({
       idempotencyKey: "events-key",
       clientId: "client-1",
       batchName: "events",
       attribution: ATTRIBUTION,
       prompt: "Do the work",
-      workspaceId: "workspace-1",
-      workspacePath: "/tmp/events",
+      workspaceId: "events",
     });
     await store.recordLaunchEvent(accepted.assignmentId, "launching", {
       id: `${accepted.assignmentId}:launch_reserved`, assignmentId: accepted.assignmentId,
@@ -197,11 +200,10 @@ test("concurrent acceptances of one idempotency key create one assignment", asyn
       batchName: "accept",
       attribution: ATTRIBUTION,
       prompt: "Do the work",
-      workspaceId: "workspace-1",
-      workspacePath: "/tmp/accept",
+      workspaceId: "accept",
     };
     const services = Array.from({ length: CONTENDERS }, () =>
-      new LaunchService(new DurableStore(path), new FakeAgentAdapter([]), steadyClock()));
+      new LaunchService(new DurableStore(path), new FakeAgentAdapter([]), authorizer, steadyClock()));
 
     const acceptances = await Promise.all(services.map((service) => service.accept(request)));
     assert.equal(new Set(acceptances.map(({ assignmentId }) => assignmentId)).size, 1);

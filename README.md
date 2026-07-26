@@ -117,7 +117,12 @@ node --test test/configuration-contract.test.mjs
 - [Testing strategy and coverage thresholds](docs/testing-strategy.md)
 - [Flaky-test policy](docs/flaky-test-policy.md)
 
-The MCP contract publishes typed TypeScript/Zod schemas and a client-neutral JSON Schema catalog. It defines asynchronous launch, stable IDs, batches of 100 sessions, pagination, bounded wait, cancellation, deadlines, results, and restart recovery. The versioned lifecycle tools listed above are registered runtime handlers; other normative tools remain contract-only until their implementations land.
+The MCP contract publishes typed TypeScript/Zod schemas and a client-neutral JSON
+Schema catalog. It defines asynchronous launch, stable IDs, batches of 100
+sessions, pagination, bounded wait, cancellation, deadlines, results, and restart
+recovery. The versioned lifecycle tools listed above are registered runtime
+handlers; other normative tools remain contract-only until their implementations
+land.
 
 ## Agent adapter boundary
 

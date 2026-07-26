@@ -10,11 +10,15 @@ import { FakeAgentAdapter, type FakeRunScript } from "../src/fake-agent-adapter.
 import { DurableStore, type LaunchStatus } from "../src/store.js";
 
 const propertyOptions = { seed: 346, numRuns: 100, endOnFailure: true } as const;
+const environment = {};
+const revalidateWorkspace = async () => undefined;
 
 const request = (idempotencyKey: string, prompt = "fixture prompt"): LaunchRequest => ({
   idempotencyKey,
   prompt,
   workspacePath: "/tmp/fixture-workspace",
+  environment,
+  revalidateWorkspace,
 });
 
 test("checked adapter fixtures replay deterministically and enforce idempotency", async () => {
@@ -33,9 +37,11 @@ test("adapter idempotency ignores object property order but rejects semantic cha
   const adapter = new FakeAgentAdapter(scripts);
   const first = await adapter.launch({
     idempotencyKey: "ordered-key", prompt: "fixture prompt", workspacePath: "/tmp/fixture-workspace",
+    environment, revalidateWorkspace,
   });
   const reordered: LaunchRequest = {
     workspacePath: "/tmp/fixture-workspace", prompt: "fixture prompt", idempotencyKey: "ordered-key",
+    revalidateWorkspace, environment,
   };
   assert.deepEqual(await adapter.launch(reordered), first);
   assert.equal(adapter.launches.length, 1);
@@ -50,11 +56,21 @@ test("failed launch-intent persistence leaves in-memory state unchanged", async 
       idempotencyKey: "failure-key", requestHash: "a".repeat(64), sessionId: "session-1",
       batchId: "batch-1", workerId: "worker-1", attribution: { agent: "codex", task: "test" },
     });
-    const store = new DurableStore(path, undefined, undefined, undefined, undefined, async () => {
+    const store = new DurableStore(path, undefined, undefined, undefined, undefined, undefined, async () => {
       throw new Error("injected persistence failure");
     });
-    await assert.rejects(store.updateLaunch("failure-key", "dispatching"), /injected persistence failure/);
+    await assert.rejects(store.updateLaunch("failure-key", "dispatching", {
+      diagnostic: "token=must-not-survive",
+      securityAudit: {
+        requesterId: "client-1",
+        operation: "launch_dispatch",
+        decision: "failed",
+        reasonCode: "PERSISTENCE_FAILURE",
+        correlationId: "failure-key",
+      },
+    }), /injected persistence failure/);
     assert.equal(store.launchIntents()[0]?.status, "reserved");
+    assert.deepEqual(store.securityAuditEvents(), []);
     assert.equal(new DurableStore(path).launchIntents().length, 0, "an unloaded verifier has no stale in-memory state");
     const verifier = new DurableStore(path);
     await verifier.reconcile();
