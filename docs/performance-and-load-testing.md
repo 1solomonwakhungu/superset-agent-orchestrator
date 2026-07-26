@@ -17,8 +17,9 @@ The benchmark uses the production `DurableStore`, `LaunchCoordinator`, and
 states and verifies all 100 unique responses against their agent and task
 attribution through the durable batch-results API, both before and after a store
 restart. It records per-launch latency percentiles, indexed batch-query
-examined/returned cost and latency, process CPU, RSS, descriptor count when the OS
-supports it, failures, exact attribution mismatches, and durable restart recovery.
+examined/returned cost and latency, process CPU, RSS, descriptor count when the
+OS supports it, failures, exact attribution mismatches, and durable restart
+recovery.
 The report fails verification if launch or query p95 exceeds the explicit 1-second
 responsiveness ceiling, or if any indexed operation examines more than 100 workers.
 It uses temporary unique workspace paths and removes them after the report is
@@ -46,10 +47,11 @@ npm run load:real -- \
   --agent codex
 ```
 
-The runner ramps 5, then 10, then 15 concurrent launches. Every agent gets a unique
-workspace, so no two writers share a worktree. Before and after each ramp it
-enforces RSS, cumulative runner CPU, and descriptor ceilings; launch failures and
-ceiling breaches abort all further ramps. Defaults are 2 GiB RSS, 300 CPU seconds, 4,096
+The runner first verifies all IDs against one `workspaces list --local` snapshot,
+then ramps 5, 10, and 15 concurrent launches. Every agent gets a unique workspace,
+so no two writers share a worktree. Before and after each ramp it enforces RSS,
+cumulative runner CPU, and descriptor ceilings; launch failures and ceiling
+breaches abort all further ramps. Defaults are 2 GiB RSS, 300 CPU seconds, 4,096
 descriptors, and 30 seconds per launch acceptance. Override them with
 `--max-rss-bytes`, `--max-cpu-ms`, `--max-descriptors`, and
 `--launch-timeout-ms`.

@@ -9,10 +9,13 @@ const executeFile = promisify(execFile);
 export const REAL_LOAD_SCHEMA = "per-351.real-agent-load.v1";
 const SESSION_COUNT = 30;
 
+type LocalWorkspace = { id: string };
+
 export async function runRealLoad(options: {
   execute: boolean; workspaceIds: string[]; agent: string; prompt: string; output: string;
   launchTimeoutMs: number; maxRssBytes: number; maxCpuMs: number; maxDescriptors: number;
   launch?: (workspaceId: string) => Promise<{ sessionId: string; kind: string }>;
+  listLocalWorkspaces?: () => Promise<LocalWorkspace[]>;
 }): Promise<Record<string, unknown>> {
   if (options.workspaceIds.length !== SESSION_COUNT || new Set(options.workspaceIds).size !== SESSION_COUNT) {
     throw new Error("Exactly 30 unique workspace IDs are required; shared writers are forbidden");
@@ -27,6 +30,14 @@ export async function runRealLoad(options: {
   const launch = options.launch ?? ((workspaceId: string) => launchSuperset(workspaceId, options));
 
   if (options.execute) {
+    if (options.launch === undefined) {
+      const listLocalWorkspaces = options.listLocalWorkspaces ?? listSupersetLocalWorkspaces;
+      const localIds = new Set((await listLocalWorkspaces()).map(({ id }) => id));
+      const unresolved = options.workspaceIds.filter((workspaceId) => !localIds.has(workspaceId));
+      if (unresolved.length > 0) {
+        throw new Error(`Workspace IDs are not present in the local workspace snapshot: ${unresolved.join(", ")}`);
+      }
+    }
     let offset = 0;
     for (let stage = 0; stage < stages.length; stage += 1) {
       const stageSize = stages[stage]!;
@@ -79,6 +90,23 @@ export async function runRealLoad(options: {
   return report;
 }
 
+async function listSupersetLocalWorkspaces(): Promise<LocalWorkspace[]> {
+  const { stdout } = await executeFile("superset", ["workspaces", "list", "--local", "--json"], {
+    timeout: 30_000, maxBuffer: 4 * 1024 * 1024, env: { ...process.env, CI: "1" },
+  });
+  const value: unknown = JSON.parse(stdout);
+  const workspaces: unknown[] | null = Array.isArray(value)
+    ? value
+    : typeof value === "object" && value !== null && "workspaces" in value && Array.isArray(value.workspaces)
+      ? value.workspaces
+      : null;
+  if (workspaces === null || workspaces.some((workspace) => typeof workspace !== "object" || workspace === null
+    || !("id" in workspace) || typeof workspace.id !== "string" || workspace.id.length === 0)) {
+    throw new Error("Superset local workspace discovery returned an invalid response");
+  }
+  return workspaces.map((workspace) => ({ id: (workspace as { id: string }).id }));
+}
+
 function ceilingViolation(sample: Awaited<ReturnType<typeof sampleResources>>, options: { maxRssBytes: number; maxCpuMs: number; maxDescriptors: number }): string | null {
   if (sample.rssBytes > options.maxRssBytes) return `RSS ceiling exceeded: ${sample.rssBytes}`;
   if (sample.cpuUserMs + sample.cpuSystemMs > options.maxCpuMs) return `CPU ceiling exceeded: ${sample.cpuUserMs + sample.cpuSystemMs}`;
@@ -99,9 +127,11 @@ async function launchSuperset(workspaceId: string, options: { agent: string; pro
 }
 
 function realMarkdown(report: Record<string, unknown>): string {
-  const launch = report.launch as Record<string, unknown>;
-  const abort = report.abort as Record<string, unknown>;
-  return `# PER-351 Real Agent Load\n\n- Schema: \`${report.schema}\`\n- Mode: ${report.mode}\n- Planned sessions: 30\n- Ramp: 5, 10, 15\n- Accepted launches: ${launch.accepted}\n- Aborted: ${abort.aborted}\n- Abort reason: ${abort.reason ?? "none"}\n\nEach assignment uses a unique workspace. Supported Superset APIs expose launch acceptance but cannot retrieve completion or exact results. Dry-run is the default and starts no paid agents.\n`;
+  const schema = String(report.schema);
+  const mode = String(report.mode);
+  const launch = report.launch as { accepted: number };
+  const abort = report.abort as { aborted: boolean; reason: string | null };
+  return `# PER-351 Real Agent Load\n\n- Schema: \`${schema}\`\n- Mode: ${mode}\n- Planned sessions: 30\n- Ramp: 5, 10, 15\n- Accepted launches: ${launch.accepted}\n- Aborted: ${abort.aborted}\n- Abort reason: ${abort.reason ?? "none"}\n\nEach assignment uses a unique workspace. Supported Superset APIs expose launch acceptance but cannot retrieve completion or exact results. Dry-run is the default and starts no paid agents.\n`;
 }
 
 async function main(): Promise<void> {

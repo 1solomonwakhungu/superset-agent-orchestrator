@@ -14,6 +14,12 @@ const fakeSchema = z.object({
   resources: z.object({ cpuUserMs: z.number().nonnegative(), cpuSystemMs: z.number().nonnegative(), rssBytes: z.number().positive(), descriptors: z.number().int().nonnegative().nullable() }),
   correctness: z.object({ exactAttributionMismatches: z.literal(0), everyResponseAttributed: z.literal(true) }), restartRecovery: z.object({ recoveredSessions: z.literal(100), recoveredResults: z.literal(100), passed: z.literal(true) }),
   validation: z.object({ passed: z.literal(true) }),
+}).superRefine((report, context) => {
+  if (report.responsiveness.ceilingMs !== 1_000
+    || report.responsiveness.launchP95Ms > 1_000
+    || report.responsiveness.queryP95Ms > 1_000) {
+    context.addIssue({ code: "custom", message: "Responsiveness measurements must satisfy the fixed 1000ms ceiling" });
+  }
 });
 const resourceSampleSchema = z.object({
   elapsedMs: z.number().nonnegative(), cpuUserMs: z.number().nonnegative(), cpuSystemMs: z.number().nonnegative(),
@@ -39,9 +45,10 @@ const realSchema = z.object({
   const accepted = report.launch.acceptedSessions;
   const uniqueWorkspaces = new Set(accepted.map(({ workspaceId }) => workspaceId)).size === accepted.length;
   const uniqueTasks = new Set(accepted.map(({ task }) => task)).size === accepted.length;
+  const uniqueSessions = new Set(accepted.map(({ sessionId }) => sessionId)).size === accepted.length;
   const countsConsistent = report.launch.attempted === report.launch.accepted + report.launch.failures.length
     && report.launch.accepted === accepted.length;
-  if (!uniqueWorkspaces || !uniqueTasks) context.addIssue({ code: "custom", message: "Accepted sessions require unique workspace and task attribution" });
+  if (!uniqueWorkspaces || !uniqueTasks || !uniqueSessions) context.addIssue({ code: "custom", message: "Accepted sessions require unique workspace, task, and session attribution" });
   if (!countsConsistent) context.addIssue({ code: "custom", message: "Launch counts are inconsistent" });
   if (report.abort.aborted !== (report.abort.reason !== null)) context.addIssue({ code: "custom", message: "Abort reason is inconsistent" });
   if (report.mode === "dry-run") {
