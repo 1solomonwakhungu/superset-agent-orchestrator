@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import { realpath } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { assertDataOperand, RegisteredWorkspaceAuthorizer, RedactionPolicy, SecurityError, type WorkspaceAuthorizer } from "./security.js";
+import { assertDataOperand, RegisteredWorkspaceAuthorizer, RedactionPolicy, type WorkspaceAuthorizer } from "./security.js";
 import { BatchQueryError, DurableStore } from "./store.js";
 import { LaunchService } from "./launch-service.js";
 import { ResultCaptureService } from "./result-capture.js";
@@ -98,12 +98,20 @@ async function main(): Promise<void> {
 
   const providerExecutable = process.env.SUPERSET_ORCHESTRATOR_PROVIDER_EXECUTABLE;
   const providerArgs = JSON.parse(process.env.SUPERSET_ORCHESTRATOR_PROVIDER_ARGS ?? "[]") as string[];
+  const providerTimeoutMs = Number(process.env.SUPERSET_ORCHESTRATOR_PROVIDER_TIMEOUT_MS ?? 30_000);
   const provider = providerExecutable === undefined ? undefined : new SupersetProcessAdapter({
     executable: providerExecutable,
     args: providerArgs,
-    timeoutMs: Number(process.env.SUPERSET_ORCHESTRATOR_PROVIDER_TIMEOUT_MS ?? 30_000),
+    timeoutMs: providerTimeoutMs,
   });
-  const lifecycle = new LifecycleService(store, provider ?? unsupportedBackend);
+  const lifecycle = new LifecycleService(
+    store,
+    provider ?? unsupportedBackend,
+    undefined,
+    undefined,
+    undefined,
+    provider === undefined ? undefined : providerTimeoutMs,
+  );
   let lifecycleSweep: Promise<void> | undefined;
   const deadlineTimer = setInterval(() => {
     if (lifecycleSweep !== undefined) return;
@@ -125,23 +133,22 @@ async function main(): Promise<void> {
     : new SupersetDiscoveryAdapter({ executable: providerExecutable, args: providerArgs });
   const integrationToolsEnabled = process.env.SUPERSET_ORCHESTRATOR_ENABLE_PROVIDER_TEST_TOOLS === "1";
   const integrationWorkspaceRoot = process.env.SUPERSET_ORCHESTRATOR_PROVIDER_TEST_WORKSPACE_ROOT;
-  const canonicalIntegrationWorkspaceRoot = !integrationToolsEnabled || integrationWorkspaceRoot === undefined
-    ? undefined
-    : await realpath(integrationWorkspaceRoot);
   const workspaceAuthorizer: WorkspaceAuthorizer | undefined = integrationToolsEnabled && integrationWorkspaceRoot !== undefined
     ? {
         authorize: async (workspaceId) => {
-          const canonicalPath = assertDataOperand(await realpath(join(integrationWorkspaceRoot, workspaceId)), "workspace path");
-          const rootRelativePath = relative(canonicalIntegrationWorkspaceRoot!, canonicalPath);
-          if (rootRelativePath === "" || rootRelativePath === ".." || rootRelativePath.startsWith(`..${sep}`) || isAbsolute(rootRelativePath)) {
-            throw new SecurityError("POLICY_DENIED", "Integration workspace must be a child of the configured test root");
+          if (isAbsolute(workspaceId) || workspaceId === "." || workspaceId === ".." || workspaceId.includes("/") || workspaceId.includes("\\")) {
+            throw new Error("Integration workspace ID must name a direct child of the configured root");
+          }
+          const canonicalRoot = await realpath(integrationWorkspaceRoot);
+          const canonicalPath = assertDataOperand(await realpath(resolve(canonicalRoot, workspaceId)), "workspace path");
+          const fromRoot = relative(canonicalRoot, canonicalPath);
+          if (fromRoot.startsWith("..") || isAbsolute(fromRoot) || !(await stat(canonicalPath)).isDirectory()) {
+            throw new Error("Integration workspace must be a directory inside the configured root");
           }
           return {
             workspaceId, projectId: "provider-integration", canonicalPath,
             revalidate: async () => {
-              const revalidatedPath = await realpath(join(integrationWorkspaceRoot, workspaceId));
-              const revalidatedRelativePath = relative(canonicalIntegrationWorkspaceRoot!, revalidatedPath);
-              if (revalidatedPath !== canonicalPath || revalidatedRelativePath === "" || revalidatedRelativePath === ".." || revalidatedRelativePath.startsWith(`..${sep}`) || isAbsolute(revalidatedRelativePath)) {
+              if (await realpath(join(canonicalRoot, workspaceId)) !== canonicalPath) {
                 throw new Error("Integration workspace identity changed before launch");
               }
             },
@@ -273,15 +280,15 @@ async function main(): Promise<void> {
             });
             continue;
           }
-          const cancellation = await provider.cancel({ runId: assignment.runId }, reason);
-          if (cancellation?.status === "unsupported") {
+          const cancellation = await lifecycle.cancelSession(sessionId, "user_requested", reason);
+          if ("error" in cancellation) {
             items.push({
               session_id: sessionId,
-              error: contractError("CANCEL_UNSUPPORTED", "The backend rejected cancellation as unsupported"),
+              error: contractError(cancellation.error, cancellation.message),
             });
             continue;
           }
-          items.push({ session_id: sessionId, canceled: true });
+          items.push({ session_id: sessionId, canceled: cancellation.status === "canceled" });
         } catch (error) {
           const failure = error instanceof SupersetProcessError
             ? contractError(error.code, error.message)
@@ -497,8 +504,6 @@ function providerError(requestId: string, code: ErrorCode, message: string) {
 function processFailure(requestId: string, error: unknown) {
   return error instanceof SupersetProcessError
     ? providerError(requestId, error.code, error.message)
-    : error instanceof SecurityError
-    ? providerError(requestId, asErrorCode(error.code), error.message)
     : providerError(requestId, "PROVIDER_UNAVAILABLE", error instanceof Error ? error.message : String(error));
 }
 
