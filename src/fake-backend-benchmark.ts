@@ -4,20 +4,25 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { FakeAgentAdapter, type FakeRunScript } from "./fake-agent-adapter.js";
 import { LaunchCoordinator, type AttributedLaunchRequest } from "./launch-coordinator.js";
-import { descriptorCount, numericArgument, parseArguments, percentile, rejectUnknownArguments, sampleResources, writeReports } from "./performance-report.js";
+import { descriptorCount, numericArgument, parseArguments, percentile, realMeasurements, rejectUnknownArguments, writeReports, type PerformanceMeasurements } from "./performance-report.js";
 import { DurableStore, type QueryMeasurement } from "./store.js";
 
 export const FAKE_BENCHMARK_SCHEMA = "per-351.fake-backend.v1";
 const RESPONSIVENESS_CEILING_MS = 1_000;
 
-export async function runFakeBenchmark(options: { sessions: number; output: string }): Promise<Record<string, unknown>> {
+export async function runFakeBenchmark(options: {
+  sessions: number;
+  output: string;
+  measurements?: PerformanceMeasurements;
+  queryNow?: () => number;
+}): Promise<Record<string, unknown>> {
   if (!Number.isInteger(options.sessions) || options.sessions !== 100) {
     throw new Error("The production benchmark requires exactly 100 sessions");
   }
   const directory = await mkdtemp(join(tmpdir(), "per-351-fake-"));
   const statePath = join(directory, "state.json");
   const queries: QueryMeasurement[] = [];
-  const store = new DurableStore(statePath, undefined, (measurement) => queries.push(measurement));
+  const store = new DurableStore(statePath, undefined, (measurement) => queries.push(measurement), options.queryNow);
   const scripts: FakeRunScript[] = Array.from({ length: options.sessions }, (_, index) => ({
     statuses: ["queued", "running", "succeeded"], result: { status: "succeeded", output: `result-${index}` },
   }));
@@ -25,8 +30,7 @@ export async function runFakeBenchmark(options: { sessions: number; output: stri
   const coordinator = new LaunchCoordinator(store, adapter);
   const launchLatencies: number[] = [];
   const failures: string[] = [];
-  const started = process.hrtime.bigint();
-  const cpuStart = process.cpuUsage();
+  const measurements = options.measurements ?? realMeasurements();
   const initialDescriptors = await descriptorCount();
   let mismatches = 0;
   let completed = 0;
@@ -49,10 +53,10 @@ export async function runFakeBenchmark(options: { sessions: number; output: stri
       workspacePath: join(directory, `workspace-${index}`),
     }));
     for (const request of requests) {
-      const launchStarted = process.hrtime.bigint();
       try {
-        const intent = await coordinator.launch(request);
-        launchLatencies.push(Number(process.hrtime.bigint() - launchStarted) / 1e6);
+        const measured = await measurements.durationMs("launch", () => coordinator.launch(request));
+        const intent = measured.value;
+        launchLatencies.push(measured.durationMs);
         if (intent.sessionId !== request.sessionId || intent.batchId !== request.batchId
           || intent.workerId !== request.workerId || intent.attribution.agent !== request.attribution.agent
           || intent.attribution.task !== request.attribution.task) mismatches += 1;
@@ -61,8 +65,8 @@ export async function runFakeBenchmark(options: { sessions: number; output: stri
       }
     }
 
-    const lifecycleStarted = process.hrtime.bigint();
-    for (let index = 0; index < requests.length; index += 1) {
+    const lifecycle = await measurements.durationMs("lifecycle", async () => {
+      for (let index = 0; index < requests.length; index += 1) {
       const request = requests[index]!;
       const handle = await adapter.findByIdempotencyKey(request.idempotencyKey);
       if (handle === undefined) { failures.push(`Missing run for ${request.idempotencyKey}`); continue; }
@@ -77,14 +81,18 @@ export async function runFakeBenchmark(options: { sessions: number; output: stri
       if (result.output === `result-${index}` && request.attribution.agent === `fake-${index}`
         && request.attribution.task === `task-${index}`) attributedResults += 1;
       else mismatches += 1;
-    }
-    const lifecycleMs = Number(process.hrtime.bigint() - lifecycleStarted) / 1e6;
+      }
+    });
+    const lifecycleMs = lifecycle.durationMs;
 
-    const queryStarted = process.hrtime.bigint();
-    const page = await store.getBatch(created.batch.id, { ids: created.sessions.map(({ id }) => id) });
-    await store.batchStatus(created.batch.id, { limit: options.sessions });
-    const batchResults = await store.batchResults(created.batch.id, { limit: options.sessions });
-    const queryWallMs = Number(process.hrtime.bigint() - queryStarted) / 1e6;
+    const measuredQueries = await measurements.durationMs("queries", async () => {
+      const page = await store.getBatch(created.batch.id, { ids: created.sessions.map(({ id }) => id) });
+      await store.batchStatus(created.batch.id, { limit: options.sessions });
+      const batchResults = await store.batchResults(created.batch.id, { limit: options.sessions });
+      return { page, batchResults };
+    });
+    const { page, batchResults } = measuredQueries.value;
+    const queryWallMs = measuredQueries.durationMs;
     page.sessions.forEach((worker, index) => {
       const expected = created.sessions[index];
       if (expected === undefined || worker.id !== expected.id || worker.attribution.agent !== expected.attribution.agent
@@ -101,13 +109,15 @@ export async function runFakeBenchmark(options: { sessions: number; output: stri
     }
 
     const restartedStore = new DurableStore(statePath);
-    const recoveryStarted = process.hrtime.bigint();
-    const reconciliation = await restartedStore.reconcile();
-    const recovered = await restartedStore.getBatch(created.batch.id, { limit: options.sessions });
-    const recoveredResults = await restartedStore.batchResults(created.batch.id, { limit: options.sessions });
-    const recoveryMs = Number(process.hrtime.bigint() - recoveryStarted) / 1e6;
+    const recovery = await measurements.durationMs("recovery", async () => ({
+      reconciliation: await restartedStore.reconcile(),
+      recovered: await restartedStore.getBatch(created.batch.id, { limit: options.sessions }),
+      recoveredResults: await restartedStore.batchResults(created.batch.id, { limit: options.sessions }),
+    }));
+    const { reconciliation, recovered, recoveredResults } = recovery.value;
+    const recoveryMs = recovery.durationMs;
     if (recovered.sessions.length !== options.sessions) mismatches += Math.abs(options.sessions - recovered.sessions.length);
-    const resources = await sampleResources(started, cpuStart);
+    const resources = await measurements.resources();
     const launchP95Ms = percentile(launchLatencies, 0.95);
     const queryP95Ms = percentile(queries.map(({ durationMs }) => durationMs), 0.95);
     const maxExamined = Math.max(0, ...queries.map(({ examined }) => examined));
@@ -133,6 +143,7 @@ export async function runFakeBenchmark(options: { sessions: number; output: stri
         latencyMs: { min: Math.min(...launchLatencies), p50: percentile(launchLatencies, 0.5), p95: launchP95Ms, max: Math.max(...launchLatencies) },
       },
       lifecycle: { completed, attributedResults, durationMs: lifecycleMs },
+      throughput: { sessionsPerSecond: completed / (lifecycleMs / 1_000), durationMs: lifecycleMs },
       indexedQueries: {
         count: queries.length, examined: queries.reduce((sum, query) => sum + query.examined, 0), maxExamined,
         returned: queries.reduce((sum, query) => sum + query.returned, 0), wallMs: queryWallMs,
