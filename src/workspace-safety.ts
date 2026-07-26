@@ -183,13 +183,21 @@ export class WorkspaceSafetyTool {
     return this.inspect(workspaceId, now);
   }
 
-  /** The one repair flow: retire a quarantined generation, never assign a new one. */
-  repairQuarantine(leaseId: string, ownerProcessAbsent: boolean, actor: string, now = new Date()): void {
-    if (!ownerProcessAbsent) {
+  /** The one repair flow: independently prove absence, then retire the generation. */
+  repairQuarantine(leaseId: string, actor: string, now = new Date()): void {
+    const lease = this.storage.workspaceLeaseById(leaseId);
+    if (!lease || lease.state !== "quarantined") {
+      throw new LeaseRecoveryAmbiguousError("Repair requires an existing quarantined lease");
+    }
+    if (this.lockHeldElsewhere(lease.workspaceId)) {
+      throw new LeaseRecoveryAmbiguousError("Another process may still hold the workspace lock");
+    }
+    if (this.ownerProcessState(lease) !== "absent") {
       throw new LeaseRecoveryAmbiguousError("Repair refused without verified owner-process absence");
     }
     this.storage.repairQuarantinedWriterLease(leaseId,
-      { ownerProcessAbsent: true, detail: "operator verified all owner processes absent" }, actor, now);
+      { ownerProcessAbsent: true, detail: "local host, pid, start token, and lock independently verified absent" },
+      actor, now);
     this.dropLock(leaseId);
   }
 
@@ -199,6 +207,7 @@ export class WorkspaceSafetyTool {
   }
 
   private ownerProcessState(lease: WorkspaceLeaseStatus): WorkspaceSafetyReport["ownerProcess"] {
+    if (lease.ownerHost !== this.hostId) return "unverifiable";
     if (lease.processId === null || lease.processStartToken === null) return "unverifiable";
     if (!this.probe.exists(lease.processId)) return "absent";
     const startToken = this.probe.startToken(lease.processId);

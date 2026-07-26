@@ -1,5 +1,0 @@
-Metadata-Version: 2.4
-Name: superset-agent-orchestrator
-Version: 0.1.0
-Summary: Local-first durable orchestration primitives for Superset agents
-Requires-Python: >=3.11
