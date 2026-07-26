@@ -1,5 +1,15 @@
 # Status
 
+## PER-347 provider cancellation contract, 2026-07-26
+
+- Mapped a subprocess provider's declared `CANCEL_UNSUPPORTED` failure to the
+  adapter-level unsupported outcome instead of misreporting provider unavailability.
+- Added fake-provider integration coverage proving lifecycle cancellation restores
+  durable state and issues exactly one provider cancellation request.
+- Focused regression, typecheck, lint, and diff checks passed. The full check
+  reached 336 tests but failed on 9 pre-existing PR-head integration/security
+  assertions unrelated to this cancellation change.
+
 ## PER-344 post-merge recovery accounting, 2026-07-26
 
 - Confirmed merged implementation PR 23 and lineage restoration PR 55 are on
