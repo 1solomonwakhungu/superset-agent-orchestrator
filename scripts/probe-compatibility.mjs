@@ -49,7 +49,7 @@ const detected = {
 
 const unsupportedDimensions = [];
 const unknownDimensions = [];
-if (!matrix.supportedEnvelope.operatingSystems.includes(detected.os)) unknownDimensions.push("operating system");
+if (!matrix.supportedEnvelope.operatingSystems.includes(detected.os)) unsupportedDimensions.push("operating system");
 if (!matrix.supportedEnvelope.nodeMajors.includes(major(detected.node))) unsupportedDimensions.push("Node.js major");
 if (major(detected.npm) !== matrix.supportedEnvelope.npmMajor) unknownDimensions.push("npm major");
 if (major(detected.mcpSdk) !== matrix.supportedEnvelope.mcpSdk.major) unsupportedDimensions.push("MCP SDK major");

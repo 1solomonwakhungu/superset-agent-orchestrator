@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -10,7 +10,7 @@ test("MCP batch tools create 100 sessions immediately and paginate the remaining
   const directory = await mkdtemp(join(tmpdir(), "orchestrator-batch-mcp-"));
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [resolve("dist/src/server.js")],
+    args: [join(import.meta.dirname, "..", "dist", "src", "server.js")],
     env: { ...process.env, SUPERSET_ORCHESTRATOR_STATE: join(directory, "state.json"), SUPERSET_ORCHESTRATOR_RECONCILE_MS: "60000" },
     stderr: "pipe",
   });
