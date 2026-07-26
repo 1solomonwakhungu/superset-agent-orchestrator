@@ -142,13 +142,17 @@ async function main(): Promise<void> {
           const canonicalRoot = await realpath(integrationWorkspaceRoot);
           const canonicalPath = assertDataOperand(await realpath(resolve(canonicalRoot, workspaceId)), "workspace path");
           const fromRoot = relative(canonicalRoot, canonicalPath);
-          if (fromRoot.startsWith("..") || isAbsolute(fromRoot) || !(await stat(canonicalPath)).isDirectory()) {
+          const identity = await stat(canonicalPath);
+          if (fromRoot.length === 0 || fromRoot.includes("/") || fromRoot.includes("\\")
+            || fromRoot.startsWith("..") || isAbsolute(fromRoot) || !identity.isDirectory()) {
             throw new Error("Integration workspace must be a directory inside the configured root");
           }
           return {
             workspaceId, projectId: "provider-integration", canonicalPath,
             revalidate: async () => {
-              if (await realpath(join(canonicalRoot, workspaceId)) !== canonicalPath) {
+              const currentPath = await realpath(join(canonicalRoot, workspaceId));
+              const currentIdentity = await stat(currentPath);
+              if (currentPath !== canonicalPath || currentIdentity.dev !== identity.dev || currentIdentity.ino !== identity.ino) {
                 throw new Error("Integration workspace identity changed before launch");
               }
             },
