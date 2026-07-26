@@ -1,5 +1,56 @@
 # Status
 
+## PER-344 concurrency limits and backpressure
+
+- Added configurable global, per-host, per-project, per-agent, and per-workspace
+  admission limits with a bounded FIFO queue and structured overload errors.
+- Added observable active/queued scope counts, abortable admission, guaranteed
+  release, and resource-pressure/rate-limit backoff hooks that cannot skip the
+  FIFO head.
+- Recovered running retries reacquire capacity, duplicate recovery shares one
+  permit, and terminal transitions while recovery waits cannot leak capacity.
+- Cancellation interrupts asynchronous pressure checks, including hooks that
+  never settle, without disturbing the next queued request.
+- Unknown launch outcomes retain capacity until reconciliation authoritatively
+  proves absence or transfers the permit to the accepted run; cancellation
+  acknowledgements retain capacity until a terminal state is observed.
+- Recovery now reserves capacity before status inspection, fails closed on
+  status errors or identity mismatches, and releases terminal runs safely.
+- Existing runs are accounted before backend lookup without deadlocking startup,
+  and pressure hooks are bounded.
+- Added deterministic tests proving retries and batches hold capacity,
+  cancellation frees capacity, every scope is enforced, and overload stays
+  bounded or fails structurally when waiting is disabled.
+- Verification after integrating current `main`: `npm ci` and
+  `npm audit --audit-level=high` passed (2 moderate transitive advisories); the
+  focused concurrency suite passed 25/25; `npm run check` passed formatting,
+  lint, typecheck, build, 157 tests (156 pass, 0 fail, 1 explicit live-discovery
+  skip), coverage, Python 3/3, schema no-diff, and provenance verification;
+  `git diff --check` passed.
+- Next: push pull request 23, verify exact-head checks, resolve review threads,
+  and merge with exact-head protection.
+
+## PER-362 MiniCPM5 reproducible environment
+
+- Added a uv 0.8.3 lock for Python 3.12 targeting Linux x86-64 and macOS arm64.
+- Pinned MiniCPM5-1B, container bases, Python dependencies, MLX wheels, and
+  recorded llama.cpp/MLX source revisions.
+- Added deterministic fingerprint tooling and Linux/macOS environment capture.
+- Verified two independent 29-package frozen installs, 4/4 Python tests, and an
+  unprivileged Linux/amd64 image build plus environment-capture smoke test.
+- No model fingerprint result is claimed: overnight workers are prohibited from
+  loading or querying the model.
+- Remaining: capture a native Linux x86-64 host and run same-host fingerprints
+  on both targets using an authorized executor.
+
+## PER-361 MiniCPM5 checkpoint provenance
+
+- Pinned the authoritative BF16 checkpoint and the published SFT, GGUF, and MLX
+  variant families to immutable Hugging Face revision hashes.
+- Recorded exact model-input and variant artifact sizes and SHA-256 values.
+- Added an Apache-2.0 license audit and offline manifest verification.
+- Next: run full verification, deliver through PR, and verify merged `main`.
+
 ## PER-354 recurring system cleanup
 
 Completed PER-354 with a conservative macOS cleanup utility: dry-run default, explicit flags for disruptive operations, path-boundary and symlink checks, stale-file retention, protected Hermes queue handling, installer-DMG validation, disk reporting, and LM Studio size reporting. Execute mode counts removals and Downloads moves only after success; Downloads collisions, malformed host data, and external-command failures are handled without unsafe fallback or tracebacks.
