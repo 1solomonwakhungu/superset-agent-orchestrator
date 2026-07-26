@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "sessions": [
+    { "id": "session-pre-1", "clientId": "hermes-cli", "createdAt": "2026-06-01T09:00:00.000Z", "lastSeenAt": "2026-06-01T09:00:00.000Z" }
+  ],
+  "batches": [
+    { "id": "batch-pre-1", "name": "identity-upgrade", "sessionId": "session-pre-1", "createdAt": "2026-06-01T09:00:00.000Z", "updatedAt": "2026-06-01T09:00:00.000Z" }
+  ],
+  "workers": [],
+  "diagnostics": [],
+  "assignments": [
+    {
+      "id": "assignment-pre-1", "idempotencyKey": "pre-key-1",
+      "requestFingerprint": "1111111111111111111111111111111111111111111111111111111111111111",
+      "batchId": "batch-pre-1", "sessionId": "session-pre-1", "status": "launched",
+      "attribution": { "agent": "codex", "task": "upgrade identities" },
+      "prompt": "Upgrade the assignment identity model", "workspacePath": "/tmp/legacy-workspace",
+      "acceptedAt": "2026-06-01T09:00:00.000Z", "updatedAt": "2026-06-01T09:05:00.000Z", "runId": "run-pre-1"
+    }
+  ],
+  "auditEvents": [
+    { "id": "assignment-pre-1:launch_accepted", "assignmentId": "assignment-pre-1", "type": "launch_accepted", "occurredAt": "2026-06-01T09:00:00.000Z" },
+    { "id": "assignment-pre-1:execution_started", "assignmentId": "assignment-pre-1", "type": "execution_started", "occurredAt": "2026-06-01T09:05:00.000Z", "runId": "run-pre-1" }
+  ],
+  "launchIntents": [
+    {
+      "idempotencyKey": "pre-key-1",
+      "requestHash": "2222222222222222222222222222222222222222222222222222222222222222",
+      "sessionId": "session-pre-1", "batchId": "batch-pre-1", "workerId": "worker-pre-1",
+      "attribution": { "agent": "codex", "task": "upgrade identities" },
+      "status": "bound", "createdAt": "2026-06-01T09:00:00.000Z", "updatedAt": "2026-06-01T09:05:00.000Z", "runId": "run-pre-1"
+    }
+  ]
+}
