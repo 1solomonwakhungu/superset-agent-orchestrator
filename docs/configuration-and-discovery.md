@@ -146,14 +146,24 @@ Two tests in `test/superset-discovery.smoke.test.ts` cover this:
    `SupersetDiscoveryAdapter` and its real schemas. The fixture holds payloads
    captured from a live Superset CLI by `npm run discovery:record`, which uses
    the adapter's own spawn path, so field names, types, and the null and absent
-   distinctions are verbatim. Only identifying values are pseudonymised.
-2. The live contract test runs only when a Superset executable is present.
+   distinctions are verbatim. Every live string-bearing field is explicitly
+   classified as a safe enum/version or receives a shape-preserving pseudonym;
+   unclassified fields abort recording. IDs, names, timestamps, endpoint and
+   process metadata, commands, arguments, environment names and values, URLs,
+   and paths are pseudonymised. Repeated source values retain stable pseudonyms
+   within each classified semantic domain so cross-record relationships remain
+   deterministic without conflating unrelated fields. Fixture provenance uses a
+   fixed generated timestamp rather than publishing the host recording time.
+2. The live contract test runs only with explicit opt-in through
+   `SUPERSET_DISCOVERY_SMOKE=1`, or when live discovery is required through
+   `SUPERSET_ORCHESTRATOR_REQUIRE_LIVE_DISCOVERY=1`.
 
-Availability is decided by resolving the executable on the search path, never by
+After explicit opt-in, availability is decided by resolving the executable on the search path, never by
 interpreting an adapter error. An executable that is present but returns a
 malformed payload, exits non-zero, or reports an unhealthy host therefore fails
 the live test instead of being skipped. Only a genuinely absent executable is
-skipped, and the skip reason is reported by the test runner.
+skipped in optional smoke mode, and the skip reason is reported by the test
+runner.
 
 Set `SUPERSET_ORCHESTRATOR_REQUIRE_LIVE_DISCOVERY=1` where a real Superset is
 expected. An absent executable is then a failure rather than a skip.
