@@ -858,6 +858,72 @@ test("an ignored abort retains its shared provider slot until the operation sett
   assert.ok(maximum <= 4);
 }));
 
+test("an ignored cancellation abort retains delivery ownership until the stop settles", async () => harness(async (store) => {
+  const created = await store.createBatch("ignored-cancel-claim", "client", [{ agent: "codex", task: "work" }]);
+  const id = created.sessions[0]!.id;
+  await store.bindWorkerRun(id, "run-1");
+  let release: (() => void) | undefined;
+  let cancelCalls = 0;
+  const blocker = new Promise<void>((resolve) => { release = resolve; });
+  const service = new LifecycleService(store, stub({
+    cancellation: "supported",
+    cancel: async () => {
+      cancelCalls += 1;
+      await blocker;
+      return { status: "accepted" as const };
+    },
+    status: async ({ runId }) => ({ runId, status: "running" as const, updatedAt: "2026-07-26T00:00:00.000Z" }),
+  }), undefined, undefined, undefined, 5);
+
+  assert.equal(refused(await service.cancelSession(id)).error, "PROVIDER_UNAVAILABLE");
+  assert.equal(cancelCalls, 1);
+  await service.reconcileCancellations();
+  assert.equal(cancelCalls, 1, "reconciliation must not overlap a timed-out stop that is still active");
+
+  const releaseCancellationDelivery = store.releaseCancellationDelivery.bind(store);
+  let releaseAttempts = 0;
+  store.releaseCancellationDelivery = async (sessionId) => {
+    releaseAttempts += 1;
+    if (releaseAttempts === 1) throw new Error("transient release failure");
+    return releaseCancellationDelivery(sessionId);
+  };
+  release?.();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(releaseAttempts, 2, "a transient deferred release failure must be retried");
+  await service.reconcileCancellations();
+  assert.equal(cancelCalls, 2, "delivery becomes retryable after the original stop settles");
+}));
+
+test("an ignored deadline-stop abort retains delivery ownership until the stop settles", async () => harness(async (store) => {
+  const created = await store.createBatch("ignored-deadline-claim", "client", [{ agent: "codex", task: "work" }]);
+  const id = created.sessions[0]!.id;
+  await store.bindWorkerRun(id, "run-1");
+  await store.setWorkerDeadline(id, new Date("2026-07-26T00:00:00.000Z"));
+  let release: (() => void) | undefined;
+  let cancelCalls = 0;
+  const blocker = new Promise<void>((resolve) => { release = resolve; });
+  const service = new LifecycleService(store, stub({
+    cancellation: "supported",
+    cancel: async () => {
+      cancelCalls += 1;
+      await blocker;
+      return { status: "accepted" as const };
+    },
+    status: async ({ runId }) => ({ runId, status: "running" as const, updatedAt: "2026-07-26T00:00:01.000Z" }),
+  }), undefined, undefined, undefined, 5);
+
+  const [expired] = await service.enforceDeadlines(new Date("2026-07-26T00:00:01.000Z"));
+  assert.equal(expired?.providerStopError, "The backend lifecycle operation is temporarily unavailable");
+  assert.equal(cancelCalls, 1);
+  await service.reconcileTimedOutResults();
+  assert.equal(cancelCalls, 1, "reconciliation must not overlap a timed-out deadline stop that is still active");
+
+  release?.();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await service.reconcileTimedOutResults();
+  assert.equal(cancelCalls, 2, "deadline-stop delivery becomes retryable after the original stop settles");
+}));
+
 test("an eventually consistent late result remains pending and is retained", async () => harness(async (store) => {
   const created = await store.createBatch("late-result-retry", "client", [{ agent: "codex", task: "work" }]);
   const id = created.sessions[0]!.id;
