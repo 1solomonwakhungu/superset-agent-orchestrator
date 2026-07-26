@@ -203,8 +203,8 @@ export class LifecycleService {
       // Delivery is unknown, so cancellation intent stays recorded and the session remains canceling.
       return {
         sessionId,
-        error: error instanceof ProviderProtocolError ? "PROVIDER_PROTOCOL_ERROR" : "PROVIDER_UNAVAILABLE",
-        message: error instanceof ProviderProtocolError ? error.message : PROVIDER_UNAVAILABLE_MESSAGE,
+        error: isProviderProtocolFailure(error) ? "PROVIDER_PROTOCOL_ERROR" : "PROVIDER_UNAVAILABLE",
+        message: isProviderProtocolFailure(error) ? error.message : PROVIDER_UNAVAILABLE_MESSAGE,
         status: "canceling",
       };
     }
@@ -522,6 +522,11 @@ export class LifecycleService {
       }
     }
   }
+}
+
+function isProviderProtocolFailure(error: unknown): error is Error {
+  return error instanceof ProviderProtocolError
+    || (error instanceof Error && "code" in error && error.code === "PROVIDER_PROTOCOL_ERROR");
 }
 
 async function mapConcurrent<T, R>(items: T[], limit: number, operation: (item: T) => Promise<R>): Promise<R[]> {
