@@ -27,6 +27,23 @@ const request: AttributedLaunchRequest = {
 
 const script = { statuses: ["running", "succeeded"] as const, result: { status: "succeeded", output: "complete" } as const };
 
+test("request hashes are canonical across nested property insertion order", () => {
+  const reordered: AttributedLaunchRequest = {
+    ...request,
+    attribution: { task: request.attribution.task, agent: request.attribution.agent },
+    resume: { token: "resume-token", adapter: "codex" },
+  };
+  const conventional: AttributedLaunchRequest = {
+    ...request,
+    attribution: { agent: request.attribution.agent, task: request.attribution.task },
+    resume: { adapter: "codex", token: "resume-token" },
+  };
+  assert.equal(LaunchCoordinator.requestHash(reordered), LaunchCoordinator.requestHash(conventional));
+  assert.notEqual(LaunchCoordinator.requestHash(conventional), LaunchCoordinator.requestHash({
+    ...conventional, resume: { adapter: "codex", token: "different-token" },
+  }));
+});
+
 async function harness(run: (path: string, store: DurableStore, adapter: FakeAgentAdapter) => Promise<void>): Promise<void> {
   const directory = await mkdtemp(join(tmpdir(), "orchestrator-idempotency-"));
   const path = join(directory, "state.json");

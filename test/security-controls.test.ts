@@ -166,6 +166,53 @@ test("T-PATH-02 refuses a sibling directory that only shares a path prefix", asy
   });
 });
 
+test("T-PATH-02 authorizes only an exact external registered worktree grant", async () => {
+  await withDirectory(async (base) => {
+    const { projectPath, outsidePath } = await layout(base);
+    const canonicalPath = await realpath(outsidePath);
+    const records = inventory([project(projectPath)], [workspace({ worktreePath: outsidePath })]);
+    const exact = new RegisteredWorkspaceAuthorizer(async () => records, [
+      { workspaceId: "workspace-1", projectId: "project-1", canonicalPath },
+    ]);
+    const grant = await exact.authorize("workspace-1");
+    assert.equal(grant.canonicalPath, canonicalPath);
+    await grant.revalidate();
+
+    for (const authorization of [
+      { workspaceId: "workspace-2", projectId: "project-1", canonicalPath },
+      { workspaceId: "workspace-1", projectId: "project-2", canonicalPath },
+      { workspaceId: "workspace-1", projectId: "project-1", canonicalPath: projectPath },
+    ]) {
+      const authorizer = new RegisteredWorkspaceAuthorizer(async () => records, [authorization]);
+      await assert.rejects(authorizer.authorize("workspace-1"), (error: unknown) =>
+        error instanceof SecurityError && error.code === "POLICY_DENIED");
+    }
+  });
+});
+
+test("T-PATH-03 external worktree grants retain registration and inode confinement", async () => {
+  await withDirectory(async (base) => {
+    const { projectPath, outsidePath } = await layout(base);
+    const canonicalPath = await realpath(outsidePath);
+    const original = workspace({ worktreePath: outsidePath, createdByUserId: "owner-1" });
+    let records = inventory([project(projectPath)], [original]);
+    const authorizer = new RegisteredWorkspaceAuthorizer(async () => records, [
+      { workspaceId: "workspace-1", projectId: "project-1", canonicalPath },
+    ]);
+    const grant = await authorizer.authorize("workspace-1");
+    records = inventory([project(projectPath)], [{ ...original, createdByUserId: "owner-2" }]);
+    await assert.rejects(grant.revalidate(), (error: unknown) =>
+      error instanceof SecurityError && error.code === "INTEGRITY_FAILURE");
+
+    records = inventory([project(projectPath)], [original]);
+    const inodeGrant = await authorizer.authorize("workspace-1");
+    await rename(outsidePath, `${outsidePath}-old`);
+    await mkdir(outsidePath);
+    await assert.rejects(inodeGrant.revalidate(), (error: unknown) =>
+      error instanceof SecurityError && error.code === "INTEGRITY_FAILURE");
+  });
+});
+
 test("T-PATH-03 revalidation aborts when the validated directory is retargeted", async () => {
   await withDirectory(async (base) => {
     const { projectPath, insidePath, outsidePath } = await layout(base);
@@ -770,6 +817,48 @@ test("state and audit files stay owner readable and writable only", async () => 
     });
     assert.equal((await stat(path)).mode & 0o777, 0o600);
   });
+});
+
+test("state persistence fails closed on permissive directories and files", async () => {
+  await withDirectory(async (base) => {
+    const directory = join(base, "state");
+    const path = join(directory, "state.json");
+    await mkdir(directory, { mode: 0o755 });
+    await assert.rejects(new DurableStore(path).reconcile(), (error: unknown) =>
+      error instanceof SecurityError && error.code === "POLICY_DENIED");
+
+    await chmod(directory, 0o700);
+    await writeFile(path, "{}", { mode: 0o644 });
+    await assert.rejects(new DurableStore(path).reconcile(), (error: unknown) =>
+      error instanceof SecurityError && error.code === "POLICY_DENIED");
+  });
+});
+
+test("state persistence fails closed on symlink and non-regular paths", async () => {
+  await withDirectory(async (base) => {
+    const privateDirectory = join(base, "private");
+    const targetDirectory = join(base, "target");
+    await mkdir(privateDirectory, { mode: 0o700 });
+    await mkdir(targetDirectory, { mode: 0o700 });
+    await symlink(targetDirectory, join(privateDirectory, "linked"), "dir");
+    await assert.rejects(new DurableStore(join(privateDirectory, "linked", "state.json")).reconcile(),
+      (error: unknown) => error instanceof SecurityError && error.code === "POLICY_DENIED");
+
+    const target = join(privateDirectory, "target.json");
+    await writeFile(target, "{}", { mode: 0o600 });
+    await symlink(target, join(privateDirectory, "state.json"));
+    await assert.rejects(new DurableStore(join(privateDirectory, "state.json")).reconcile(),
+      (error: unknown) => error instanceof SecurityError && error.code === "POLICY_DENIED");
+
+    await mkdir(join(privateDirectory, "nonregular.json"));
+    await assert.rejects(new DurableStore(join(privateDirectory, "nonregular.json")).reconcile(),
+      (error: unknown) => error instanceof SecurityError && error.code === "POLICY_DENIED");
+  });
+});
+
+test("state persistence requires an absolute path", async () => {
+  await assert.rejects(new DurableStore("relative-state.json").reconcile(),
+    (error: unknown) => error instanceof SecurityError && error.code === "POLICY_DENIED");
 });
 
 function launchRequest(overrides: Partial<AsynchronousLaunchRequest> = {}): AsynchronousLaunchRequest {

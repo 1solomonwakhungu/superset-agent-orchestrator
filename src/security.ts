@@ -300,6 +300,12 @@ export interface WorkspaceAuthorizer {
 
 export type WorkspaceInventoryProvider = () => Promise<WorkspaceInventory>;
 
+export interface ExternalWorkspaceAuthorization {
+  workspaceId: string;
+  projectId: string;
+  canonicalPath: string;
+}
+
 interface FileIdentity {
   device: bigint;
   inode: bigint;
@@ -376,7 +382,16 @@ async function canonicalDirectory(path: string, unavailableMessage: string): Pro
  * belong to the active local host, and must stay inside its registered project.
  */
 export class RegisteredWorkspaceAuthorizer implements WorkspaceAuthorizer {
-  constructor(private readonly inventory: WorkspaceInventoryProvider) {}
+  constructor(
+    private readonly inventory: WorkspaceInventoryProvider,
+    private readonly externalWorkspaces: readonly ExternalWorkspaceAuthorization[] = [],
+  ) {}
+
+  private externalWorkspaceAllowed(workspaceId: string, projectId: string, canonicalPath: string): boolean {
+    return this.externalWorkspaces.some((authorization) => authorization.workspaceId === workspaceId
+      && authorization.projectId === projectId
+      && authorization.canonicalPath === canonicalPath);
+  }
 
   async authorize(workspaceId: string): Promise<WorkspaceGrant> {
     opaqueWorkspaceId(workspaceId);
@@ -399,7 +414,8 @@ export class RegisteredWorkspaceAuthorizer implements WorkspaceAuthorizer {
     }
     const projectDirectory = await canonicalDirectory(project.path, "Registered project path is unavailable");
     const workspaceDirectory = await canonicalDirectory(workspace.worktreePath, "Registered workspace path is unavailable");
-    if (!contained(projectDirectory.path, workspaceDirectory.path)) {
+    const external = !contained(projectDirectory.path, workspaceDirectory.path);
+    if (external && !this.externalWorkspaceAllowed(workspaceId, project.id, workspaceDirectory.path)) {
       throw new SecurityError("POLICY_DENIED", "Registered workspace escapes its project boundary");
     }
     assertDataOperand(workspaceDirectory.path, "workspace path");
@@ -430,7 +446,8 @@ export class RegisteredWorkspaceAuthorizer implements WorkspaceAuthorizer {
         }
         const currentProjectDirectory = await canonicalDirectory(currentProject.path!, "Registered project path is unavailable");
         const current = await canonicalDirectory(currentWorkspace.worktreePath, "Registered workspace path is unavailable");
-        if (!contained(currentProjectDirectory.path, current.path)
+        if ((!contained(currentProjectDirectory.path, current.path)
+          && !this.externalWorkspaceAllowed(workspaceId, project.id, current.path))
           || currentProjectDirectory.path !== projectDirectory.path
           || currentProjectDirectory.identity.device !== projectDirectory.identity.device
           || currentProjectDirectory.identity.inode !== projectDirectory.identity.inode
