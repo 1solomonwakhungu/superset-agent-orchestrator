@@ -14,6 +14,22 @@ launch-ledger technical preview that reports unobservable work as
 
 See the [product boundary and measurable release gates](docs/adr/0002-product-boundary-and-mvp-gates.md).
 
+## Development
+
+Requirements: Node.js 22, npm 10 or later, and Python 3.11.
+
+```sh
+npm ci
+npm audit --audit-level=high
+npm run check
+```
+
+The aggregate check enforces formatting for workflows and repository guidance,
+type-aware lint across production TypeScript and tests, strict type checking, the
+production build, TypeScript tests and coverage thresholds, and Python monitor
+tests. It also regenerates the MCP schema and fails if the checked-in artifact is
+stale.
+
 ## Recovery
 
 The server reconciles its durable JSON state before accepting MCP requests and periodically while
@@ -23,11 +39,11 @@ State writes are locked, synced, and atomically renamed. A corrupt state file is
 
 Recovery tools:
 
-* `recent_sessions` lists durable sessions independently of the connected client.
-* `reopen_batch` restores the newest exact-name batch with sessions, workers, results, and attribution.
-* `batches_create` durably accepts up to 250 attributed sessions and returns stable IDs immediately.
-* `batches_get`, `batches_status`, and `batches_results` provide indexed, ordered pagination without per-agent polling.
-* `recovery_diagnostics` reports orphan, unknown-outcome, and missing-result records.
+- `recent_sessions` lists durable sessions independently of the connected client.
+- `reopen_batch` restores the newest exact-name batch with sessions, workers, results, and attribution.
+- `batches_create` durably accepts up to 250 attributed sessions and returns stable IDs immediately.
+- `batches_get`, `batches_status`, and `batches_results` provide indexed, ordered pagination without per-agent polling.
+- `recovery_diagnostics` reports orphan, unknown-outcome, and missing-result records.
 
 Set `SUPERSET_ORCHESTRATOR_STATE` to choose the state file. By default it is stored at
 `~/.local/share/superset-agent-orchestrator/state.json`.
@@ -64,6 +80,12 @@ The MCP contract publishes typed TypeScript/Zod schemas and a client-neutral JSO
 `FakeAgentAdapter` accepts ordered run scripts and a caller-controlled clock. Integration tests can therefore drive queued, running, succeeded, failed, and cancelled paths without timing or network dependencies.
 
 Run `npm run verify` to type-check the complete implementation and execute all tests.
+
+## Contributions
+
+Changes must use pull requests. See [CONTRIBUTING.md](CONTRIBUTING.md) for the
+required checks and [SECURITY.md](SECURITY.md) for private vulnerability
+reporting.
 
 ## Superset discovery
 
@@ -114,3 +136,42 @@ names, internal addresses, credentials, or tunnel identifiers.
 
 See [`docs/incident-runbook.md`](docs/incident-runbook.md) for diagnosis and
 recovery procedures.
+
+## macOS cleanup
+
+`cleanup.py` inventories and removes stale temporary files and selected
+development caches. It is deliberately a dry-run unless `--execute` is supplied.
+
+```sh
+python3 cleanup.py
+python3 cleanup.py --execute
+```
+
+Potentially destructive or disruptive operations require separate flags:
+
+```sh
+python3 cleanup.py --execute --include-downloads
+python3 cleanup.py --execute --empty-trash
+python3 cleanup.py --execute --docker-prune
+python3 cleanup.py --execute --eject-installers
+```
+
+Review dry-run output before execution. Downloads are moved to Trash, not
+deleted. Broad `~/Library/Caches` deletion is intentionally excluded; only known
+build and package cache directories are cleaned. The Hermes task queue is
+validated and reported but not rewritten. LM Studio model locations are measured
+but never removed.
+
+Disk images are eligible for detachment only when `hdiutil` identifies a mounted
+image backed by a `.dmg` file smaller than 5 GiB and the volume contains a
+top-level `.app` or `.pkg`. Ambiguous images are reported and skipped. Physical
+external drives are never considered by this logic.
+
+The utility has no runtime dependencies beyond Python 3.9+ and standard macOS
+command-line tools. Run its tests and optional development checks with:
+
+```sh
+python3 -m unittest -v
+ruff check cleanup.py test_cleanup.py
+mypy --strict cleanup.py test_cleanup.py
+```

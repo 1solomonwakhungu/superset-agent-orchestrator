@@ -91,8 +91,6 @@ export class ConcurrencyLimitedAgentAdapter implements AgentAdapter {
 
   async cancel(handle: RunHandle, reason?: string): Promise<void> {
     await this.adapter.cancel(handle, reason);
-    this.markTerminalDuringRecovery(handle.runId);
-    this.release(handle.runId);
   }
 
   resumeMetadata(handle: RunHandle): Promise<ResumeMetadata | undefined> {

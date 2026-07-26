@@ -204,7 +204,7 @@ export class ConcurrencyScheduler {
           pressure = this.pressureHooks.length === 0
             ? { ready: true }
             : await this.checkPressureBounded(pending);
-        } catch (error) {
+        } catch {
           pressure = {
             ready: false,
             retryAfterMs: 1_000,
@@ -312,7 +312,7 @@ export class ConcurrencyScheduler {
 }
 
 function validateRequest(request: AdmissionRequest): void {
-  for (const [name, value] of Object.entries(scope(request))) {
+  for (const [name, value] of Object.entries(scope(request)) as [keyof ConcurrencyScope, string][]) {
     if (value.length === 0) throw new Error(`${name} must not be empty`);
   }
   if (request.id.length === 0) throw new Error("id must not be empty");

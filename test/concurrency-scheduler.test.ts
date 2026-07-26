@@ -179,7 +179,7 @@ test("pressure rejects structurally when waiting is disabled", async () => {
 });
 
 test("cancellation during a pressure check does not remove the next request", async () => {
-  let finishCheck = (_decision: { ready: boolean }): void => undefined;
+  let finishCheck: (decision: { ready: boolean }) => void = () => undefined;
   const check = new Promise<{ ready: boolean }>((resolve) => { finishCheck = resolve; });
   let checks = 0;
   const scheduler = new ConcurrencyScheduler({}, [() => {
@@ -246,6 +246,7 @@ test("agent adapter holds capacity until terminal status, including after cancel
     { statuses: ["queued", "succeeded"], result: { status: "succeeded", output: "first" } },
     { statuses: ["queued", "cancelled"], result: { status: "cancelled" } },
   ]);
+  delegate.cancel = async () => undefined;
   const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => ({
     hostId: "local", projectId: "project", agentId: "codex", workspaceId: "workspace",
   }), () => ({
@@ -263,8 +264,11 @@ test("agent adapter holds capacity until terminal status, including after cancel
   const second = await secondPromise;
   assert.equal(delegate.launches.length, 2);
   await adapter.cancel(second, "operator request");
-  assert.equal(scheduler.snapshot().active, 0);
+  assert.equal(scheduler.snapshot().active, 1);
+  assert.equal((await adapter.status(second)).status, "queued");
+  assert.equal(scheduler.snapshot().active, 1);
   assert.equal((await adapter.status(second)).status, "cancelled");
+  assert.equal(scheduler.snapshot().active, 0);
 });
 
 test("retains an indeterminate launch permit until lookup resolves the outcome", async () => {
@@ -356,6 +360,7 @@ test("recovery reserves capacity before a delayed backend lookup", async () => {
   lookup.resolve();
   assert.deepEqual(await recovery, handle);
   await adapter.cancel(handle);
+  assert.equal((await adapter.status(handle)).status, "cancelled");
   (await fresh)();
 });
 
