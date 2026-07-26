@@ -55,8 +55,9 @@ The real discovery integration smoke test is excluded from default runs. Set
 
 `npm run test:coverage` uses c8's all-files instrumentation and fails below
 **85% lines/statements, 80% branches, and 65% functions** over the complete
-source tree, including modules not imported by a test. The current verifier run
-measured 97.05% lines/statements, 89.51% branches, and 95.52% functions.
+source tree, including modules not imported by a test. After integrating the
+latest persistence dependency, the verifier measured 97.02% lines/statements,
+88.07% branches, and 92.71% functions.
 
 The thresholds sit just under the measured values rather than at them. The
 margin is deliberate and bounded:
