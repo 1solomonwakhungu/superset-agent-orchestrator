@@ -53,6 +53,7 @@ export type ProcessRunner = (
   executable: string,
   args: readonly string[],
   timeoutMs: number,
+  signal?: AbortSignal,
 ) => Promise<ProcessResult>;
 
 export interface SupersetDiscoveryOptions {
@@ -85,9 +86,12 @@ function discoverExecutable(): string {
   }
   throw new SecurityError("POLICY_DENIED", "Superset executable could not be pinned to an absolute path");
 }
-export const runProcess: ProcessRunner = async (executable, args, timeoutMs) => {
+export const runProcess: ProcessRunner = async (executable, args, timeoutMs, signal) => {
   const pin = await pinExecutable(executable);
   await revalidateExecutable(pin);
+  if (signal?.aborted) {
+    throw new SupersetDiscoveryError("UNAVAILABLE", "Superset discovery was cancelled");
+  }
   const program = pin.path;
   const argv = assertFixedArguments(args);
   return new Promise<ProcessResult>((resolve, reject) => {
@@ -109,6 +113,7 @@ export const runProcess: ProcessRunner = async (executable, args, timeoutMs) => 
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        signal?.removeEventListener("abort", abort);
         action();
       };
       const terminate = () => {
@@ -130,6 +135,13 @@ export const runProcess: ProcessRunner = async (executable, args, timeoutMs) => 
         }
         current.push(chunk);
       };
+      const abort = () => {
+        terminationError ??= new SupersetDiscoveryError(
+          "UNAVAILABLE",
+          "Superset discovery was cancelled",
+        );
+        terminate();
+      };
 
       child.stdout?.on("data", (chunk: Buffer) => { append(stdout, chunk); });
       child.stderr?.on("data", (chunk: Buffer) => { append(stderr, chunk); });
@@ -150,6 +162,8 @@ export const runProcess: ProcessRunner = async (executable, args, timeoutMs) => 
         terminate();
       }, timeoutMs);
       timer.unref();
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) abort();
     });
 };
 
@@ -173,11 +187,22 @@ export class SupersetDiscoveryAdapter {
       throw new SupersetDiscoveryError("UNAVAILABLE", "Local Superset host is unavailable");
     }
 
-    const [projects, workspaces, presets] = await Promise.all([
-      this.command(["projects", "list", "--local", "--json"], projectListSchema),
-      this.command(["workspaces", "list", "--local", "--json"], workspaceListSchema),
-      this.command(["agents", "list", "--local", "--json"], agentPresetListSchema),
-    ]);
+    const controller = new AbortController();
+    const commands = [
+      this.command(["projects", "list", "--local", "--json"], projectListSchema, controller.signal),
+      this.command(["workspaces", "list", "--local", "--json"], workspaceListSchema, controller.signal),
+      this.command(["agents", "list", "--local", "--json"], agentPresetListSchema, controller.signal),
+    ] as const;
+    let projects: Project[];
+    let workspaces: Workspace[];
+    let presets: AgentPreset[];
+    try {
+      [projects, workspaces, presets] = await Promise.all(commands);
+    } catch (error) {
+      controller.abort();
+      await Promise.allSettled(commands);
+      throw error;
+    }
     this.validateLocalResults(host, projects, workspaces, presets);
     return { version, host, projects, workspaces, presets };
   }
@@ -206,8 +231,12 @@ export class SupersetDiscoveryAdapter {
     return version;
   }
 
-  private async command<T>(args: readonly string[], schema: Parameters<typeof parseJson<T>>[1]): Promise<T> {
-    const result = await this.invoke(args);
+  private async command<T>(
+    args: readonly string[],
+    schema: Parameters<typeof parseJson<T>>[1],
+    signal?: AbortSignal,
+  ): Promise<T> {
+    const result = await this.invoke(args, signal);
     try {
       return parseJson(result.stdout, schema);
     } catch (error) {
@@ -215,10 +244,10 @@ export class SupersetDiscoveryAdapter {
     }
   }
 
-  private async invoke(args: readonly string[]): Promise<ProcessResult> {
+  private async invoke(args: readonly string[], signal?: AbortSignal): Promise<ProcessResult> {
     let result: ProcessResult;
     try {
-      result = await this.runner(this.executable, [...this.args, ...args], this.timeoutMs);
+      result = await this.runner(this.executable, [...this.args, ...args], this.timeoutMs, signal);
     } catch (error) {
       if (error instanceof SupersetDiscoveryError) throw error;
       throw new SupersetDiscoveryError("UNAVAILABLE", safeErrorMessage(error));
