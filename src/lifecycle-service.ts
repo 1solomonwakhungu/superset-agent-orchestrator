@@ -179,7 +179,7 @@ export class LifecycleService {
         (signal) => this.adapter.cancel(handle, detail ?? reason, signal),
       ));
       if (outcome !== undefined && outcome.status === "unsupported") {
-        const restored = await this.store.clearWorkerCancellation(sessionId);
+        const restored = await this.store.handleUnsupportedCancellation(sessionId);
         return {
           sessionId,
           error: "CANCEL_UNSUPPORTED",
@@ -250,6 +250,10 @@ export class LifecycleService {
     return outcomes.filter((outcome): outcome is ExpiredWorker => outcome !== undefined);
   }
 
+  async hasOverdueDeadlines(now = this.wallClockNow()): Promise<boolean> {
+    return (await this.store.overdueWorkers(now)).length > 0;
+  }
+
   /** Advances accepted asynchronous cancellations from the provider's latest durable observation. */
   async reconcileCancellations(): Promise<CancellationResult[]> {
     return mapConcurrent(await this.store.cancelingWorkers(), MAX_PROVIDER_CONCURRENCY, async (worker): Promise<CancellationResult> => {
@@ -270,7 +274,7 @@ export class LifecycleService {
               signal,
             )));
             if (outcome?.status === "unsupported") {
-              const restored = await this.store.clearWorkerCancellation(worker.id);
+              const restored = await this.store.handleUnsupportedCancellation(worker.id);
               return {
                 sessionId: worker.id,
                 error: "CANCEL_UNSUPPORTED",
@@ -409,11 +413,14 @@ export class LifecycleService {
           error: `Adapter result status ${JSON.stringify(result.status)} did not match observed status ${JSON.stringify(observed.status)}`,
         });
     const terminal = terminalStatusFor(observed.status);
+    const resultMismatch = result !== undefined && result.status !== observed.status;
     const options = {
       result: claim,
       ...(stopReason === undefined ? {} : { stopReason }),
       at: this.wallClockNow(),
-      ...(resultFailure === undefined && result !== undefined ? {} : { keepReconciliationPending: true }),
+      ...(result !== undefined && !resultMismatch && resultFailure === undefined
+        ? {}
+        : { keepReconciliationPending: true }),
     };
     const { worker: settled, claimed } = await this.store.settleWorkerCancellation(sessionId, terminal, options);
     return {
