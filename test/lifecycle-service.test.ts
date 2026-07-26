@@ -676,6 +676,49 @@ test("claim recovery is explicit and never revokes a live delivery claim", async
   assert.equal(await store.claimCancellationDelivery(id), true);
 }));
 
+test("restart claim recovery restores cancellation before general reconciliation", async () => harness(async (store, path) => {
+  const created = await store.createBatch("restart-claim", "client", [{ agent: "codex", task: "work" }]);
+  const id = created.sessions[0]!.id;
+  await store.bindWorkerRun(id, "run-1", { pid: 999_999, processStartedAt: "missing" });
+  await store.requestWorkerCancellation(id);
+  await store.claimCancellationDelivery(id);
+  const restarted = new DurableStore(path, () => false);
+  await restarted.recoverLifecycleDeliveryClaims();
+  await restarted.reconcile();
+  const worker = await restarted.worker(id);
+  assert.equal(worker?.status, "canceling");
+  assert.equal(worker?.cancellationDeliveryPending, true);
+}));
+
+test("delivered cancellation remains reconcilable when its local process exits", async () => harness(async (store, path) => {
+  const created = await store.createBatch("delivered-restart", "client", [{ agent: "codex", task: "work" }]);
+  const id = created.sessions[0]!.id;
+  await store.bindWorkerRun(id, "run-1", { pid: 999_999, processStartedAt: "missing" });
+  await store.requestWorkerCancellation(id);
+  await store.markCancellationDelivered(id);
+  const restarted = new DurableStore(path, () => false);
+  await restarted.reconcile();
+  assert.equal((await restarted.worker(id))?.status, "canceling");
+  const service = new LifecycleService(restarted, stub({
+    cancellation: "supported",
+    status: async ({ runId }) => ({ runId, status: "cancelled" as const, updatedAt: "2026-07-26T00:00:00.000Z" }),
+    result: async () => ({ status: "cancelled" as const }),
+  }));
+  assert.equal(accepted((await service.reconcileCancellations())[0]!).status, "canceled");
+}));
+
+test("synchronous provider failures release shared concurrency slots", async () => harness(async (store) => {
+  const created = await store.createBatch("sync-failure", "client", Array.from({ length: 12 }, (_, index) => ({ agent: "a", task: `${index}` })));
+  for (const [index, worker] of created.sessions.entries()) await store.bindWorkerRun(worker.id, `sync-${index}`);
+  const service = new LifecycleService(store, stub({
+    cancellation: "supported",
+    cancel: () => { throw new Error("sync failure"); },
+  }), undefined, undefined, undefined, 25);
+  const outcomes = await service.cancelBatch(created.batch.id);
+  assert.equal(outcomes.length, 12);
+  assert.ok(outcomes.every((outcome) => isCancellationRefused(outcome)));
+}));
+
 test("an ignored abort retains its shared provider slot until the operation settles", async () => harness(async (store) => {
   const created = await store.createBatch("ignored-abort", "client", Array.from({ length: 9 }, (_, index) => ({ agent: "a", task: `${index}` })));
   for (const [index, worker] of created.sessions.entries()) await store.bindWorkerRun(worker.id, `run-${index}`);

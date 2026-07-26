@@ -69,8 +69,8 @@ async function main(): Promise<void> {
       `Unsupported platform ${process.platform}; supported platforms are darwin and linux. See docs/compatibility.md.`,
     );
   }
-  const reconciliation = await store.reconcile();
   await store.recoverLifecycleDeliveryClaims();
+  const reconciliation = await store.reconcile();
   console.error(`Startup reconciliation complete: ${JSON.stringify(reconciliation)}`);
   const reconciliationTimer = setInterval(() => {
     store.reconcile().catch((error: unknown) => {

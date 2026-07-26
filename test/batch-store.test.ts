@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -91,13 +91,13 @@ test("mixed states expose completed results independently with exact attribution
     auditEvents: [],
     launchIntents: [],
   };
-  await writeFile(path, JSON.stringify(state), "utf8");
+  await writeFile(path, JSON.stringify(state), { encoding: "utf8", mode: 0o600 });
   const store = new DurableStore(path);
   try {
     await store.reconcile(new Date(timestamp));
     const status = await store.batchStatus("batch");
     assert.deepEqual(status.summary, {
-      total: 4, settled: 3, complete: false, partiallyComplete: true,
+      total: 4, settled: 2, complete: false, partiallyComplete: true,
       counts: { requested: 1, running: 0, canceling: 0, succeeded: 1, failed: 1, canceled: 0, unknown_outcome: 1 },
     });
     const results = await store.batchResults("batch");
@@ -108,6 +108,19 @@ test("mixed states expose completed results independently with exact attribution
     assert.deepEqual(results.unavailable, [
       { sessionId: "requested", status: "requested" }, { sessionId: "unknown", status: "unknown_outcome" },
     ]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("preexisting permissive lifecycle state fails closed without chmod", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "orchestrator-permissions-"));
+  const path = join(directory, "state.json");
+  try {
+    await writeFile(path, JSON.stringify({ version: 1, sessions: [], batches: [], workers: [], diagnostics: [] }), { mode: 0o644 });
+    await chmod(path, 0o644);
+    await assert.rejects(new DurableStore(path).reconcile(), /owner-only/);
+    assert.equal((await stat(path)).mode & 0o777, 0o644);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
