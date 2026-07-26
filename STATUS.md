@@ -1,5 +1,17 @@
 # Status
 
+## PER-344 post-merge recovery accounting, 2026-07-26
+
+- Confirmed merged implementation PR 23 and lineage restoration PR 55 are on
+  `main`; PR 60 contains the remaining recovery-permit reuse implementation.
+- Preserved cancellation capability, outcomes, and abort signals through the
+  concurrency adapter while reusing retained recovery permits.
+- Fixed the terminal-status race where a permit released during a sequential
+  backend lookup caused successful recovery to fail spuriously.
+- Verification: focused concurrency suite passed 30/30; `npm run check` passed
+  262 runnable TypeScript tests with 1 optional skip, Python 5/5 with 1 skip,
+  coverage, schema, provenance, and research gates; `git diff --check` passed.
+
 ## PER-342 cancellation, timeouts, and bounded wait
 
 - Added `LifecycleService` owning cancel-one, cancel-batch, deadline expiry, and
