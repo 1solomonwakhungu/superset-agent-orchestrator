@@ -1,5 +1,6 @@
 import type {
   AgentAdapter,
+  CancellationOutcome,
   LaunchRequest,
   ResumeMetadata,
   RunHandle,
@@ -19,6 +20,7 @@ interface HeldPermit {
 }
 
 export class ConcurrencyLimitedAgentAdapter implements AgentAdapter {
+  readonly cancellation: "supported" | "unsupported";
   private readonly releases = new Map<string, HeldPermit>();
   private readonly runIdsByIdempotencyKey = new Map<string, string>();
   private readonly unresolvedLaunches = new Map<string, () => void>();
@@ -32,7 +34,9 @@ export class ConcurrencyLimitedAgentAdapter implements AgentAdapter {
     private readonly scheduler: ConcurrencyScheduler,
     private readonly resolveScope: ScopeResolver,
     private readonly resolveRecoveryScope: RecoveryScopeResolver,
-  ) {}
+  ) {
+    this.cancellation = adapter.cancellation ?? "unsupported";
+  }
 
   findByIdempotencyKey(idempotencyKey: string): Promise<RunHandle | undefined> {
     const existing = this.recoveries.get(idempotencyKey);
@@ -70,8 +74,8 @@ export class ConcurrencyLimitedAgentAdapter implements AgentAdapter {
     }
   }
 
-  async status(handle: RunHandle): Promise<RunState> {
-    const state = await this.adapter.status(handle);
+  async status(handle: RunHandle, signal?: AbortSignal): Promise<RunState> {
+    const state = await this.adapter.status(handle, signal);
     if (state.runId !== handle.runId) {
       throw new Error(`Status returned run ${state.runId} for requested run ${handle.runId}`);
     }
@@ -82,8 +86,8 @@ export class ConcurrencyLimitedAgentAdapter implements AgentAdapter {
     return state;
   }
 
-  async result(handle: RunHandle): Promise<RunResult | undefined> {
-    const result = await this.adapter.result(handle);
+  async result(handle: RunHandle, signal?: AbortSignal): Promise<RunResult | undefined> {
+    const result = await this.adapter.result(handle, signal);
     if (result !== undefined) {
       this.markTerminalDuringRecovery(handle.runId);
       this.release(handle.runId);
@@ -91,8 +95,8 @@ export class ConcurrencyLimitedAgentAdapter implements AgentAdapter {
     return result;
   }
 
-  async cancel(handle: RunHandle, reason?: string): Promise<void> {
-    await this.adapter.cancel(handle, reason);
+  async cancel(handle: RunHandle, reason?: string, signal?: AbortSignal): Promise<CancellationOutcome | void> {
+    return await this.adapter.cancel(handle, reason, signal);
   }
 
   resumeMetadata(handle: RunHandle): Promise<ResumeMetadata | undefined> {

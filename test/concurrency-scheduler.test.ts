@@ -7,6 +7,7 @@ import {
 } from "../src/concurrency-scheduler.js";
 import { ConcurrencyLimitedAgentAdapter } from "../src/concurrency-limited-agent-adapter.js";
 import { FakeAgentAdapter } from "../src/fake-agent-adapter.js";
+import type { AgentAdapter } from "../src/agent-adapter.js";
 
 const base: AdmissionRequest = {
   id: "first",
@@ -270,6 +271,44 @@ test("agent adapter holds capacity until terminal status, including after cancel
   assert.equal((await adapter.status(second)).status, "queued");
   assert.equal(scheduler.snapshot().active, 1);
   assert.equal((await adapter.status(second)).status, "cancelled");
+  assert.equal(scheduler.snapshot().active, 0);
+});
+
+test("agent adapter preserves cancellation capability, outcomes, and abort signals", async () => {
+  const scheduler = new ConcurrencyScheduler({ global: 1 });
+  const scripted = new FakeAgentAdapter([
+    { statuses: ["running", "cancelled"], result: { status: "cancelled" } },
+  ]);
+  const delegate: AgentAdapter = {
+    cancellation: scripted.cancellation,
+    findByIdempotencyKey: (key) => scripted.findByIdempotencyKey(key),
+    launch: (request) => scripted.launch(request),
+    status: (candidate, signal) => {
+      signal?.throwIfAborted();
+      return scripted.status(candidate);
+    },
+    result: (candidate, signal) => {
+      signal?.throwIfAborted();
+      return scripted.result(candidate);
+    },
+    cancel: (candidate, reason, signal) => {
+      signal?.throwIfAborted();
+      return scripted.cancel(candidate, reason);
+    },
+    resumeMetadata: (candidate) => scripted.resumeMetadata(candidate),
+  };
+  const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => base, () => base);
+  const handle = await adapter.launch({ idempotencyKey: "first", prompt: "first", workspacePath: "/first" });
+  const abort = new AbortController();
+  abort.abort();
+
+  assert.equal(adapter.cancellation, "supported");
+  await assert.rejects(adapter.status(handle, abort.signal), (error) => error === abort.signal.reason);
+  await assert.rejects(adapter.result(handle, abort.signal), (error) => error === abort.signal.reason);
+  await assert.rejects(adapter.cancel(handle, "operator request", abort.signal), (error) => error === abort.signal.reason);
+  assert.equal(scheduler.snapshot().active, 1);
+  assert.deepEqual(await adapter.cancel(handle, "operator request"), { status: "accepted" });
+  assert.equal((await adapter.status(handle)).status, "cancelled");
   assert.equal(scheduler.snapshot().active, 0);
 });
 
