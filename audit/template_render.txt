@@ -1,0 +1,12 @@
+<s><|im_start|>system
+# Tools
+
+You are provided with function signatures within <tools></tools> XML tags:
+<tools>
+{"type":"function","function":{"name":"weather","description":"Get weather","parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}}
+</tools>
+<|im_end|>
+<|im_start|>user
+What is the weather in Nairobi?<|im_end|>
+<|im_start|>assistant
+<function name="weather"><param name="city">Nairobi</param></function><|im_end|>
