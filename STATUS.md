@@ -25,6 +25,9 @@
 - Review follow-up: Standalone coverage and race commands now build their
   required artifacts, the real discovery smoke test is explicitly opt-in, and
   Windows remains outside the supported compatibility envelope.
+- Companion acceptance coverage: the live stdio MCP integration now proves that
+  rejecting invalid tool input does not terminate or poison the connection; a
+  valid zero-time wait on the same client still reads exact durable batch state.
 - Next: push the exact integrated head, require green exact-head GitHub checks,
   merge PR 29, verify merged `main`, and reconcile PER-346 in Linear.
 
