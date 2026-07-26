@@ -10,6 +10,8 @@ import { auditField, RedactionPolicy, SecurityError, SECURITY_POLICY_VERSION } f
 import { assertPrivateStatePath } from "./state-path.js";
 import { preparePrivateDirectory, secureCreatedFile, validateOwnerOnlyFile } from "./storage.js";
 
+const processLockQueues = new Map<string, Promise<void>>();
+
 export type WorkerStatus = "requested" | "running" | "canceling" | "succeeded" | "failed" | "canceled" | "unknown_outcome";
 export type TerminalWorkerStatus = Extract<WorkerStatus, "succeeded" | "failed" | "canceled" | "unknown_outcome">;
 /** Stop reasons the state machine allows for a canceled session. */
@@ -538,7 +540,7 @@ export class DurableStore {
       realpath: false,
       stale: this.dispatchLockStaleMs,
       update: Math.max(1_000, Math.floor(this.dispatchLockStaleMs / 5)),
-      retries: { retries: 50, minTimeout: 50, maxTimeout: 200 },
+      retries: { retries: 300, minTimeout: 50, maxTimeout: 200 },
     });
     try {
       return await operation();
@@ -1700,17 +1702,26 @@ export class DurableStore {
   }
 
   private async withLock<T>(operation: () => Promise<T>): Promise<T> {
-    await assertPrivateStatePath(this.path);
-    const release = await lockfile.lock(this.path, {
-      realpath: false,
-      stale: 10_000,
-      update: 2_000,
-      retries: { retries: 50, minTimeout: 50, maxTimeout: 200 },
-    });
+    const previous = processLockQueues.get(this.path) ?? Promise.resolve();
+    let releaseQueue!: () => void;
+    const queued = new Promise<void>((resolve) => { releaseQueue = resolve; });
+    const tail = previous.then(() => queued);
+    processLockQueues.set(this.path, tail);
+    await previous;
+    let release: (() => Promise<void>) | undefined;
     try {
+      await assertPrivateStatePath(this.path);
+      release = await lockfile.lock(this.path, {
+        realpath: false,
+        stale: 10_000,
+        update: 2_000,
+        retries: { retries: 50, minTimeout: 50, maxTimeout: 200 },
+      });
       return await operation();
     } finally {
-      await release();
+      if (release !== undefined) await release();
+      releaseQueue();
+      if (processLockQueues.get(this.path) === tail) processLockQueues.delete(this.path);
     }
   }
 
