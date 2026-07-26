@@ -7,9 +7,18 @@ import { LaunchService, type LaunchAcceptance } from "../src/launch-service.js";
 import { ResultCaptureService } from "../src/result-capture.js";
 import { DurableStore } from "../src/store.js";
 import { SupersetProcessAdapter, SupersetProcessError } from "../src/superset-process-adapter.js";
+import type { WorkspaceAuthorizer } from "../src/security.js";
 
 const fixture = resolve("test/fixtures/fake-superset.mjs");
 const now = () => new Date("2000-01-01T00:00:00.000Z");
+const authorizer: WorkspaceAuthorizer = {
+  authorize: async (workspaceId) => ({
+    workspaceId,
+    projectId: "fake-project",
+    canonicalPath: `/workspaces/${workspaceId}`,
+    revalidate: async () => undefined,
+  }),
+};
 
 test("fake Superset proves completion, failure, cancellation, restart recovery, and exact attribution", async () => {
   await withHarness({
@@ -20,7 +29,7 @@ test("fake Superset proves completion, failure, cancellation, restart recovery, 
     ],
   }, async ({ adapter, statePath, calls }) => {
     const store = new DurableStore(statePath);
-    const launches = new LaunchService(store, adapter, now);
+    const launches = new LaunchService(store, adapter, authorizer, now);
     const accepted: LaunchAcceptance[] = [];
     for (const [index, task] of ["complete", "fail", "cancel"].entries()) {
       accepted.push(await launches.accept(request(index, task)));
@@ -87,13 +96,13 @@ test("accepted launches recover after one-shot timeout and malformed responses w
       defaultScript: successScript(),
     }, async ({ adapter, statePath, fakeState, calls }) => {
       const store = new DurableStore(statePath);
-      const accepted = await new LaunchService(store, adapter, now).accept(request(0, action));
+      const accepted = await new LaunchService(store, adapter, authorizer, now).accept(request(0, action));
 
-      await new LaunchService(store, adapter, now).dispatchPending();
+      await new LaunchService(store, adapter, authorizer, now).dispatchPending();
       assert.equal(Object.keys((await fakeState()).runs).length, 1);
 
       const restartedStore = new DurableStore(statePath);
-      await new LaunchService(restartedStore, adapter.restart(), now).dispatchPending();
+      await new LaunchService(restartedStore, adapter.restart(), authorizer, now).dispatchPending();
       const assignment = await restartedStore.assignmentForResult(accepted.assignmentId);
       assert.equal(assignment.status, "launched");
       assert.equal(assignment.runId, "fake-001");
@@ -203,7 +212,7 @@ test("fake Superset deduplicates concurrent launches with the same provider key"
 test("fake Superset completes and attributes a deterministic 100-session batch", async () => {
   await withHarness({ defaultScript: successScript() }, async ({ adapter, statePath, calls }) => {
     const store = new DurableStore(statePath);
-    const launches = new LaunchService(store, adapter, now);
+    const launches = new LaunchService(store, adapter, authorizer, now);
     const accepted = await launches.acceptBatch({
       idempotencyKey: "batch-100", clientId: "integration", batchName: "fake-superset",
       assignments: Array.from({ length: 100 }, (_, index) => {
@@ -213,7 +222,6 @@ test("fake Superset completes and attributes a deterministic 100-session batch",
           attribution: item.attribution,
           prompt: item.prompt,
           workspaceId: item.workspaceId,
-          workspacePath: item.workspacePath,
         };
       }),
     });
@@ -237,7 +245,7 @@ function request(index: number, task: string) {
   return {
     idempotencyKey: `key-${index}`, clientId: "integration", batchName: "fake-superset",
     attribution: { agent: `agent-${index}`, task }, prompt: `prompt-${index}`,
-    workspaceId: `workspace-${index}`, workspacePath: `/workspaces/${index}`,
+    workspaceId: `workspace-${index}`,
   };
 }
 

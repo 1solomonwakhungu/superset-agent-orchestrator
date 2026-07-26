@@ -159,7 +159,7 @@ test("repeated idempotency keys return one acceptance and launch one provider ru
 
 test("scopes idempotency keys to the client identity", async () => {
   await withStore(async (path) => {
-    const service = new LaunchService(new DurableStore(path), new FakeAgentAdapter([script, script]));
+    const service = new LaunchService(new DurableStore(path), new FakeAgentAdapter([script, script]), authorizer);
     const first = await service.accept(request);
     const second = await service.accept({ ...request, clientId: "another-client" });
 

@@ -109,6 +109,8 @@ export class LaunchService {
       id: batchId, name: request.batchName, sessionId: sessions[0]!.id,
       createdAt: acceptedAt, updatedAt: acceptedAt,
     };
+    const grants = await Promise.all(request.assignments.map(({ workspaceId }) =>
+      this.workspaceAuthorizer.authorize(workspaceId)));
     const assignments = request.assignments.map((item, index): Assignment => {
       const fullRequest: AsynchronousLaunchRequest = {
         ...item, clientId: request.clientId, batchName: request.batchName,
@@ -119,7 +121,7 @@ export class LaunchService {
         requestFingerprint: fingerprint(fullRequest), batchId, sessionId: sessions[index]!.id,
         status: "accepted", attribution: item.attribution, prompt: item.prompt,
         workspaceId: item.workspaceId,
-        workspacePath: assertDataOperand((await this.workspaceAuthorizer.authorize(item.workspaceId)).canonicalPath, "workspace path"),
+        workspacePath: assertDataOperand(grants[index]!.canonicalPath, "workspace path"),
         attemptId: stableId("attempt", scopedKey(request.clientId, item.idempotencyKey)), attempt: 1,
         acceptedAt, updatedAt: acceptedAt,
       };
