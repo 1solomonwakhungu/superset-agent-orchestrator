@@ -36,6 +36,13 @@ const POST_PER_342_TOOL_NAMES = [
   ...PER_342_LIFECYCLE_TOOL_NAMES,
 ] as const;
 
+const PROVIDER_INTEGRATION_TOOL_NAMES = [
+  ...REGISTERED_TOOL_NAMES,
+  "provider_batches_launch",
+  "provider_sessions_results",
+  "provider_sessions_cancel",
+] as const;
+
 /**
  * Capabilities the threat model excludes from MVP: arbitrary command execution,
  * destructive workspace or repository mutation, raw filesystem or database access,
@@ -72,7 +79,7 @@ export function assertSafeToolNames(names: readonly string[]): void {
 export function assertRegisteredToolNames(names: readonly string[]): void {
   assertSafeToolNames(names);
   const actual = [...names].sort();
-  const matchesReviewedSnapshot = [REGISTERED_TOOL_NAMES, POST_PER_342_TOOL_NAMES].some((snapshot) => {
+  const matchesReviewedSnapshot = [REGISTERED_TOOL_NAMES, POST_PER_342_TOOL_NAMES, PROVIDER_INTEGRATION_TOOL_NAMES].some((snapshot) => {
     const reviewed = [...snapshot].sort();
     return actual.length === reviewed.length && actual.every((name, index) => name === reviewed[index]);
   });
