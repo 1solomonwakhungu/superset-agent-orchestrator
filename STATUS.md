@@ -285,3 +285,16 @@ locally.
   lint, typecheck, build, tests, coverage, Python 3.11 tests, and schema diff; routing
   contract, security Markdown lint, Python
   bytecode compilation, and `git diff --check` passed.
+- Verifier follow-up: fresh workspace inventory binding now rejects registration,
+  host/organization, owner, project/path, device, and inode drift at launch and
+  recovery; executable provenance rejects symlinks, unsafe POSIX modes/owners,
+  and replacement; all launch identities and metadata are explicitly bounded.
+- One injected redaction policy now covers raw and encoded literal canaries across
+  state, audit, diagnostics, errors, results, logs, and MCP egress. Coordinator
+  started/failed/recovered outcomes are atomic with their audit records, legacy
+  intents fail closed, and audit fields are well-formed and at most 256 characters.
+- Follow-up verification: full `npm run check` passed 145 tests with one opt-in
+  smoke skip, coverage at 95.35% statements/86.78% branches/90.29% functions/
+  95.35% lines, and Python 3.11 tests 3/3; the focused 71-test suite passed 20
+  consecutive runs (1,420/1,420), with schema no-diff, routing, Markdown lint,
+  compileall, and `git diff --check` also passing.

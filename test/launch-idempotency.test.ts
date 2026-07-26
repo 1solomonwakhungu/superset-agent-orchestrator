@@ -5,6 +5,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { FakeAgentAdapter } from "../src/fake-agent-adapter.js";
 import { LaunchCoordinator, type AttributedLaunchRequest } from "../src/launch-coordinator.js";
+import { RedactionPolicy, SecurityError } from "../src/security.js";
+import { RegisteredWorkspaceAuthorizer, type WorkspaceInventory } from "../src/security.js";
 import { DurableStore } from "../src/store.js";
 
 const authorizer = {
@@ -153,5 +155,156 @@ test("audit persistence failure remains reserved before adapter acceptance", asy
     const recovered = await coordinator.launch(request);
     assert.equal(recovered.status, "bound");
     assert.equal(adapter.launches.length, 1);
+  });
+});
+
+test("coordinator rejects every unbounded or control-bearing persisted identity before reservation", async () => {
+  await harness(async (_path, store, adapter) => {
+    const coordinator = new LaunchCoordinator(store, adapter, authorizer);
+    for (const invalid of [
+      { ...request, idempotencyKey: "x".repeat(257) },
+      { ...request, sessionId: "session\nforged" },
+      { ...request, attribution: { agent: "codex", task: "x".repeat(1025) } },
+      { ...request, resume: { adapter: "fake", token: "x".repeat(4097) } },
+    ]) {
+      await assert.rejects(coordinator.launch(invalid), SecurityError);
+    }
+    assert.deepEqual(store.launchIntents(), []);
+    assert.equal(adapter.launches.length, 0);
+  });
+});
+
+test("coordinator redaction policy prevents literal canaries in reservation, diagnostics, and audit", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "orchestrator-idempotency-canary-"));
+  const path = join(directory, "state.json");
+  const literal = "low-entropy-coordinator-secret";
+  const store = new DurableStore(path, undefined, undefined, undefined, new RedactionPolicy([literal]));
+  const adapter = new FakeAgentAdapter([script]);
+  try {
+    await store.reconcile();
+    const coordinator = new LaunchCoordinator(store, adapter, authorizer);
+    await coordinator.launch({
+      ...request,
+      prompt: `prompt ${literal}`,
+      attribution: { agent: "codex", task: `task ${literal}` },
+    });
+    assert.doesNotMatch(JSON.stringify(store.snapshot()), new RegExp(literal));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("adapter failure and recovered binding append truthful chained outcomes", async () => {
+  await harness(async (_path, store, adapter) => {
+    const failing = new Proxy(adapter, {
+      get(target, property, receiver) {
+        if (property === "launch") return async () => { throw new Error("provider failed"); };
+        const value: unknown = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    await assert.rejects(new LaunchCoordinator(store, failing, authorizer).launch(request), /provider failed/);
+    assert.deepEqual(store.securityAuditEvents().map(({ decision, reasonCode }) => `${decision}:${reasonCode}`), [
+      "allowed:launch_intent",
+      "failed:POLICY_DENIED",
+    ]);
+    assert.equal(store.launchIntents()[0]?.status, "unknown_outcome");
+  });
+
+  await harness(async (_path, store, adapter) => {
+    const crashing = new LaunchCoordinator(store, adapter, authorizer, {
+      afterExternalAcceptance: () => { throw new Error("response lost"); },
+    });
+    await assert.rejects(crashing.launch(request), /response lost/);
+    await new LaunchCoordinator(store, adapter, authorizer).reconcile();
+    assert.deepEqual(store.securityAuditEvents().map(({ decision, reasonCode }) => `${decision}:${reasonCode}`), [
+      "allowed:launch_intent",
+      "failed:POLICY_DENIED",
+      "allowed:launch_recovered",
+    ]);
+  });
+});
+
+test("outcome audit persistence failure cannot advance the durable binding", async () => {
+  await harness(async (_path, store, adapter) => {
+    const updateLaunch = store.updateLaunch.bind(store);
+    store.updateLaunch = async (key, status, options, now) => {
+      if (options?.securityAudit?.reasonCode === "launch_started") throw new Error("outcome audit unavailable");
+      return updateLaunch(key, status, options, now);
+    };
+    await assert.rejects(new LaunchCoordinator(store, adapter, authorizer).launch(request), /outcome audit unavailable/);
+    assert.equal(store.launchIntents()[0]?.status, "unknown_outcome");
+    assert.equal(store.launchIntents()[0]?.runId, undefined);
+    assert.equal(adapter.launches.length, 1);
+  });
+});
+
+test("coordinator re-reads authoritative registration at launch and aborts reassignment", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "orchestrator-registration-race-"));
+  const projectPath = join(directory, "project");
+  const workspacePath = join(projectPath, "workspace");
+  await import("node:fs/promises").then(({ mkdir }) => mkdir(workspacePath, { recursive: true }));
+  const originalWorkspace = {
+    id: request.workspaceId,
+    organizationId: "organization-1",
+    projectId: "project-1",
+    hostId: "host-1",
+    name: "workspace",
+    branch: "branch",
+    type: "worktree",
+    createdByUserId: "owner-1",
+    taskId: null,
+    createdAt: "2026-07-24T00:00:00.000Z",
+    updatedAt: "2026-07-24T00:00:00.000Z",
+    worktreePath: workspacePath,
+    worktreeExists: true,
+    projectName: "project",
+    hostName: "host",
+  };
+  let inventory: WorkspaceInventory = {
+    hostId: "host-1",
+    organizationId: "organization-1",
+    projects: [{ id: "project-1", name: "project", slug: "project", repoCloneUrl: null, githubRepositoryId: null, setUp: "yes", path: projectPath }],
+    workspaces: [originalWorkspace],
+  };
+  const store = new DurableStore(join(directory, "state.json"));
+  const adapter = new FakeAgentAdapter([script]);
+  const authorizer = new RegisteredWorkspaceAuthorizer(async () => inventory);
+  const coordinator = new LaunchCoordinator(store, adapter, authorizer, {
+    afterReservation: () => {
+      inventory = { ...inventory, workspaces: [{ ...originalWorkspace, createdByUserId: "owner-2" }] };
+    },
+  });
+  try {
+    await assert.rejects(coordinator.launch(request), /registration changed before launch/);
+    assert.equal(adapter.launches.length, 0);
+    assert.equal(store.launchIntents()[0]?.status, "reserved");
+    assert.equal(store.securityAuditEvents().at(-1)?.decision, "denied");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("legacy launch intents without workspace identity load but cannot recover", async () => {
+  await harness(async (_path, store, adapter) => {
+    const legacy = await store.reserveLaunch({
+      idempotencyKey: "legacy-key",
+      requestHash: "a".repeat(64),
+      sessionId: "legacy-session",
+      batchId: "legacy-batch",
+      workerId: "legacy-worker",
+      attribution: { agent: "codex", task: "legacy" },
+    });
+    await adapter.launch({
+      idempotencyKey: legacy.intent.idempotencyKey,
+      prompt: "legacy",
+      workspacePath: "/legacy",
+      environment: {},
+      revalidateWorkspace: async () => undefined,
+    });
+    const recovered = await new LaunchCoordinator(store, adapter, authorizer).reconcile();
+    assert.deepEqual(recovered, []);
+    assert.equal(store.launchIntents()[0]?.status, "reserved");
+    assert.equal(store.securityAuditEvents().at(-1)?.reasonCode, "INTEGRITY_FAILURE");
   });
 });

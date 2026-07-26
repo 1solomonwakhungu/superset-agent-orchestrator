@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
 import { accessSync, constants, realpathSync } from "node:fs";
-import { realpath, stat } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import {
   agentPresetListSchema,
@@ -18,6 +17,8 @@ import {
   assertFixedArguments,
   assertPinnedExecutable,
   childEnvironment,
+  pinExecutable,
+  revalidateExecutable,
   safeErrorMessage,
   SecurityError,
   type WorkspaceInventory,
@@ -86,14 +87,9 @@ function discoverExecutable(): string {
 }
 
 export const runProcess: ProcessRunner = async (executable, args, timeoutMs) => {
-  const configuredProgram = assertPinnedExecutable(executable);
-  let program: string;
-  try {
-    program = assertPinnedExecutable(await realpath(configuredProgram));
-    if (!(await stat(program)).isFile()) throw new Error("not a regular file");
-  } catch (error) {
-    throw new SecurityError("POLICY_DENIED", "Executable cannot be pinned to a canonical regular file", false, { cause: error });
-  }
+  const pin = await pinExecutable(executable);
+  await revalidateExecutable(pin);
+  const program = pin.path;
   const argv = assertFixedArguments(args);
   return new Promise<ProcessResult>((resolve, reject) => {
       const child = spawn(program, argv, {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -15,6 +15,7 @@ import {
   auditField,
   childEnvironment,
   MAX_RESULT_BYTES,
+  RedactionPolicy,
   redactText,
   redactValue,
   RegisteredWorkspaceAuthorizer,
@@ -174,6 +175,30 @@ test("T-PATH-03 revalidation aborts when the validated directory is retargeted",
   });
 });
 
+test("T-PATH-03 revalidation re-reads registration and rejects removal, reassignment, remote retarget, and owner change", async () => {
+  await withDirectory(async (base) => {
+    const { projectPath, insidePath } = await layout(base);
+    const original = workspace({ worktreePath: insidePath, createdByUserId: "owner-1" });
+    let records = inventory([project(projectPath)], [original]);
+    const authorizer = new RegisteredWorkspaceAuthorizer(async () => records);
+
+    for (const mutate of [
+      () => { records = inventory([project(projectPath)], []); },
+      () => { records = inventory([project(projectPath, "project-2")], [{ ...original, projectId: "project-2" }]); },
+      () => { records = inventory([project(projectPath)], [{ ...original, hostId: "remote-host" }]); },
+      () => { records = inventory([project(projectPath)], [{ ...original, createdByUserId: "owner-2" }]); },
+      () => { records = inventory([project(join(base, "other"))], [original]); },
+    ]) {
+      records = inventory([project(projectPath)], [original]);
+      const grant = await authorizer.authorize("workspace-1");
+      mutate();
+      const error = await grant.revalidate().then(() => undefined, (caught: unknown) => caught);
+      assert.ok(error instanceof SecurityError);
+      assert.equal(error.code, "INTEGRITY_FAILURE");
+    }
+  });
+});
+
 test("T-PATH-03 a retargeted workspace audits the race and launches no child", async () => {
   await withStore(async (path) => {
     const store = new DurableStore(path);
@@ -231,6 +256,21 @@ test("T-CMD-02 only a pinned executable and a control-free argument vector can s
   }
   assert.deepEqual(assertFixedArguments(["workspaces", "list", "--local", "--json"]),
     ["workspaces", "list", "--local", "--json"]);
+});
+
+test("T-CMD-02 rejects group or other writable executables on POSIX", async (context) => {
+  if (process.platform === "win32") {
+    context.skip("POSIX mode bits are not available on Windows");
+    return;
+  }
+  await withDirectory(async (base) => {
+    const executable = join(base, "node-copy");
+    await copyFile(process.execPath, executable);
+    for (const mode of [0o775, 0o757]) {
+      await chmod(executable, mode);
+      await assert.rejects(runProcess(executable, ["--version"], 5_000), /provenance is not trusted/);
+    }
+  });
 });
 
 test("T-CMD-02 discovery output is bounded while the child is running", async () => {
@@ -329,6 +369,8 @@ test("T-SECRET-02 redaction covers keys, credential formats, cycles, and canarie
   assert.equal(redactText(`config ${pem} end`), "config [REDACTED:private-key] end");
   assert.equal(redactText(`leak ${TOKEN_CANARY}`, [TOKEN_CANARY]), "leak [REDACTED:token]");
   assert.equal(redactText("leak s3cret-literal", ["s3cret-literal"]), "leak [REDACTED:canary]");
+  assert.equal(redactText(`leak ${Buffer.from("s3cret-literal").toString("base64")}`, ["s3cret-literal"]), "leak [REDACTED:canary]");
+  assert.equal(redactText(`leak ${encodeURIComponent("s3cret/literal")}`, ["s3cret/literal"]), "leak [REDACTED:canary]");
   assert.equal(safeErrorMessage(new Error(`spawn failed for ${TOKEN_CANARY}`)), "spawn failed for [REDACTED:token]");
   assert.deepEqual(redactValue([{ password: "hunter2" }, 7, null]), [{ password: "[REDACTED:password]" }, 7, null]);
 });
@@ -339,8 +381,12 @@ test("T-AUDIT-02 audit fields are normalized, bounded, and injection safe", () =
   assert.equal(auditField(`requester ${TOKEN_CANARY}`), "requester [REDACTED:token]");
   assert.equal(auditField("\u0000\u0007 \t"), "[NORMALIZED:empty]");
   const bounded = auditField("x".repeat(600));
-  assert.equal(bounded.length, 256 + "[TRUNCATED]".length);
+  assert.equal(bounded.length, 256);
   assert.ok(bounded.endsWith("[TRUNCATED]"));
+  const unicodeBounded = auditField(`${"x".repeat(244)}😀${"y".repeat(20)}`);
+  assert.equal(unicodeBounded.length <= 256, true);
+  assert.doesNotMatch(unicodeBounded, /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+  assert.equal(auditField("bad\uD800value"), "bad�value");
 });
 
 test("T-SECRET-01 a launch prompt secret never reaches state, audit, or diagnostics", async () => {
@@ -379,6 +425,51 @@ test("T-SECRET-01 adapter result secrets are redacted before persistence", async
     const persisted = await readFile(path, "utf8");
     assert.doesNotMatch(persisted, new RegExp(TOKEN_CANARY));
     assert.match(persisted, /\[REDACTED:token\]/);
+  });
+});
+
+test("T-SECRET-01 configured literal canaries are enforced across metadata, diagnostics, audit, and results", async () => {
+  await withStore(async (path) => {
+    const literal = "low-entropy-canary-credential";
+    const store = new DurableStore(path, undefined, undefined, undefined, new RedactionPolicy([literal]));
+    const adapter = new FakeAgentAdapter([{
+      statuses: ["succeeded"],
+      result: { status: "succeeded", output: `output ${literal}` },
+    }]);
+    const service = new LaunchService(store, adapter, allowingAuthorizer());
+    const accepted = await service.accept(launchRequest({
+      batchName: `batch ${literal}`,
+      attribution: { agent: "codex", task: `task ${literal}` },
+      prompt: `prompt ${literal}`,
+      clientId: `client ${literal}`,
+    }));
+    await service.dispatchPending();
+    const { ResultCaptureService } = await import("../src/result-capture.js");
+    await new ResultCaptureService(store, adapter).collect(accepted.assignmentId, "delivery-canary");
+    await store.updateLaunch("missing", "reserved", { diagnostic: literal }).catch(() => undefined);
+
+    const persisted = await readFile(path, "utf8");
+    assert.doesNotMatch(persisted, new RegExp(literal));
+    assert.match(persisted, /\[REDACTED:canary\]/);
+  });
+});
+
+test("T-INPUT-01 rejects unsafe launch identities and metadata before mutation", async () => {
+  await withStore(async (path) => {
+    const store = new DurableStore(path);
+    const service = new LaunchService(store, new FakeAgentAdapter([]), allowingAuthorizer());
+    for (const request of [
+      launchRequest({ idempotencyKey: "x".repeat(257) }),
+      launchRequest({ idempotencyKey: "key\nforged" }),
+      launchRequest({ workspaceId: `workspace-${TOKEN_CANARY}` }),
+      launchRequest({ attribution: { agent: "codex\nforged", task: "task" } }),
+      launchRequest({ attribution: { agent: "codex", task: "x".repeat(1025) } }),
+    ]) {
+      await assert.rejects(service.accept(request), SecurityError);
+    }
+    const state = JSON.parse(await readFile(path, "utf8")) as DurableState;
+    assert.deepEqual(state.assignments, []);
+    assert.doesNotMatch(JSON.stringify(state), new RegExp(TOKEN_CANARY));
   });
 });
 

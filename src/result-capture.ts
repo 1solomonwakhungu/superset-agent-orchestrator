@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { AgentAdapter, RunResult, TerminalRunStatus } from "./agent-adapter.js";
-import { assertBoundedOptionalText, MAX_RESULT_BYTES, redactValue } from "./security.js";
+import { assertBoundedOptionalText, assertIdentifier, MAX_RESULT_BYTES } from "./security.js";
 import { DurableStore, type AgentResultClaim, type CapturedResult } from "./store.js";
 
 export type ResultDelivery =
@@ -45,11 +45,11 @@ export class ResultCaptureService {
   }
 
   async ingest(assignmentId: string, deliveryId: string, delivery: ResultDelivery) {
-    if (deliveryId.length === 0) throw new Error("deliveryId must not be empty");
+    assertIdentifier(deliveryId, "deliveryId");
     const assignment = await this.store.assignmentForResult(assignmentId);
     if (assignment.runId === undefined) throw new Error("Result ingestion requires a bound run ID");
     requireExactIdentities(assignment);
-    const claim = boundedClaim(redactValue(normalize(delivery)) as AgentResultClaim);
+    const claim = boundedClaim(this.store.redactValue(normalize(delivery)) as AgentResultClaim);
     const deliveryFingerprint = createHash("sha256").update(canonical({
       assignmentId: assignment.id,
       batchId: assignment.batchId,
