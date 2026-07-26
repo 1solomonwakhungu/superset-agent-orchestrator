@@ -39,8 +39,11 @@ const refused = (result: CancellationResult) => {
 
 async function launchedRun(adapter: FakeAgentAdapter, key: string): Promise<RunHandle> {
   return adapter.launch({
-    idempotencyKey: key, prompt: "work", workspacePath: "/tmp/workspace",
-    environment: {}, revalidateWorkspace: async () => undefined,
+    idempotencyKey: key,
+    prompt: "work",
+    workspacePath: "/tmp/workspace",
+    environment: {},
+    revalidateWorkspace: async () => undefined,
   });
 }
 

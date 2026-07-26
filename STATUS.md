@@ -1,5 +1,22 @@
 # Status
 
+## PER-345 final integration, 2026-07-26
+
+- Integrated companion PRs 42, 52, and 62 into final PR 28 and reconciled the
+  secured launch, persistence, lifecycle, cancellation, concurrency, resilience,
+  benchmark, and MCP surfaces with current `main`.
+- Preserved mandatory canonical workspace authorization, restricted child
+  environments, safe process arguments, typed security failures, tamper-evident
+  audits, bounded redaction, and reviewed tool registration across newer APIs.
+- Closed a cross-feature canary leak by redacting worker attribution before it is
+  persisted alongside an accepted launch.
+- Verification: `npm run check` passed 300/301 Node tests with one explicit live
+  Superset discovery skip, 92.30% statement and 85.31% branch coverage, 5/6 Python
+  tests with one declared model-dependent skip, schema no-diff, provenance and
+  research verification, plus `git diff --check`.
+- Next: push the resolved final PR head, verify exact-head CI, merge PR 28, and
+  synchronize the canonical Linear comment and status.
+
 ## PER-345 integration with current main, 2026-07-26
 
 - Integrated exact `origin/main` `76ac850d70b42cafeaaf2c058916b0d8f7e5abfe` into rewritten integration head `26351a418ab06e81457ddbc82e6fc36df484eb74`.
@@ -62,7 +79,6 @@
   159 tests with one explicit skip, coverage and generated-schema checks, and
   3/3 Python tests; lint, typecheck, build, and `git diff --check` passed.
 - Next: merge the companion PR into the primary PER-345 branch after CI.
-
 ## PER-344 post-merge recovery accounting, 2026-07-26
 
 - Confirmed merged implementation PR 23 and lineage restoration PR 55 are on
@@ -76,7 +92,6 @@
   coverage, schema, provenance, and research gates; `git diff --check` passed.
 - The current-main integrated tree passed Quality, bounded load, MiniCPM5, all
   four macOS/Linux Node 22/24 lanes, and the generated compatibility report.
-
 ## PER-342 cancellation, timeouts, and bounded wait
 
 - Added `LifecycleService` owning cancel-one, cancel-batch, deadline expiry, and
@@ -650,6 +665,8 @@ locally.
   95.35% lines, and Python 3.11 tests 3/3; the focused 71-test suite passed 20
   consecutive runs (1,420/1,420), with schema no-diff, routing, Markdown lint,
   compileall, and `git diff --check` also passing.
+
+PER-336 embedded persistence and migrations is complete and verified locally.
 
 PER-348 adversarial resilience regression coverage is complete locally.
 

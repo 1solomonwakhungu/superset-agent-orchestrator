@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { AgentAdapter, RunResult, TerminalRunStatus } from "./agent-adapter.js";
-import { assertBoundedOptionalText, assertIdentifier, MAX_RESULT_BYTES } from "./security.js";
 import { parseProviderResult, parseProviderStatus, ProviderProtocolError } from "./provider-protocol.js";
+import { assertBoundedOptionalText, assertIdentifier, MAX_RESULT_BYTES } from "./security.js";
 import { DurableStore, type AgentResultClaim, type CapturedResult } from "./store.js";
 
 export type ResultDelivery =
@@ -38,11 +38,18 @@ export class ResultCaptureService {
     if (state.status === "queued" || state.status === "running") return { duplicate: false };
     let result: RunResult | undefined;
     try {
-      result = parseProviderResult(await this.adapter.result({ runId: assignment.runId }));
+      const providerResult = await this.adapter.result({ runId: assignment.runId });
+      if (providerResult !== undefined && typeof providerResult === "object" && "output" in providerResult) {
+        const output = providerResult.output;
+        if (typeof output === "string") assertBoundedOptionalText(output, "result output", MAX_RESULT_BYTES);
+      }
+      result = parseProviderResult(providerResult);
     } catch (error) {
       return this.ingest(assignmentId, deliveryId, {
         kind: "malformed",
-        error: error instanceof Error ? error.message : String(error),
+        error: error instanceof Error && error.message.includes("exceeds the 4194304 byte limit")
+          ? "Provider result response was oversized"
+          : error instanceof Error ? error.message : String(error),
       });
     }
     if (result !== undefined && result.status !== state.status) {
