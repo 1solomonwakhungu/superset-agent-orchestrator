@@ -59,4 +59,11 @@
 - PR review fixes require the capability-vetted CLI version, keep reports
   outside the target worktree, and avoid claiming isolation after an
   asynchronous launch receipt without a supported completion API.
+- Companion safety slice now requires separate preflight/launch opt-ins,
+  validates exact live tools without model startup, bounds output and time,
+  kills timed-out process groups, redacts diagnostics, records deterministic
+  command attribution, and tests cleanup guarantees.
+- Companion verification: build and focused real-E2E harness tests pass 7/7;
+  the full suite passes 107/108 with only the pre-existing opt-in live Superset
+  smoke test unavailable in the isolated clone.
 - Next: deliver the commits through an unmerged pull request.
