@@ -963,6 +963,13 @@ export class DurableStore {
       }
       if (event.error !== undefined) assignment.error = event.error;
       if (event.errorCode !== undefined) assignment.errorCode = event.errorCode;
+      if (status === "failed") {
+        const worker = this.state.workers.find(({ id }) => id === assignment.sessionId);
+        if (worker === undefined) throw new Error(`Missing lifecycle worker for assignment: ${assignmentId}`);
+        worker.status = "failed";
+        worker.stopReason = "launch_error";
+        worker.completedAt = event.occurredAt;
+      }
       if (existingEvent === undefined) this.state.auditEvents.push(event);
       await this.persist();
       return { assignment: structuredClone(assignment), transitioned: true };
@@ -1025,6 +1032,20 @@ export class DurableStore {
         return { result: structuredClone(existingAttempt), duplicate: true };
       }
       results.push(input);
+      const worker = this.state.workers.find(({ id }) => id === input.sessionId);
+      if (worker === undefined) throw new Error(`Missing lifecycle worker for result: ${input.assignmentId}`);
+      if (!DurableStore.isTerminal(worker.status)) {
+        worker.status = input.claim.status === "succeeded" ? "succeeded"
+          : input.claim.status === "cancelled" ? "canceled" : "failed";
+        worker.result = structuredClone(input);
+        worker.completedAt = input.capturedAt;
+        worker.stopReason = input.claim.status === "succeeded" ? "succeeded"
+          : input.claim.status === "cancelled" ? "user_requested"
+            : input.claim.status === "malformed" ? "artifact_error" : "execution_error";
+        delete worker.preCancelStatus;
+        delete worker.lifecycleReconcilePending;
+        delete worker.cancellationDeliveryPending;
+      }
       await this.persist();
       return { result: structuredClone(input), duplicate: false };
     });

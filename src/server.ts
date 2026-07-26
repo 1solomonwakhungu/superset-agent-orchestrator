@@ -45,8 +45,6 @@ const unsupportedBackend: AgentAdapter = {
   cancel: async () => ({ status: "unsupported" }),
   resumeMetadata: async () => undefined,
 };
-const lifecycle = new LifecycleService(store, unsupportedBackend);
-
 function result(value: unknown) {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
@@ -81,6 +79,13 @@ async function main(): Promise<void> {
   }, Number(process.env.SUPERSET_ORCHESTRATOR_RECONCILE_MS ?? 30_000));
   reconciliationTimer.unref();
 
+  const providerExecutable = process.env.SUPERSET_ORCHESTRATOR_PROVIDER_EXECUTABLE;
+  const provider = providerExecutable === undefined ? undefined : new SupersetProcessAdapter({
+    executable: providerExecutable,
+    args: JSON.parse(process.env.SUPERSET_ORCHESTRATOR_PROVIDER_ARGS ?? "[]") as string[],
+    timeoutMs: Number(process.env.SUPERSET_ORCHESTRATOR_PROVIDER_TIMEOUT_MS ?? 30_000),
+  });
+  const lifecycle = new LifecycleService(store, provider ?? unsupportedBackend);
   let lifecycleSweep: Promise<void> | undefined;
   const deadlineTimer = setInterval(() => {
     if (lifecycleSweep !== undefined) return;
@@ -97,12 +102,6 @@ async function main(): Promise<void> {
   deadlineTimer.unref();
 
   const server = new McpServer({ name: "superset-agent-orchestrator", version: "0.1.0" });
-  const providerExecutable = process.env.SUPERSET_ORCHESTRATOR_PROVIDER_EXECUTABLE;
-  const provider = providerExecutable === undefined ? undefined : new SupersetProcessAdapter({
-    executable: providerExecutable,
-    args: JSON.parse(process.env.SUPERSET_ORCHESTRATOR_PROVIDER_ARGS ?? "[]") as string[],
-    timeoutMs: Number(process.env.SUPERSET_ORCHESTRATOR_PROVIDER_TIMEOUT_MS ?? 30_000),
-  });
   const launches = provider === undefined ? undefined : new LaunchService(store, provider);
   const capture = provider === undefined ? undefined : new ResultCaptureService(store, provider);
   if (launches !== undefined) await launches.dispatchPending();
@@ -171,9 +170,10 @@ async function main(): Promise<void> {
           }
         }
         const captured = (await store.resultsForSessions([sessionId]))[0];
+        const worker = await store.worker(sessionId);
         items.push({
           session_id: sessionId, assignment_id: assignment.id, batch_id: assignment.batchId,
-          status: assignment.status, attribution: assignment.attribution,
+          status: worker?.status ?? assignment.status, attribution: assignment.attribution,
           workspace_id: assignment.workspaceId, run_id: assignment.runId,
           ...(captured === undefined ? {} : { result: captured }),
           ...(assignment.error === undefined ? {} : {

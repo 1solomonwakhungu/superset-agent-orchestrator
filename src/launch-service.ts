@@ -62,17 +62,28 @@ export class LaunchService {
   }
 
   async launchBatch(request: AsynchronousBatchLaunchRequest): Promise<LaunchAcceptance[]> {
+    if (this.stopped) throw new Error("Launch service is stopped");
     const accepted = await this.acceptBatch(request);
     this.scheduleDispatch(0);
     return accepted;
   }
 
   async acceptBatch(request: AsynchronousBatchLaunchRequest): Promise<LaunchAcceptance[]> {
+    if (this.stopped) throw new Error("Launch service is stopped");
     if (request.assignments.length === 0 || request.assignments.length > 100) {
       throw new Error("A launch batch requires between 1 and 100 assignments");
     }
     if (new Set(request.assignments.map(({ idempotencyKey }) => idempotencyKey)).size !== request.assignments.length) {
       throw new Error("Batch assignment idempotency keys must be unique");
+    }
+    for (const item of request.assignments) {
+      const fullRequest = { ...item, clientId: request.clientId, batchName: request.batchName };
+      for (const [name, value] of Object.entries(fullRequest)) {
+        if (typeof value === "string" && value.length === 0) throw new Error(`${name} must not be empty`);
+      }
+      if (item.attribution.agent.length === 0 || item.attribution.task.length === 0) {
+        throw new Error("attribution requires non-empty agent and task values");
+      }
     }
     const acceptedAt = this.now().toISOString();
     const batchScope = scopedKey(request.clientId, request.idempotencyKey);
@@ -256,7 +267,7 @@ export class LaunchService {
         await this.store.recordLaunchEvent(
           assignment.id,
           "failed",
-          event(assignment.id, "launch_failed", failedAt, { error: message, errorCode: error.code }),
+          event(assignment.id, "launch_failed", failedAt, { error: message, errorCode: "LAUNCH_REJECTED" }),
         );
         return;
       }
