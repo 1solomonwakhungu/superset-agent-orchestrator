@@ -78,9 +78,11 @@ Recovery tools:
 
 Lifecycle tools:
 
-- `sessions_cancel` and `batches_cancel` persist cancellation intent before the
-  provider call. Repeated and concurrent requests issue exactly one stop command.
-  Unsupported backends return `CANCEL_UNSUPPORTED` without changing state.
+- `sessions_cancel` and `batches_cancel` persist one cancellation intent before
+  provider I/O and preserve the first reason. One active claimant performs each
+  attempt; unknown delivery may be retried through an idempotent provider stop
+  after restart. Unsupported backends return `CANCEL_UNSUPPORTED` without
+  changing state.
 - `batches_wait` waits at most 30 seconds and returns exact partial counts on
   timeout rather than an error.
 - `sessions_set_deadline` and `deadlines_enforce` expire overdue nonterminal
@@ -177,11 +179,11 @@ Discovery schema coverage runs offline. `test/fixtures/` holds sanitized Superse
 1.16.1 responses that are replayed through the real adapter, so `npm run verify`
 is deterministic on machines without the CLI installed.
 
-The live smoke test additionally runs the real CLI when it is installed. It is
-skipped only when the executable cannot be found at all; a CLI that is present
-but broken, unhealthy, or returning malformed responses still fails the suite. To
-require the live run, set `SUPERSET_ORCHESTRATOR_REQUIRE_LIVE_SMOKE=1` or point
-`SUPERSET_ORCHESTRATOR_EXECUTABLE` at a specific binary.
+The live smoke test runs only when `SUPERSET_DISCOVERY_SMOKE=1` or
+`SUPERSET_ORCHESTRATOR_REQUIRE_LIVE_DISCOVERY=1` is set. The latter makes a
+missing executable a failure. An executable selected through discovery or
+`SUPERSET_ORCHESTRATOR_EXECUTABLE` that is broken, unhealthy, or returns a
+malformed response also fails the opted-in test.
 
 ## Agency availability monitor
 

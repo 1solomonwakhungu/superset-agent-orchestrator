@@ -4,26 +4,25 @@ import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import type { AgentAdapter, LaunchRequest } from "../src/agent-adapter.js";
+import type { AgentAdapter } from "../src/agent-adapter.js";
 import { FakeAgentAdapter } from "../src/fake-agent-adapter.js";
 import { LaunchService, type AsynchronousLaunchRequest, type LaunchBoundary } from "../src/launch-service.js";
+import { childEnvironment } from "../src/security.js";
 import { DurableStore } from "../src/store.js";
+
+const workspacePath = "/tmp/per-348-fixture";
+const authorizer = {
+  authorize: async (workspaceId: string) => ({
+    workspaceId, projectId: "project-per-348", canonicalPath: workspacePath,
+    revalidate: async () => undefined,
+  }),
+};
 
 const request: AsynchronousLaunchRequest = {
   idempotencyKey: "per-348-race", clientId: "test", batchName: "PER-348",
   attribution: { agent: "fake", task: "race" }, prompt: "synthetic",
   workspaceId: "fixture",
 };
-const authorizer = {
-  authorize: async () => ({
-    workspaceId: "fixture", projectId: "project", canonicalPath: "/tmp/per-348-fixture",
-    revalidate: async () => undefined,
-  }),
-};
-const adapterRequest = (idempotencyKey: string): LaunchRequest => ({
-  idempotencyKey, prompt: "synthetic", workspacePath: "/tmp/fixture",
-  environment: {}, revalidateWorkspace: async () => undefined,
-});
 
 async function fixture(run: (path: string) => Promise<void>): Promise<void> {
   const directory = await mkdtemp(join(tmpdir(), "per-348-race-"));
@@ -163,7 +162,9 @@ test("clock rollback cannot strand an accepted launch or regress its materialize
     const adapter = new FakeAgentAdapter([{
       statuses: ["succeeded"], result: { status: "succeeded", output: "done" },
     }]);
-    const service = new LaunchService(new DurableStore(path), adapter, authorizer, () => times.shift() ?? new Date(0));
+    const service = new LaunchService(
+      new DurableStore(path), adapter, authorizer, () => times.shift() ?? new Date(0),
+    );
     const accepted = await service.accept(request);
     await service.dispatchPending();
 
@@ -208,8 +209,9 @@ test("acceptance evidence must identify the accepted assignment and event type",
       worker: { ...state.workers[0]!, id: "forged-session", sessionId: "forged-session", batchId: "forged-batch" },
       event: { ...state.auditEvents[0]!, id: "forged-event" },
       securityAudit: {
-        requesterId: "test", operation: "sessions_launch", decision: "allowed" as const,
-        reasonCode: "launch_accepted", correlationId: "forged-key", assignmentId: "forged-assignment",
+        requesterId: "forged-session", operation: "sessions_launch", decision: "allowed" as const,
+        reasonCode: "launch_accepted", correlationId: "forged-key", workspaceId: "fixture",
+        projectId: "project-per-348", assignmentId: "forged-assignment",
       },
     };
 
@@ -227,7 +229,10 @@ test("concurrent duplicate cancellation produces one terminal cancellation", asy
     statuses: ["running", "succeeded"],
     result: { status: "succeeded", output: "too late" },
   }]);
-  const handle = await adapter.launch(adapterRequest("cancel-race"));
+  const handle = await adapter.launch({
+    idempotencyKey: "cancel-race", prompt: "synthetic", workspacePath: "/tmp/fixture",
+    environment: childEnvironment(), revalidateWorkspace: async () => undefined,
+  });
   await Promise.all([adapter.cancel(handle, "operator"), adapter.cancel(handle, "duplicate")]);
 
   assert.deepEqual(await adapter.result(handle), { status: "cancelled", reason: "operator" });
@@ -239,7 +244,10 @@ test("cancellation arriving after terminal completion is inert", async () => {
     statuses: ["running", "succeeded"],
     result: { status: "succeeded", output: "authoritative" },
   }]);
-  const handle = await adapter.launch(adapterRequest("late-cancel"));
+  const handle = await adapter.launch({
+    idempotencyKey: "late-cancel", prompt: "synthetic", workspacePath: "/tmp/fixture",
+    environment: childEnvironment(), revalidateWorkspace: async () => undefined,
+  });
   await adapter.status(handle);
   await adapter.status(handle);
   await adapter.cancel(handle, "late");
