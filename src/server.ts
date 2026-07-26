@@ -86,6 +86,7 @@ async function main(): Promise<void> {
       `Unsupported platform ${process.platform}; supported platforms are darwin and linux. See docs/compatibility.md.`,
     );
   }
+  await store.recoverLifecycleDeliveryClaims();
   const reconciliation = await store.reconcile();
   console.error(`Startup reconciliation complete: ${JSON.stringify(reconciliation)}`);
   const reconciliationTimer = setInterval(() => {
@@ -396,8 +397,12 @@ async function main(): Promise<void> {
           items.push({
             session_id: id,
             error: contractError(
-              error instanceof BatchQueryError && error.code === "not_found" ? "SESSION_NOT_FOUND" : "STATE_UNAVAILABLE",
-              error instanceof BatchQueryError && error.code === "not_found" ? error.message : "Unable to persist the session deadline",
+              error instanceof BatchQueryError && error.code === "not_found"
+                ? "SESSION_NOT_FOUND"
+                : error instanceof BatchQueryError && error.code === "invalid_request"
+                  ? "INVALID_TRANSITION"
+                  : "STATE_UNAVAILABLE",
+              error instanceof BatchQueryError ? error.message : "Unable to persist the session deadline",
             ),
           });
         }
