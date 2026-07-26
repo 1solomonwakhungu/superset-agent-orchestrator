@@ -75,7 +75,7 @@ test("production MCP server rejects integration workspaces outside the configure
     const input = launchArguments(1);
     input.assignments[0]!.workspace_id = "..";
     const response = await call(harness.client, "provider_batches_launch", input);
-    assert.equal(response.error?.code, "PROVIDER_UNAVAILABLE");
+    assert.equal(response.error?.code, "POLICY_DENIED");
     assert.equal((await harness.calls()).filter(({ command }) => command === "launch").length, 0);
   });
 });
