@@ -4,6 +4,7 @@ import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { dirname } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import lockfile from "proper-lockfile";
 import { z } from "zod";
 import { auditField, RedactionPolicy, SecurityError, SECURITY_POLICY_VERSION } from "./security.js";
@@ -783,6 +784,7 @@ export class DurableStore {
     let claimed = false;
     const worker = await this.updateWorker(workerId, (candidate) => {
       if (DurableStore.isTerminal(candidate.status)) {
+        if (candidate.status === status && isDeepStrictEqual(candidate.result, options.result)) return;
         const retainedResult = options.result !== undefined && candidate.result === undefined;
         if (retainedResult) candidate.result = options.result;
         (candidate.lateObservations ??= []).push({ observedAt: at.toISOString(), status, retainedResult });
