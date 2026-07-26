@@ -5,6 +5,7 @@ import {
   CONTRACT_VERSION,
   MAX_BATCH_SIZE,
   MAX_WAIT_MS,
+  batchCancelResultSchema,
   batchGetResultSchema,
   batchLaunchRequestSchema,
   errorDefinitions,
@@ -170,6 +171,39 @@ test("bounded wait accepts zero and 30 seconds and represents timeout as data", 
   const counts = Object.fromEntries(sessionStateSchema.options.map((state) => [state, state === "running" ? 1 : 0]));
   const output = waitResultSchema.parse(envelope({ items: [{ batch_id: "batch-1", timed_out: true, counts }] }));
   assert.equal(output.data.items[0] && "timed_out" in output.data.items[0] ? output.data.items[0].timed_out : false, true);
+});
+
+test("batch cancellation models per-session outcomes rather than wait counts", () => {
+  const output = batchCancelResultSchema.parse(envelope({ items: [{
+    batch_id: "batch-1",
+    sessions: [
+      { session_id: "session-1", state: "canceled", stop_reason: "user_requested", changed: true },
+      {
+        session_id: "session-2",
+        error: {
+          code: "CANCEL_UNSUPPORTED",
+          layer: "provider",
+          message: "Cancellation is unavailable",
+          retryable: false,
+        },
+      },
+    ],
+  }] }));
+  assert.equal("sessions" in output.data.items[0]!, true);
+  assert.equal(batchCancelResultSchema.safeParse(envelope({ items: [{
+    batch_id: "batch-1",
+    timed_out: false,
+    counts: {},
+  }] })).success, false);
+
+  const sessions = Array.from({ length: 250 }, (_, index) => ({
+    session_id: `session-${index}`,
+    state: "canceled" as const,
+    stop_reason: "user_requested" as const,
+    changed: true,
+  }));
+  assert.equal(batchCancelResultSchema.parse(envelope({ items: [{ batch_id: "large", sessions }] }))
+    .data.items.length, 1);
 });
 
 test("typed errors have immutable layer and retry policy", () => {

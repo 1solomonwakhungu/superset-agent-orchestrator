@@ -120,15 +120,6 @@ export class LifecycleService {
         status: current.status,
       };
     }
-    if (current.runId === undefined) {
-      // No execution identity was ever bound, so no provider call can exist to race with.
-      const settled = await this.store.recordWorkerTerminal(sessionId, "canceled", {
-        stopReason: reason,
-        at: this.wallClockNow(),
-      });
-      return { sessionId, status: settled.status, ...(settled.stopReason === undefined ? {} : { stopReason: settled.stopReason }), changed: true };
-    }
-
     const intent = await this.store.requestWorkerCancellation(sessionId, reason, {
       ...(detail === undefined ? {} : { detail }),
       at: this.wallClockNow(),
@@ -142,7 +133,15 @@ export class LifecycleService {
         changed: false,
       };
     }
-    const handle = { runId: current.runId };
+    if (intent.local) {
+      return {
+        sessionId,
+        status: intent.worker.status,
+        ...(intent.worker.stopReason === undefined ? {} : { stopReason: intent.worker.stopReason }),
+        changed: true,
+      };
+    }
+    const handle = { runId: intent.worker.runId! };
     try {
       const outcome = await this.adapter.cancel(handle, detail ?? reason);
       if (outcome !== undefined && outcome.status === "unsupported") {
@@ -154,7 +153,7 @@ export class LifecycleService {
           status: restored.status,
         };
       }
-      return await this.settleFromProvider(sessionId, handle);
+      return await this.settleFromProvider(sessionId, handle, true);
     } catch (error) {
       // Delivery is unknown, so cancellation intent stays recorded and the session remains canceling.
       return {
@@ -190,21 +189,39 @@ export class LifecycleService {
       const { worker: settled, claimed } = await this.store.expireWorker(worker.id, { at: now });
       if (!claimed || !DurableStore.isTerminal(settled.status)) continue;
       let providerStopError: string | undefined;
-      if (this.adapter.cancellation === "supported" && worker.runId !== undefined) {
+      if (this.adapter.cancellation === "supported" && settled.runId !== undefined) {
         try {
-          await this.adapter.cancel({ runId: worker.runId }, "deadline_exceeded");
+          await this.adapter.cancel({ runId: settled.runId }, "deadline_exceeded");
         } catch (error) {
           providerStopError = error instanceof Error ? error.message : String(error);
         }
       }
       expired.push({
         sessionId: worker.id,
-        deadlineAt: worker.deadlineAt!,
+        deadlineAt: settled.deadlineAt!,
         status: settled.status,
         ...(providerStopError === undefined ? {} : { providerStopError }),
       });
     }
     return expired;
+  }
+
+  /** Advances accepted asynchronous cancellations from the provider's latest durable observation. */
+  async reconcileCancellations(): Promise<CancellationResult[]> {
+    const results: CancellationResult[] = [];
+    for (const worker of await this.store.cancelingWorkers()) {
+      try {
+        results.push(await this.settleFromProvider(worker.id, { runId: worker.runId! }));
+      } catch (error) {
+        results.push({
+          sessionId: worker.id,
+          error: "PROVIDER_UNAVAILABLE",
+          message: error instanceof Error ? error.message : String(error),
+          status: "canceling",
+        });
+      }
+    }
+    return results;
   }
 
   /**
@@ -238,8 +255,7 @@ export class LifecycleService {
         }
       }));
 
-      const known = items.filter((item): item is WaitItem => !("error" in item));
-      const allSatisfied = known.length > 0 && known.every((item) => !item.timedOut);
+      const allSatisfied = items.every((item) => "error" in item || !item.timedOut);
       const elapsed = this.monotonicNow() - started;
       if (allSatisfied || elapsed >= timeoutMs) return items;
       await this.sleep(Math.max(1, Math.min(pollIntervalMs, timeoutMs - elapsed)));
@@ -247,10 +263,20 @@ export class LifecycleService {
   }
 
   /** Reads the provider's own view once and, if it is terminal, records it as the winning outcome. */
-  private async settleFromProvider(sessionId: string, handle: { runId: string }): Promise<CancellationResult> {
+  private async settleFromProvider(
+    sessionId: string,
+    handle: { runId: string },
+    intentClaimed = false,
+  ): Promise<CancellationResult> {
     const observed = await this.adapter.status(handle);
     if (observed.status === "queued" || observed.status === "running") {
-      return { sessionId, status: "canceling", stopReason: "user_requested", changed: true };
+      const worker = await this.store.worker(sessionId);
+      return {
+        sessionId,
+        status: worker?.status ?? "canceling",
+        ...(worker?.stopReason === undefined ? {} : { stopReason: worker.stopReason }),
+        changed: intentClaimed,
+      };
     }
     const result = await this.adapter.result(handle);
     // `cancelled` keeps the reason already persisted with the intent; `succeeded` is classified by the
@@ -264,16 +290,18 @@ export class LifecycleService {
           kind: "malformed",
           error: `Adapter result status ${JSON.stringify(result.status)} did not match observed status ${JSON.stringify(observed.status)}`,
         });
-    const settled = await this.store.recordWorkerTerminal(sessionId, terminalStatusFor(observed.status), {
+    const terminal = terminalStatusFor(observed.status);
+    const options = {
       result: claim,
       ...(stopReason === undefined ? {} : { stopReason }),
       at: this.wallClockNow(),
-    });
+    };
+    const { worker: settled, claimed } = await this.store.settleWorkerCancellation(sessionId, terminal, options);
     return {
       sessionId,
       status: settled.status,
       ...(settled.stopReason === undefined ? {} : { stopReason: settled.stopReason }),
-      changed: true,
+      changed: claimed,
     };
   }
 }
@@ -281,4 +309,3 @@ export class LifecycleService {
 function terminalStatusFor(status: "succeeded" | "failed" | "cancelled"): TerminalWorkerStatus {
   return status === "cancelled" ? "canceled" : status;
 }
-

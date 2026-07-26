@@ -89,6 +89,32 @@ test("a session that was never dispatched is canceled locally without a provider
   assert.equal((await store.worker(id))!.completedAt !== undefined, true);
 }));
 
+test("cancellation uses a run bound after its initial read instead of canceling locally", async () => harness(async (store) => {
+  const created = await store.createBatch("bind-race", "client", [{ agent: "codex", task: "work" }]);
+  const id = created.sessions[0]!.id;
+  const cancellations: RunHandle[] = [];
+  const readWorker = store.worker.bind(store);
+  let firstRead = true;
+  store.worker = async (workerId) => {
+    const worker = await readWorker(workerId);
+    if (firstRead) {
+      firstRead = false;
+      await store.bindWorkerRun(id, "run-bound-during-cancel");
+    }
+    return worker;
+  };
+  const adapter = stub({
+    cancellation: "supported",
+    cancel: async (handle) => { cancellations.push(handle); return { status: "accepted" as const }; },
+    status: async (handle) => ({ ...handle, status: "cancelled" as const, updatedAt: "2026-07-25T00:00:00.000Z" }),
+    result: async () => ({ status: "cancelled" as const }),
+  });
+
+  const outcome = accepted(await new LifecycleService(store, adapter).cancelSession(id));
+  assert.equal(outcome.status, "canceled");
+  assert.deepEqual(cancellations, [{ runId: "run-bound-during-cancel" }]);
+}));
+
 test("a confirmed cancel keeps the partial output the run produced", async () => harness(async (store) => {
   const adapter = new FakeAgentAdapter([{ statuses: ["running", "succeeded"], result: { status: "succeeded", output: "never reached" } }]);
   const handle = await launchedRun(adapter, "partial");
@@ -122,6 +148,7 @@ test("completion that beat the cancel wins the race as succeeded_before_cancella
   const outcome = accepted(await service.cancelSession(id));
   assert.equal(outcome.status, "succeeded");
   assert.equal(outcome.stopReason, "succeeded_before_cancellation");
+  assert.equal(outcome.changed, true);
   assert.equal(adapter.cancellations.length, 0, "an already-settled run is never reported as canceled");
 
   const claim = (await store.worker(id))!.result as AgentResultClaim;
@@ -159,6 +186,67 @@ test("repeated cancellation is idempotent and preserves the first reason", async
   assert.equal(second.stopReason, "policy_revoked");
   assert.equal(second.changed, false);
   assert.equal(cancelCalls, 1);
+}));
+
+test("an accepted asynchronous cancellation is reconciled to its provider outcome", async () => harness(async (store) => {
+  const created = await store.createBatch("async-cancel", "client", [{ agent: "codex", task: "work" }]);
+  const id = created.sessions[0]!.id;
+  let statusCalls = 0;
+  await store.bindWorkerRun(id, "run-1");
+  const service = new LifecycleService(store, stub({
+    cancellation: "supported",
+    cancel: async () => ({ status: "accepted" as const }),
+    status: async (handle) => ({
+      ...handle,
+      status: statusCalls++ === 0 ? "running" as const : "cancelled" as const,
+      updatedAt: "2026-07-25T00:00:00.000Z",
+    }),
+    result: async () => ({ status: "cancelled" as const, output: "partial" }),
+  }));
+
+  assert.equal(accepted(await service.cancelSession(id, "policy_revoked")).status, "canceling");
+  const [outcome] = await service.reconcileCancellations();
+  assert.equal(accepted(outcome!).status, "canceled");
+  assert.equal(accepted(outcome!).stopReason, "policy_revoked");
+  assert.equal((await store.worker(id))!.status, "canceled");
+  assert.deepEqual((await store.worker(id))!.lateObservations, undefined);
+}));
+
+test("cancellation reconciliation isolates provider failures and retries later", async () => harness(async (store) => {
+  const created = await store.createBatch("async-retry", "client", [{ agent: "codex", task: "work" }]);
+  const id = created.sessions[0]!.id;
+  let statusCalls = 0;
+  await store.bindWorkerRun(id, "run-1");
+  const service = new LifecycleService(store, stub({
+    cancellation: "supported",
+    cancel: async () => { throw new Error("provider unavailable"); },
+    status: async (handle) => {
+      if (statusCalls++ === 0) throw new Error("still unavailable");
+      return { ...handle, status: "failed" as const, updatedAt: "2026-07-25T00:00:00.000Z" };
+    },
+    result: async () => ({ status: "failed" as const, error: "stopped late", retryable: false }),
+  }));
+
+  assert.equal(refused(await service.cancelSession(id)).status, "canceling");
+  assert.equal(refused((await service.reconcileCancellations())[0]!).error, "PROVIDER_UNAVAILABLE");
+  assert.equal((await store.worker(id))!.status, "canceling");
+  assert.equal(accepted((await service.reconcileCancellations())[0]!).status, "failed");
+}));
+
+test("concurrent cancellation reconciliation records one terminal transition", async () => harness(async (store) => {
+  const created = await store.createBatch("async-race", "client", [{ agent: "codex", task: "work" }]);
+  const id = created.sessions[0]!.id;
+  await store.bindWorkerRun(id, "run-1");
+  await store.requestWorkerCancellation(id);
+  const service = new LifecycleService(store, stub({
+    cancellation: "supported",
+    status: async (handle) => ({ ...handle, status: "cancelled" as const, updatedAt: "2026-07-25T00:00:00.000Z" }),
+    result: async () => ({ status: "cancelled" as const }),
+  }));
+
+  const outcomes = (await Promise.all([service.reconcileCancellations(), service.reconcileCancellations()])).flat();
+  assert.equal(outcomes.filter((outcome) => accepted(outcome).changed).length, 1);
+  assert.equal((await store.worker(id))!.lateObservations, undefined);
 }));
 
 test("concurrent cancels of one session issue exactly one provider stop", async () => harness(async (store) => {
@@ -202,9 +290,7 @@ test("a terminal outcome racing a cancel produces exactly one winner", async () 
   const worker = await store.worker(id);
   assert.equal(worker!.status, "succeeded");
   assert.deepEqual(worker!.result, { output: "won the race" });
-  assert.deepEqual(worker!.lateObservations, [
-    { observedAt: worker!.lateObservations![0]!.observedAt, status: "canceled", retainedResult: false },
-  ]);
+  assert.equal(worker!.lateObservations, undefined);
 }));
 
 test("concurrent deadline sweeps expire each session exactly once", async () => harness(async (store) => {
@@ -294,6 +380,20 @@ test("an expired deadline is a failed/deadline_exceeded outcome that stops the r
   const worker = await store.worker(id);
   assert.equal(worker!.status, "failed");
   assert.equal(worker!.stopReason, "deadline_exceeded");
+}));
+
+test("deadline claim rechecks a concurrently extended deadline", async () => harness(async (store) => {
+  const created = await store.createBatch("deadline-extended", "client", [{ agent: "codex", task: "work" }]);
+  const id = created.sessions[0]!.id;
+  const now = new Date("2026-07-25T01:00:01.000Z");
+  await store.setWorkerDeadline(id, new Date("2026-07-25T01:00:00.000Z"));
+  assert.equal((await store.overdueWorkers(now)).length, 1);
+  await store.setWorkerDeadline(id, new Date("2026-07-25T02:00:00.000Z"));
+
+  const { worker, claimed } = await store.expireWorker(id, { at: now });
+  assert.equal(claimed, false);
+  assert.equal(worker.status, "requested");
+  assert.equal(worker.deadlineAt, "2026-07-25T02:00:00.000Z");
 }));
 
 test("deadline enforcement is idempotent and never expires a terminal session", async () => harness(async (store) => {
@@ -434,6 +534,17 @@ test("a wait mixing known and unknown batches reports both without failing", asy
   assert.deepEqual(items[1], { batchId: "missing", error: "BATCH_NOT_FOUND", message: "Unknown batch ID: missing" });
 }));
 
+test("a wait containing only unknown batches returns without sleeping", async () => harness(async (store) => {
+  const service = new LifecycleService(store, new FakeAgentAdapter([]), async () => {
+    assert.fail("an all-error result is already resolved");
+  });
+
+  assert.deepEqual(await service.waitForBatches(["missing-a", "missing-b"]), [
+    { batchId: "missing-a", error: "BATCH_NOT_FOUND", message: "Unknown batch ID: missing-a" },
+    { batchId: "missing-b", error: "BATCH_NOT_FOUND", message: "Unknown batch ID: missing-b" },
+  ]);
+}));
+
 test("wait rejects durations outside the hard cap", async () => harness(async (store) => {
   const service = new LifecycleService(store, new FakeAgentAdapter([]));
   await assert.rejects(service.waitForBatches(["batch"], { timeoutMs: 30_001 }), /between 0 and 30000/);
@@ -448,6 +559,16 @@ test("a session is never attributed to two executions", async () => harness(asyn
   await store.bindWorkerRun(id, "run-1");
   await assert.rejects(store.bindWorkerRun(id, "run-2"), /already bound to another run/);
   assert.equal((await store.worker(id))!.runId, "run-1");
+}));
+
+test("a locally canceled session cannot later be bound to an execution", async () => harness(async (store) => {
+  const created = await store.createBatch("binding-cancel", "client", [{ agent: "codex", task: "work" }]);
+  const id = created.sessions[0]!.id;
+  const service = new LifecycleService(store, new FakeAgentAdapter([]));
+
+  assert.equal(accepted(await service.cancelSession(id)).status, "canceled");
+  await assert.rejects(store.bindWorkerRun(id, "late-run"), /Cannot bind a terminal worker/);
+  assert.equal((await store.worker(id))!.runId, undefined);
 }));
 
 test("cancellation requires a stop reason the state machine allows", async () => harness(async (store) => {

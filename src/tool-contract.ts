@@ -326,7 +326,33 @@ export const waitResultSchema = z.object({
   const ids = data.items.map(({ batch_id }) => batch_id);
   if (new Set(ids).size !== ids.length) context.addIssue({ code: "custom", message: "item batch_ids must be unique" });
 });
-export const batchCancelResultSchema = waitResultSchema;
+const cancellationItemSchema = z.union([
+  z.object({
+    session_id: identifier,
+    state: sessionStateSchema,
+    stop_reason: stopReasonSchema.optional(),
+    changed: z.boolean(),
+  }).strict(),
+  itemErrorSchema,
+]);
+export const batchCancelResultSchema = z.object({
+  ...envelopeFields,
+  data: z.object({
+    items: z.array(z.union([
+      z.object({
+        batch_id: identifier,
+        sessions: z.array(cancellationItemSchema).max(250),
+      }).strict().superRefine(({ sessions }, context) => {
+        const ids = sessions.map(({ session_id }) => session_id);
+        if (new Set(ids).size !== ids.length) context.addIssue({ code: "custom", message: "session_ids must be unique" });
+      }),
+      z.object({ batch_id: identifier, error: orchestratorErrorSchema }).strict(),
+    ])).min(1).max(MAX_BATCH_SIZE),
+  }).strict(),
+}).strict().superRefine(({ data }, context) => {
+  const ids = data.items.map(({ batch_id }) => batch_id);
+  if (new Set(ids).size !== ids.length) context.addIssue({ code: "custom", message: "item batch_ids must be unique" });
+});
 
 export const recoveryRequestSchema = pageRequestSchema;
 export const recoveryResultSchema = batchGetResultSchema;

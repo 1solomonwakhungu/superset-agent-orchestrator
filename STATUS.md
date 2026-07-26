@@ -32,6 +32,12 @@
   135/136 with 1 declared skip and exit code 0 with the CLI absent from `PATH`;
   focused lifecycle and race tests passed 33/33 across 10 consecutive runs;
   `npm run check` and `git diff --check` passed.
+- Addressed all five PR review findings: atomic local cancellation, asynchronous
+  provider reconciliation, locked deadline rechecks, immediate all-error waits,
+  and the dedicated batch-cancellation response schema.
+- Final verification: `npm run verify` passed 143 tests with 1 expected live-CLI
+  skip; `npm run check`, schema generation, strict routing verification, and
+  `git diff --check` passed.
 
 ## PER-258 agency availability monitoring
 
