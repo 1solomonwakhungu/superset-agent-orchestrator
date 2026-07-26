@@ -366,15 +366,17 @@ async function contendForWriterLease(
       Atomics.notify(barrier, 1, workerData.contenders);
     }
     while (Atomics.load(barrier, 1) === 0) Atomics.wait(barrier, 1, 0);
+    let outcome;
     try {
       db.prepare("INSERT INTO workspace_leases VALUES (?, 'workspace-1', 'writer', 'session-1', 'batch-1', ?, ?, NULL)")
         .run(workerData.leaseId, workerData.at, workerData.later);
-      parentPort.postMessage("acquired");
+      outcome = "acquired";
     } catch (error) {
-      parentPort.postMessage(String(error).includes("UNIQUE") ? "refused" : { error: String(error) });
+      outcome = String(error).includes("UNIQUE") ? "refused" : { error: String(error) };
     } finally {
       db.close();
     }
+    parentPort.postMessage(outcome);
   `, { eval: true, workerData: { path, leaseId, barrier, contenders, at: AT, later: LATER } });
   const outcome = await new Promise<string | { error: string }>((resolve, reject) => {
     const timer = setTimeout(() => {

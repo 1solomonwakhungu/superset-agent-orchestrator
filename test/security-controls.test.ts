@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile, stat, writeFile } from "node:fs/promises";
+import { chmod, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { OrchestratorStorage } from "../src/storage.js";
@@ -192,6 +192,7 @@ test("a corrupt registry is never silently replaced", async () => {
     const path = join(directory, "registry.sqlite");
     const corrupt = Buffer.from("SQLite format 3  but not really");
     await writeFile(path, corrupt);
+    await chmod(path, 0o600);
     assert.throws(() => new OrchestratorStorage(path), /Cannot open orchestrator registry/);
     assert.deepEqual(await readFile(path), corrupt);
   });
