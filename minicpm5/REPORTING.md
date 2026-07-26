@@ -6,10 +6,19 @@ harness implementation. The input contract is:
 ```json
 {
   "provenance": {
+    "contract_id": "disklm-eval-v1",
     "checkpoint_sha": "pinned checkpoint revision",
+    "tokenizer_hash": "tokenizer artifact hash",
+    "template_hash": "chat template hash",
     "environment_fingerprint": "hash of the captured runtime environment",
+    "environment_lock": "environment lock hash",
     "corpus_hash": "hash of the evaluation corpus manifest",
+    "dataset_revisions": { "reasoning": "pinned revision" },
     "harness_commit": "Git commit that produced the input",
+    "command_arguments": ["--decode", "greedy"],
+    "cache_state": "cold",
+    "raw_trace_hashes": ["trace hash"],
+    "direct_io": false,
     "decode_config": { "strategy": "greedy" }
   },
   "results": { "accuracy": 0.75 }

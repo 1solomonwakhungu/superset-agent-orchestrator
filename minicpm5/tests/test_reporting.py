@@ -27,10 +27,19 @@ def load_script(name: str):
 def source() -> dict:
     return {
         "provenance": {
+            "contract_id": "disklm-eval-v1",
             "checkpoint_sha": "checkpoint-a",
+            "tokenizer_hash": "tokenizer-a",
+            "template_hash": "template-a",
             "environment_fingerprint": "environment-a",
+            "environment_lock": "uv-lock-a",
             "corpus_hash": "corpus-a",
+            "dataset_revisions": {"reasoning": "revision-a"},
             "harness_commit": "commit-a",
+            "command_arguments": ["--decode", "greedy"],
+            "cache_state": "cold",
+            "raw_trace_hashes": ["trace-a"],
+            "direct_io": False,
             "decode_config": {"strategy": "greedy", "temperature": 0.0},
         },
         "results": {"accuracy": 0.1234567894, "slices": {"code": 0.75}},
@@ -150,5 +159,14 @@ def test_markdown_renders_optional_fingerprinted_provenance(source) -> None:
     script = load_script("report_result.py")
     source["provenance"]["hardware_class"] = "apple-m2"
     report, _ = script.build_report(source, 8)
-    assert "Hardware Class" in script.render_markdown(report)
+    assert '"hardware_class"' in script.render_markdown(report)
     assert "apple-m2" in script.render_markdown(report)
+
+
+def test_markdown_safely_renders_provenance_delimiters(source) -> None:
+    script = load_script("report_result.py")
+    source["provenance"]["decode_config"]["stop"] = "`stop|here`"
+    report, _ = script.build_report(source, 8)
+    markdown = script.render_markdown(report)
+    assert '"stop": "`stop|here`"' in markdown
+    assert markdown.count("```json") == 2
