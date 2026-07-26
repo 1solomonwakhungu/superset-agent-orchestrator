@@ -71,9 +71,9 @@ test("passes a pinned executable and fixed argument vectors to the runner", asyn
   const fake = fakeRunner();
   const runner: ProcessRunner = async (executable, args, timeoutMs) => {
     calls.push({ executable, args });
-    return fake.runner(executable, args, timeoutMs);
+    return fake.runner(executable, args.slice(2), timeoutMs);
   };
-  await new SupersetDiscoveryAdapter({ executable: process.execPath, runner }).discover();
+  await new SupersetDiscoveryAdapter({ executable: process.execPath, args: ["wrapper.mjs", "config.json"], runner }).discover();
   assert.equal(calls[0]?.executable, process.execPath);
-  assert.deepEqual(calls[0]?.args, ["--version"]);
+  assert.deepEqual(calls[0]?.args, ["wrapper.mjs", "config.json", "--version"]);
 });

@@ -97,9 +97,10 @@ async function main(): Promise<void> {
   reconciliationTimer.unref();
 
   const providerExecutable = process.env.SUPERSET_ORCHESTRATOR_PROVIDER_EXECUTABLE;
+  const providerArgs = JSON.parse(process.env.SUPERSET_ORCHESTRATOR_PROVIDER_ARGS ?? "[]") as string[];
   const provider = providerExecutable === undefined ? undefined : new SupersetProcessAdapter({
     executable: providerExecutable,
-    args: JSON.parse(process.env.SUPERSET_ORCHESTRATOR_PROVIDER_ARGS ?? "[]") as string[],
+    args: providerArgs,
     timeoutMs: Number(process.env.SUPERSET_ORCHESTRATOR_PROVIDER_TIMEOUT_MS ?? 30_000),
   });
   const lifecycle = new LifecycleService(store, provider ?? unsupportedBackend);
@@ -119,8 +120,10 @@ async function main(): Promise<void> {
   deadlineTimer.unref();
 
   const server = new McpServer({ name: "superset-agent-orchestrator", version: "0.1.0" });
+  const discovery = providerExecutable === undefined
+    ? undefined
+    : new SupersetDiscoveryAdapter({ executable: providerExecutable, args: providerArgs });
   const integrationToolsEnabled = process.env.SUPERSET_ORCHESTRATOR_ENABLE_PROVIDER_TEST_TOOLS === "1";
-  const discovery = providerExecutable === undefined ? undefined : new SupersetDiscoveryAdapter({ executable: providerExecutable });
   const integrationWorkspaceRoot = process.env.SUPERSET_ORCHESTRATOR_PROVIDER_TEST_WORKSPACE_ROOT;
   const workspaceAuthorizer: WorkspaceAuthorizer | undefined = integrationToolsEnabled && integrationWorkspaceRoot !== undefined
     ? {

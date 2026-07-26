@@ -1,12 +1,18 @@
 #!/usr/bin/env node
 import { Buffer } from "node:buffer";
 import { readFile, rename, rm, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import lockfile from "proper-lockfile";
 
 const [scenarioPath, statePath, command] = process.argv.slice(2);
 if (!command || !scenarioPath || !statePath) process.exit(64);
 
 const scenario = JSON.parse(await readFile(scenarioPath, "utf8"));
+const discoveryResponse = handleDiscovery(process.argv.slice(4));
+if (discoveryResponse !== undefined) {
+  process.stdout.write(`${typeof discoveryResponse === "string" ? discoveryResponse : JSON.stringify(discoveryResponse)}\n`);
+  process.exit(0);
+}
 const payload = JSON.parse(await readStdin());
 const release = await lockfile.lock(statePath, {
   realpath: false,
@@ -99,6 +105,34 @@ function handle(command, payload, state) {
     default:
       throw new ProviderFailure(64, `Unknown command: ${command}`);
   }
+}
+
+function handleDiscovery(args) {
+  const key = args.join(" ");
+  const root = dirname(scenarioPath);
+  const host = {
+    running: true, healthy: true, pid: process.pid, port: 48707,
+    endpoint: "http://127.0.0.1:48707", organizationId: "fake-org",
+    hostId: "fake-host", hostName: "fake-superset", uptimeSec: 1,
+  };
+  if (key === "--version") return "1.0.0";
+  if (key === "status --json") return host;
+  if (key === "projects list --local --json") return [{
+    id: "fake-project", name: "Fake project", slug: "fake-project",
+    repoCloneUrl: null, githubRepositoryId: null, setUp: "yes", path: root,
+  }];
+  if (key === "workspaces list --local --json") return Array.from({ length: 100 }, (_, index) => ({
+    id: `workspace-${index}`, organizationId: host.organizationId, projectId: "fake-project",
+    hostId: host.hostId, name: `Workspace ${index}`, branch: "main", type: "main",
+    createdByUserId: null, taskId: null, createdAt: "2000-01-01T00:00:00.000Z",
+    updatedAt: "2000-01-01T00:00:00.000Z", worktreePath: root, worktreeExists: true,
+    projectName: "Fake project", hostName: host.hostName,
+  }));
+  if (key === "agents list --local --json") return [{
+    id: "fake-agent", presetId: "fake-agent", iconId: null, label: "Fake agent",
+    command: "fake-agent", args: [], promptTransport: "stdin", promptArgs: [], env: {}, order: 0,
+  }];
+  return undefined;
 }
 
 async function loadState() {
