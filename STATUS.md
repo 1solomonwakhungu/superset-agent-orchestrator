@@ -4,14 +4,16 @@
 
 - Added 15 original, license-recorded held-out items across reasoning, code,
   typed tool use, generated long-context probes, and determinism slices.
-- Added a standard-library validator enforcing closed item schemas, unique stable
-  IDs, gold/verifier presence, approved licenses, file counts, byte hashes, and
-  the pinned manifest digest, with seven focused positive and negative tests.
+- Added a standard-library validator enforcing closed item and typed evidence
+  schemas, unique stable IDs, approved licenses, file counts, byte hashes, and
+  the pinned manifest digest, with ten focused positive and negative tests.
+- Review hardening added a deterministic `counter-v1` long-context materializer
+  and replaced a relative date placeholder with a schema-valid pinned date.
 - Full `npm run check` passed: 433/434 Node tests with one intentional skip, all
   coverage thresholds, 12/13 Python tests with one intentional skip, corpus,
   schema, provenance, and research gates.
-- Next: open the PER-365 pull request, pass exact-head CI/review, merge, and
-  reconcile the canonical Linear completion note.
+- PR #88 opened; next: pass fresh exact-head CI, merge, and reconcile the
+  canonical Linear completion note.
 
 ## PER-346 deadline claim serialization, 2026-07-26
 
