@@ -17,5 +17,6 @@ export * from "./security.js";
 export * from "./tool-security.js";
 export * from "./tool-contract.js";
 export * from "./discovery-parser.js";
+export * from "./experiment-registry.js";
 export * from "./superset-discovery.js";
 export * from "./superset-process-adapter.js";
