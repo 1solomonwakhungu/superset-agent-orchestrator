@@ -37,6 +37,7 @@ test("production MCP server persists attributed completion, failure, cancellatio
     ],
   }, async (harness) => {
     const launched = await launch(harness.client, 3);
+    assert.equal(launched.sessions.length, 3);
     assert.equal(new Set(launched.sessions.map(({ batchId }) => batchId)).size, 1);
     const [complete, failed, canceled] = launched.sessions;
     assert.ok(complete && failed && canceled);
