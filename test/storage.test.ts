@@ -30,6 +30,10 @@ function seed(storage: OrchestratorStorage, terminalAt = "2026-05-01T00:00:00.00
 }
 
 const permissions = async (path: string): Promise<number> => (await stat(path)).mode & 0o777;
+const assertOwnedByEffectiveUser = async (path: string): Promise<void> => {
+  const effectiveUid = process.geteuid?.();
+  if (effectiveUid !== undefined) assert.equal((await stat(path)).uid, effectiveUid);
+};
 
 function concurrentExportWorker(database: string, output: string): { worker: Worker; ready: Promise<void>; result: Promise<{ ok: boolean; error?: string }> } {
   const worker = new Worker(new URL("fixtures/concurrent-storage-export-worker.ts", import.meta.url), {
@@ -291,6 +295,9 @@ test("registry, sidecars, backups, and exports stay owner-only under a permissiv
         assert.equal(await permissions(`${path}-shm`), 0o600);
         assert.equal(await permissions(backupPath), 0o600);
         assert.equal(await permissions(exportPath), 0o600);
+        for (const artifact of [registryDirectory, backupDirectory, exportDirectory, path, `${path}-wal`, `${path}-shm`, backupPath, exportPath]) {
+          await assertOwnedByEffectiveUser(artifact);
+        }
       } finally { storage.close(); }
     } finally { process.umask(previousUmask); }
   });
