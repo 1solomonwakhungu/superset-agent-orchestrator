@@ -878,16 +878,16 @@ export class DurableStore {
     assignments: Assignment[];
     sessions: Session[];
     batch: Batch;
-    events: LaunchAuditEvent[];
     workers: Worker[];
+    events: LaunchAuditEvent[];
   }): Promise<{ assignments: Assignment[]; created: boolean }> {
     return this.withLock(async () => {
       await this.load();
       input.assignments.forEach((assignment) => assignmentSchema.parse(assignment));
       input.sessions.forEach((session) => sessionSchema.parse(session));
+      input.workers.forEach((worker) => workerSchema.parse(worker));
       batchSchema.parse(input.batch);
       input.events.forEach((auditEvent) => auditEventSchema.parse(auditEvent));
-      input.workers.forEach((worker) => workerSchema.parse(worker));
       const existing = input.assignments.map((assignment) =>
         this.state.assignments.find(({ idempotencyKey }) => idempotencyKey === assignment.idempotencyKey));
       if (existing.some((assignment) => assignment !== undefined)) {
