@@ -20,7 +20,9 @@ test("enforces the byte cap and never evicts the static hot set", () => {
 });
 
 test("admission control rejects a one-off scan instead of evicting a hot expert", () => {
-  const cache = new ExpertCache({ capacityBytes: 10, policy: "lfu" });
+  const cache = new ExpertCache({ capacityBytes: 128, policy: "lfu", staticExperts: [
+    { id: "reserved", sizeBytes: 118 },
+  ] });
   cache.access({ id: "hot", sizeBytes: 10 });
   for (let index = 0; index < 4; index += 1) cache.access({ id: "hot", sizeBytes: 10 });
   cache.access({ id: "scan", sizeBytes: 10 });
@@ -28,6 +30,21 @@ test("admission control rejects a one-off scan instead of evicting a hot expert"
   assert.equal(cache.has("hot"), true);
   assert.equal(cache.has("scan"), false);
   assert.equal(cache.snapshot().rejections, 1);
+});
+
+test("mixed-size admission compares total reuse value", () => {
+  const cache = new ExpertCache({ capacityBytes: 128, policy: "lru", staticExperts: [
+    { id: "reserved", sizeBytes: 108 },
+  ] });
+  cache.access({ id: "left", sizeBytes: 10 });
+  cache.access({ id: "right", sizeBytes: 10 });
+  cache.access({ id: "candidate", sizeBytes: 20, fetchCost: 2 });
+  cache.access({ id: "candidate", sizeBytes: 20, fetchCost: 2 });
+  cache.access({ id: "candidate", sizeBytes: 20, fetchCost: 2 });
+
+  assert.equal(cache.has("candidate"), true);
+  assert.equal(cache.has("left"), false);
+  assert.equal(cache.has("right"), false);
 });
 
 test("all policies remain bounded under a long mixed-size trace", () => {
@@ -71,4 +88,28 @@ test("rejects invalid configuration and inconsistent expert metadata", () => {
   const cache = new ExpertCache({ capacityBytes: 10, policy: "lru" });
   cache.access({ id: "a", sizeBytes: 5 });
   assert.throws(() => cache.access({ id: "a", sizeBytes: 6 }), /size changed/);
+
+  const evicted = new ExpertCache({ capacityBytes: 128, policy: "lru", admissionControl: false,
+    staticExperts: [{ id: "reserved", sizeBytes: 123 }] });
+  evicted.access({ id: "a", sizeBytes: 5 });
+  evicted.access({ id: "b", sizeBytes: 5 });
+  assert.throws(() => evicted.access({ id: "a", sizeBytes: 4 }), /size changed/);
+});
+
+test("hybrid policy computes recency at eviction time", () => {
+  const cache = new ExpertCache({ capacityBytes: 128, policy: "hybrid", admissionControl: false,
+    staticExperts: [{ id: "reserved", sizeBytes: 108 }] });
+  cache.access({ id: "old", sizeBytes: 10 });
+  cache.access({ id: "recent", sizeBytes: 10 });
+  cache.access({ id: "new", sizeBytes: 10 });
+  assert.deepEqual(cache.snapshot().residentIds, ["new", "recent", "reserved"]);
+});
+
+test("unique scans keep cache bookkeeping bounded in observable memory", () => {
+  const cache = new ExpertCache({ capacityBytes: 128, policy: "lfu" });
+  for (let index = 0; index < 10_000; index += 1) {
+    cache.access({ id: `scan-${index}`, sizeBytes: 128 });
+  }
+  assert.equal(cache.snapshot().residentBytes, 128);
+  assert.equal(cache.snapshot().residentIds.length, 1);
 });
