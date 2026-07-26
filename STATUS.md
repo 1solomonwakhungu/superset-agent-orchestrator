@@ -1,5 +1,61 @@
 # Status
 
+## PER-342 cancellation, timeouts, and bounded wait
+
+- Added `LifecycleService` owning cancel-one, cancel-batch, deadline expiry, and
+  bounded wait on top of the durable single-writer store.
+- Made cancellation honest: capability is checked before any mutation, a backend
+  that rejects a cancel it advertised is rolled back, an undispatched session is
+  canceled locally, and an unreachable provider returns `PROVIDER_UNAVAILABLE`
+  while retaining intent.
+- Made races deterministic: cancellation intent and deadline expiry are claimed
+  under the store lock, so concurrent callers issue exactly one provider stop and
+  report each transition once. Terminal state is monotonic and late results are
+  retained as audited late observations without regression.
+- Mapped deadlines to `failed`/`deadline_exceeded` per the authoritative state
+  machine instead of inventing a terminal state; canceled and failed sessions keep
+  partial output with exact completeness.
+- Added MCP tools `batches_cancel`, `batches_wait`, `sessions_set_deadline`, and
+  `deadlines_enforce`, plus a background deadline sweep.
+- Merged current `main` (`90cef0d`); the only conflict was additive `STATUS.md`
+  sections and both sides were kept.
+- Made offline verification deterministic: the live Superset smoke test now skips
+  only when the executable is genuinely absent (spawn `ENOENT`). A present but
+  broken, unhealthy, or malformed CLI still fails, and the run is mandatory when
+  `SUPERSET_ORCHESTRATOR_EXECUTABLE` is set or
+  `SUPERSET_ORCHESTRATOR_REQUIRE_LIVE_SMOKE=1`.
+- Kept real discovery schema coverage offline by recording sanitized Superset
+  1.16.1 responses in `test/fixtures/`, replaying them through the real adapter
+  against the same contract assertions, and pinning the real CLI key sets plus
+  observed optional-field variation.
+- Verification: `npm run verify` passed 136/136 with the Superset CLI present and
+  135/136 with 1 declared skip and exit code 0 with the CLI absent from `PATH`;
+  focused lifecycle and race tests passed 33/33 across 10 consecutive runs;
+  `npm run check` and `git diff --check` passed.
+- Addressed all five PR review findings: atomic local cancellation, asynchronous
+  provider reconciliation, locked deadline rechecks, immediate all-error waits,
+  and the dedicated batch-cancellation response schema.
+- Final verification: `npm run verify` passed 143 tests with 1 expected live-CLI
+  skip; `npm run check`, schema generation, strict routing verification, and
+  `git diff --check` passed.
+- Independent review fixed published-schema/runtime drift for cancellation and
+  wait, bounded and sanitized provider lifecycle calls, provider identity
+  validation, single-flight background sweeps, parallel batch controls, and a
+  production reconciliation path that retains results arriving after timeout.
+- Current verification: `npm run verify` passed 145 tests with 1 expected
+  live-CLI skip; focused lifecycle/MCP tests passed 42/42 across 10 runs (420
+  checks); typecheck, schema generation/diff, strict routing, and diff checks
+  passed.
+- Integrated signed quality-gate baseline `cbd44e1` and connected asynchronous
+  launch acceptance/binding to lifecycle workers, including cancellation while
+  provider launch is in flight. Added versioned deadline contracts, bounded
+  provider abort coverage, limited batch cancellation concurrency, sequential
+  reconciliation phases, protocol-identity errors, and pre-persist validation.
+- Post-integration verification: `npm ci` passed; `npm run check` passed 153/154
+  tests with 1 declared live smoke skip, 3/3 Python tests, schema no-diff, and
+  94.78% statement / 87.47% branch / 92.47% function coverage. Focused
+  launch/lifecycle/MCP tests passed 52/52 across 10 runs (520 checks), and
+  `git diff --check` passed.
 ## PER-351 performance and load validation
 
 - Added reproducible 100-session fake-backend and staged 30-agent controlled-load
@@ -34,7 +90,6 @@
   30-session dry-run launched 0 agents and withheld all 30 admissions.
 - Next: push the integrated head, verify exact-head GitHub CI, merge PR #35, and
   reconcile Linear.
-
 ## PER-343 workspace lease enforcement
 
 - Added transactional writer acquisition, monotonic generations, private fencing
@@ -540,6 +595,25 @@ Historical PER-336 quality-gate reconciliation before PR 26 merged:
 - Recorded discovery remains deterministic while live discovery requires explicit smoke opt-in or the required-live setting.
 - Verification: clean `npm ci` passed with 2 pre-existing moderate advisories; focused persistence tests passed 18/18; `npm run check` passed formatting, ESLint, typecheck, build, 119 tests (118 pass, 0 fail, 1 optional live skip), coverage, Python 3/3, and schema no-diff; `git diff --check` passed.
 - Next: commit and push the current-main integration, verify exact-head Quality and Compatibility checks and review threads, then leave PR 26 unmerged for independent verification.
+
+## PER-342 companion runtime protocol hardening
+
+- Added strict runtime schemas for provider status, result, and cancellation
+  responses, including closed objects, discriminated variants, timestamps,
+  execution identities, and resume metadata.
+- Added byte and field-length ceilings before provider payloads can reach the
+  lifecycle state machine or durable result storage.
+- Malformed status/cancel payloads now fail closed as provider protocol errors;
+  malformed terminal results are retained as bounded malformed claims without
+  invented output.
+- Added deterministic restart coverage for delivered cancellation and late
+  timeout-result reconciliation, plus malformed and oversized protocol tests.
+- Verification: focused protocol/lifecycle/result tests passed 51/51 in five
+  repeated runs; `npm run verify` passed 172 tests with 171 passing and one
+  optional live-discovery skip; Python passed 3/3; schema check and
+  `git diff --check` passed.
+- Next: deliver the companion PR into the primary PER-342 branch and verify its
+  exact-head CI.
 
 PER-336 security hotfix is complete locally after insecure PR 26 merged as `8989716`.
 
