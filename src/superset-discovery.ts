@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, open, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { childEnvironment } from "./child-environment.js";
 import {
   agentPresetListSchema,
   type AgentPreset,
@@ -62,18 +63,6 @@ export interface SupersetDiscoveryResult {
 
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const MINIMUM_SUPPORTED_MAJOR = 1;
-const CHILD_ENVIRONMENT_ALLOWLIST = [
-  "PATH", "HOME", "USERPROFILE", "TMPDIR", "TMP", "TEMP", "SystemRoot",
-  "ComSpec", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "COLORTERM", "NO_COLOR",
-  "FORCE_COLOR", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy",
-  "https_proxy", "no_proxy",
-] as const;
-
-function childEnvironment(): NodeJS.ProcessEnv {
-  return Object.fromEntries(CHILD_ENVIRONMENT_ALLOWLIST.flatMap((name) =>
-    process.env[name] === undefined ? [] : [[name, process.env[name]]]));
-}
-
 export const runProcess: ProcessRunner = async (executable, args, timeoutMs) => {
   const directory = await mkdtemp(join(tmpdir(), "superset-discovery-"));
   const stdoutPath = join(directory, "stdout");

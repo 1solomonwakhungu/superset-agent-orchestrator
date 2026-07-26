@@ -104,6 +104,57 @@ test("fake Superset covers every process adapter typed error", async () => {
   }
 });
 
+test("provider requests use stdin, exclude ambient secrets, and redact diagnostics", async () => {
+  const secret = "provider-secret-canary";
+  process.env.PROVIDER_SECRET_CANARY = secret;
+  try {
+    await withHarness({
+      launchError: secret,
+      captureEnvironment: ["PROVIDER_SECRET_CANARY"],
+      defaultScript: successScript(),
+    }, async ({ adapter, calls }) => {
+      const prompt = "p".repeat(200_000);
+      await assert.rejects(
+        adapter.launch({ idempotencyKey: "large", prompt, workspacePath: "/tmp/large" }),
+        (error: unknown) => {
+          assert.equal(error instanceof SupersetProcessError && error.code, "LAUNCH_REJECTED");
+          assert.equal(error instanceof Error && error.message.includes(secret), false);
+          return true;
+        },
+      );
+      const [call] = await calls();
+      assert.ok(call);
+      assert.equal(call.payload.prompt.length, 200_000);
+      assert.equal(call.argv.includes(prompt), false);
+      assert.equal(call.environment.PROVIDER_SECRET_CANARY, undefined);
+    });
+
+    await withHarness({
+      malformedCommands: ["find"], malformedStderr: secret, defaultScript: successScript(),
+    }, async ({ adapter }) => {
+      await assert.rejects(adapter.findByIdempotencyKey("one"), (error: unknown) => {
+        assert.equal(error instanceof SupersetProcessError && error.code, "PROVIDER_PROTOCOL_ERROR");
+        assert.equal(error instanceof Error && error.message.includes(secret), false);
+        return true;
+      });
+    });
+  } finally {
+    delete process.env.PROVIDER_SECRET_CANARY;
+  }
+});
+
+test("fake Superset serializes concurrent provider state transactions", async () => {
+  await withHarness({ defaultScript: successScript() }, async ({ adapter, calls }) => {
+    const handles = await Promise.all(Array.from({ length: 40 }, (_, index) => adapter.launch({
+      idempotencyKey: `concurrent-${index}`,
+      prompt: `prompt-${index}`,
+      workspacePath: `/tmp/${index}`,
+    })));
+    assert.equal(new Set(handles.map(({ runId }) => runId)).size, 40);
+    assert.equal((await calls()).filter(({ command }) => command === "launch").length, 40);
+  });
+});
+
 test("fake Superset completes and attributes a deterministic 100-session batch", async () => {
   await withHarness({ defaultScript: successScript() }, async ({ adapter, statePath, calls }) => {
     const store = new DurableStore(statePath);
@@ -148,7 +199,12 @@ async function withHarness(
   run: (harness: {
     adapter: SupersetProcessAdapter & { restart(): SupersetProcessAdapter };
     statePath: string;
-    calls(): Promise<Array<{ command: string }>>;
+    calls(): Promise<Array<{
+      command: string;
+      payload: any;
+      argv: string[];
+      environment: Record<string, string | undefined>;
+    }>>;
   }) => Promise<void>,
   timeoutMs = 10_000,
 ) {
@@ -159,14 +215,18 @@ async function withHarness(
   await writeFile(scenarioPath, JSON.stringify(scenario), "utf8");
   const makeAdapter = () => new SupersetProcessAdapter({
     executable: process.execPath,
-    args: [fixture],
-    env: { ...process.env, FAKE_SUPERSET_SCENARIO: scenarioPath, FAKE_SUPERSET_STATE: fakeStatePath },
+    args: [fixture, scenarioPath, fakeStatePath],
     timeoutMs,
   });
   const adapter = makeAdapter() as SupersetProcessAdapter & { restart(): SupersetProcessAdapter };
   adapter.restart = makeAdapter;
   const calls = async () => {
-    const state = JSON.parse(await readFile(fakeStatePath, "utf8")) as { calls: Array<{ command: string }> };
+    const state = JSON.parse(await readFile(fakeStatePath, "utf8")) as { calls: Array<{
+      command: string;
+      payload: any;
+      argv: string[];
+      environment: Record<string, string | undefined>;
+    }> };
     return state.calls;
   };
   try {
