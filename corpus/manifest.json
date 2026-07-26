@@ -17,9 +17,9 @@
       "sha256": "09d7ef89d32aa665eca2f4996e2237f98ad1d8409bf4627e4966ec16a5f918b4"
     },
     "reasoning.jsonl": {
-      "bytes": 1194,
+      "bytes": 1288,
       "items": 3,
-      "sha256": "c363d71cbff5ad2f4e4ac77adf539a4aeea363e840c5a4d336ad969b8a910613"
+      "sha256": "753ef4e80f0dd82b7853a8fe35653bbeab71e75faf08a2cafbd027e6259b1922"
     },
     "tool-use.jsonl": {
       "bytes": 3317,

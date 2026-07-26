@@ -9,15 +9,18 @@ import argparse
 def materialize(target_tokens: int, seed: int, sentinel: str, expected: str) -> str:
     """Return exactly target_tokens space-delimited ASCII lexical tokens.
 
-    The sentinel and expected value occupy the final two positions. Model-specific
-    tokenizer counts must be measured and recorded by the evaluation harness.
+    The sentinel and expected value occupy the two center positions so truncating
+    either side cannot preserve an edge-adjacent answer. Model-specific tokenizer
+    counts must be measured and recorded by the evaluation harness.
     """
     if target_tokens < 2:
         raise ValueError("target_tokens must be at least 2")
     if seed < 0 or not sentinel or not expected or any(" " in x for x in (sentinel, expected)):
         raise ValueError("seed and sentinel fields are invalid")
-    filler = (f"c{seed:x}-{index:x}" for index in range(target_tokens - 2))
-    return " ".join((*filler, sentinel, expected))
+    midpoint = target_tokens // 2
+    tokens = [f"c{seed:x}-{index:x}" for index in range(target_tokens - 2)]
+    tokens[midpoint:midpoint] = [sentinel, expected]
+    return " ".join(tokens)
 
 
 def main() -> int:
