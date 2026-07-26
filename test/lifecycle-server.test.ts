@@ -101,12 +101,21 @@ test("a bounded wait returns exact partial counts rather than hanging", async ()
   assert.equal(Date.now() - started < 5_000, true, "the wait respected its bound");
 }));
 
-test("a wait above the hard cap is rejected as an invalid argument", async () => withServer(async (client) => {
+test("the MCP connection recovers after rejecting a wait above the hard cap", async () => withServer(async (client) => {
+  const created = await createBatch(client, "invalid-wait-recovery", ["one"]);
   const response = await client.callTool({
     name: "batches_wait",
-    arguments: { contract_version: "1.0", batch_ids: ["batch"], timeout_ms: 30_001 },
+    arguments: { contract_version: "1.0", batch_ids: [created.batch.id], timeout_ms: 30_001 },
   });
   assert.equal(response.isError, true);
+
+  const recovered = waitResultSchema.parse(await call<unknown>(
+    client, "batches_wait", { contract_version: "1.0", batch_ids: [created.batch.id], timeout_ms: 0 },
+  ));
+  const item = recovered.data.items[0]!;
+  assert.equal("batch_id" in item ? item.batch_id : undefined, created.batch.id);
+  assert.equal("timed_out" in item ? item.timed_out : false, true);
+  assert.equal("counts" in item ? item.counts.requested : 0, 1);
 }));
 
 test("deadlines expire nonterminal sessions as failed/deadline_exceeded", async () => withServer(async (client) => {
