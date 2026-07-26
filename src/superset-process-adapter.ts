@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { z } from "zod";
+import { childEnvironment } from "./child-environment.js";
 import type {
   AgentAdapter,
   LaunchRequest,
@@ -86,12 +87,13 @@ export class SupersetProcessAdapter implements AgentAdapter {
   }
 
   private async invoke<T>(command: string, payload: unknown, schema: z.ZodType<T>): Promise<T> {
+    const input = JSON.stringify(payload);
     const { stdout, stderr } = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-      execFile(
+      const child = execFile(
         this.options.executable,
-        [...(this.options.args ?? []), command, JSON.stringify(payload)],
+        [...(this.options.args ?? []), command],
         {
-          env: this.options.env ?? process.env,
+          env: this.options.env ?? childEnvironment(),
           encoding: "utf8",
           timeout: this.options.timeoutMs ?? 30_000,
           maxBuffer: 1024 * 1024,
@@ -104,12 +106,14 @@ export class SupersetProcessAdapter implements AgentAdapter {
               ?? (processError.code === "ENOENT" || processError.killed || processError.signal
                 ? "PROVIDER_UNAVAILABLE"
                 : command === "launch" ? "LAUNCH_REJECTED" : "PROVIDER_UNAVAILABLE");
-            reject(new SupersetProcessError(code, declared?.message ?? (stderr.trim() || error.message), { cause: error }));
+            reject(new SupersetProcessError(code, `${command} provider command failed`, { cause: error }));
             return;
           }
           resolve({ stdout, stderr });
         },
       );
+      child.stdin?.on("error", () => undefined);
+      child.stdin?.end(input);
     });
 
     try {
@@ -117,7 +121,7 @@ export class SupersetProcessAdapter implements AgentAdapter {
     } catch (error) {
       throw new SupersetProcessError(
         "PROVIDER_PROTOCOL_ERROR",
-        `Invalid ${command} response${stderr.trim() ? `: ${stderr.trim()}` : ""}`,
+        `Invalid ${command} provider response`,
         { cause: error },
       );
     }

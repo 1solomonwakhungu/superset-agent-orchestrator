@@ -166,10 +166,8 @@ async function withServer(
     SUPERSET_ORCHESTRATOR_STATE: statePath,
     SUPERSET_ORCHESTRATOR_RECONCILE_MS: "60000",
     SUPERSET_ORCHESTRATOR_PROVIDER_EXECUTABLE: process.execPath,
-    SUPERSET_ORCHESTRATOR_PROVIDER_ARGS: JSON.stringify([fake]),
+    SUPERSET_ORCHESTRATOR_PROVIDER_ARGS: JSON.stringify([fake, scenarioPath, fakeStatePath]),
     SUPERSET_ORCHESTRATOR_PROVIDER_TIMEOUT_MS: String(timeoutMs),
-    FAKE_SUPERSET_SCENARIO: scenarioPath,
-    FAKE_SUPERSET_STATE: fakeStatePath,
   };
   let connection = await connect(env);
   const harness = {

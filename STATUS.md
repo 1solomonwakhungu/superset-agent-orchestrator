@@ -202,10 +202,18 @@ locally.
   semantic concurrent replay, terminal cancellation refusal, exact persisted
   attribution, and all four provider error codes with one failed command
   invocation and no hidden retry.
-- Verification: production MCP integration tests passed 4/4; `npm run verify`
-  passed 97/97 tests; the configuration contract passed 3/3; strict PER-323
-  routing and `git diff --check` passed.
+- Addressed all four PR review findings: provider requests now use stdin, child
+  processes receive only the safe environment allowlist, provider diagnostics
+  are bounded to stable non-sensitive messages, and fake-provider transactions
+  use interprocess locking with atomic replacement.
+- Added regression coverage for the 200,000-character prompt boundary, ambient
+  secret exclusion, diagnostic redaction, and 40 concurrent unique launches.
+- Verification: `npm run build` and `npm run check` passed; the full suite passed
+  98/99 tests with only the prohibited/unavailable real-Superset smoke test
+  failing; rerunning with that single test skipped passed 99/99. The configuration
+  contract passed 3/3, strict PER-323 routing and `git diff --check` passed, and
+  Markdown lint reported only pre-existing violations outside the PER-347 lines.
 - Remaining risk: this wiring exposes the implemented provider lifecycle subset;
   discovery, bounded wait, lease admission, and the complete published versioned
   contract remain owned by their production implementation tasks.
-- Next: commit, push, open the verified pull request, and report exact head checks.
+- Next: commit, push, and report exact PR head checks.
