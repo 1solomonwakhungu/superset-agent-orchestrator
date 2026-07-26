@@ -14,6 +14,8 @@ import {
   assertPinnedExecutable,
   auditField,
   childEnvironment,
+  MAX_REDACTION_DEPTH,
+  MAX_REDACTION_ENTRIES,
   MAX_RESULT_BYTES,
   RedactionPolicy,
   redactText,
@@ -380,6 +382,41 @@ test("T-SECRET-02 redaction covers keys, credential formats, cycles, and canarie
   assert.deepEqual(redactValue([{ password: "hunter2" }, 7, null]), [{ password: "[REDACTED:password]" }, 7, null]);
 });
 
+test("T-SECRET-02 redaction covers common text credentials and bounds hostile structures", () => {
+  const credentials = [
+    "password=hunter2", "api_key: sk_live_example", "AWS_SECRET_ACCESS_KEY=awsSecretValue",
+    `Slack ${["xoxb", "1234567890", "abcdefghijklmnop"].join("-")}`,
+    `npm ${["npm", "abcdefghijklmnopqrstuvwxyz1234567890"].join("_")}`,
+    "AWS ASIAIOSFODNN7EXAMPLE", "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature",
+  ];
+  for (const credential of credentials) {
+    const redacted = redactText(credential);
+    assert.match(redacted, /\[REDACTED:(?:secret|token)\]/, credential);
+    assert.notEqual(redacted, credential);
+  }
+
+  const wide = Array.from({ length: MAX_REDACTION_ENTRIES + 20 }, (_, index) => `value-${index}`);
+  const bounded = redactValue(wide) as unknown[];
+  assert.equal(bounded.length, MAX_REDACTION_ENTRIES + 1);
+  assert.equal(bounded.at(-1), "[REDACTED:entries]");
+
+  let deep: Record<string, unknown> = {};
+  const root = deep;
+  for (let index = 0; index < MAX_REDACTION_DEPTH + 5; index++) deep = deep.next = {};
+  assert.match(JSON.stringify(redactValue(root)), /\[REDACTED:depth\]/);
+
+  let accessed = false;
+  const hostile = Object.create(null) as Record<string, unknown>;
+  Object.defineProperty(hostile, "value", { enumerable: true, get: () => { accessed = true; return TOKEN_CANARY; } });
+  assert.deepEqual({ ...redactValue(hostile) as object }, { value: "[REDACTED:accessor]" });
+  assert.equal(accessed, false);
+  const pollution = Object.create(null) as Record<string, unknown>;
+  pollution.__proto__ = { polluted: true };
+  const safePollution = redactValue(pollution) as Record<string, unknown>;
+  assert.equal(Object.getPrototypeOf(safePollution), Object.prototype);
+  assert.deepEqual(safePollution.__proto__, { polluted: true });
+});
+
 test("T-AUDIT-02 audit fields are normalized, bounded, and injection safe", () => {
   assert.equal(auditField("client\r\nnot ok 99 - forged"), "client not ok 99 - forged");
   assert.equal(auditField("client\u001b[31mred\u001b[0m"), "clientred");
@@ -392,6 +429,33 @@ test("T-AUDIT-02 audit fields are normalized, bounded, and injection safe", () =
   assert.equal(unicodeBounded.length <= 256, true);
   assert.doesNotMatch(unicodeBounded, /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
   assert.equal(auditField("bad\uD800value"), "bad�value");
+  assert.equal(auditField("allow\u202edeny\u202c\u200b\ufeff"), "allowdeny");
+});
+
+test("T-INPUT-01 persisted schemas reject unknown fields at every security boundary", async () => {
+  await withStore(async (path) => {
+    const store = new DurableStore(path);
+    await store.appendSecurityAudit({
+      requesterId: "client-1", operation: "sessions_launch", decision: "allowed",
+      reasonCode: "launch_intent", correlationId: "operation-1",
+    });
+    const valid = JSON.parse(await readFile(path, "utf8")) as DurableState & Record<string, unknown>;
+    valid.unexpected = TOKEN_CANARY;
+    await writeFile(path, JSON.stringify(valid), "utf8");
+    await assert.rejects(new DurableStore(path).reconcile(), /Unrecognized key/);
+  });
+
+  await withStore(async (path) => {
+    const store = new DurableStore(path);
+    await store.appendSecurityAudit({
+      requesterId: "client-1", operation: "sessions_launch", decision: "allowed",
+      reasonCode: "launch_intent", correlationId: "operation-1",
+    });
+    const invalid = JSON.parse(await readFile(path, "utf8")) as DurableState;
+    (invalid.securityAuditEvents![0] as unknown as Record<string, unknown>).credential = TOKEN_CANARY;
+    await writeFile(path, JSON.stringify(invalid), "utf8");
+    await assert.rejects(new DurableStore(path).reconcile(), /Unrecognized key/);
+  });
 });
 
 test("T-SECRET-01 a launch prompt secret never reaches state, audit, or diagnostics", async () => {
