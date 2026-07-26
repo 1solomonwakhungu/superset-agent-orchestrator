@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import { Buffer } from "node:buffer";
 import { createHash, randomUUID } from "node:crypto";
 import { access, constants, mkdir, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { resourceUsage } from "node:process";
+import { performance } from "node:perf_hooks";
+import { clearTimeout, setTimeout } from "node:timers";
 import { fileURLToPath } from "node:url";
 
 const root = await realpath(resolve(dirname(fileURLToPath(import.meta.url)), ".."));
