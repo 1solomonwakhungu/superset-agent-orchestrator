@@ -13,3 +13,9 @@ test/**/*.d.ts
 *.tmp
 evidence/per-351/*.json
 evidence/per-351/*.md
+artifacts/per-351-ci/
+artifacts/per-351-local/
+.venv/
+minicpm5/artifacts/
+minicpm5/env/captures/*.md
+!minicpm5/env/captures/.gitkeep
