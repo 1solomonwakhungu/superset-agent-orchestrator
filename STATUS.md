@@ -1,5 +1,20 @@
 # Status
 
+## PER-345 companion state/auth/hash hardening, 2026-07-26
+
+- Added fail-closed absolute state-path checks for a dedicated owner-only `0700`
+  directory and existing owner-only `0600` regular state file, rejecting symlink,
+  nonregular, permissive, and wrong-owner objects before lock/read/write boundaries.
+- Added exact external Superset worktree grants bound to workspace ID, project ID,
+  and canonical path while retaining local registration, owner, path, device, and
+  inode revalidation.
+- Added domain-separated recursive canonical launch-request hashing and adversarial
+  tests for insertion-order equivalence, exact grants, identity drift, retargeting,
+  state permissions, symlinks, nonregular files, and relative paths.
+- Verification: focused security/idempotency tests passed 52/52; `npm run verify`
+  passed 165 tests with one explicit skip, coverage, schema, and Python checks.
+- Next: deliver the companion PR into the primary PER-345 branch and verify its CI.
+
 ## PER-345 companion redaction hardening, 2026-07-26
 
 - Added bounded structured redaction with 20-level and 1,000-entry limits,

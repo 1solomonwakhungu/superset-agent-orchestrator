@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
-import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { open, readFile, rename, rm } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { dirname } from "node:path";
 import lockfile from "proper-lockfile";
 import { z } from "zod";
 import { auditField, RedactionPolicy, SecurityError, SECURITY_POLICY_VERSION } from "./security.js";
+import { assertPrivateStatePath } from "./state-path.js";
 
 export type WorkerStatus = "requested" | "running" | "succeeded" | "failed" | "unknown_outcome";
 export type DiagnosticKind = "orphan" | "unknown_outcome" | "missing_result";
@@ -794,6 +795,7 @@ export class DurableStore {
   }
 
   private async load(): Promise<void> {
+    await assertPrivateStatePath(this.path);
     try {
       const parsed: unknown = JSON.parse(await readFile(this.path, "utf8"));
       this.state = stateSchema.parse(parsed) as DurableState;
@@ -908,7 +910,7 @@ export class DurableStore {
   }
 
   private async persist(): Promise<void> {
-    await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
+    await assertPrivateStatePath(this.path);
     const temporaryPath = `${this.path}.${process.pid}.${randomUUID()}.tmp`;
     const file = await open(temporaryPath, "wx", 0o600);
     try {
@@ -932,7 +934,7 @@ export class DurableStore {
   }
 
   private async withLock<T>(operation: () => Promise<T>): Promise<T> {
-    await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
+    await assertPrivateStatePath(this.path);
     const release = await lockfile.lock(this.path, {
       realpath: false,
       stale: 10_000,

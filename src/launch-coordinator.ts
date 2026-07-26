@@ -203,7 +203,7 @@ export class LaunchCoordinator {
   }
 
   static requestHash(request: AttributedLaunchRequest): string {
-    const canonical = JSON.stringify({
+    const canonical = canonicalJson({
       sessionId: request.sessionId,
       batchId: request.batchId,
       workerId: request.workerId,
@@ -212,8 +212,21 @@ export class LaunchCoordinator {
       workspaceId: request.workspaceId,
       resume: request.resume ?? null,
     });
-    return createHash("sha256").update(canonical).digest("hex");
+    return createHash("sha256").update("launch-request:v1\0").update(canonical).digest("hex");
   }
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
+  if (typeof value === "number" && Number.isFinite(value)) return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
+    return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`).join(",")}}`;
+  }
+  throw new SecurityError("INVALID_ARGUMENT", "Launch request contains an unsupported hash value");
 }
 
 function sanitizedError(store: DurableStore, error: unknown): Error {
