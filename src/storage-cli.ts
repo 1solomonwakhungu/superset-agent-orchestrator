@@ -30,8 +30,7 @@ export function runStorageCommand(args: string[]): number {
       if (!outputPath) throw new Error("--output is required");
       if (parsed.size !== 2) throw new Error("export only accepts --database and --output");
       if (resolve(databasePath) === resolve(outputPath)) throw new Error("Export path must differ from the live registry");
-      const storage = new OrchestratorStorage(databasePath);
-      try { storage.exportJson(outputPath); } finally { storage.close(); }
+      OrchestratorStorage.exportJson(databasePath, outputPath);
       process.stdout.write(`${outputPath}\n`);
       return 0;
     }

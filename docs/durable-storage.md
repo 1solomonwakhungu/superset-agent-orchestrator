@@ -39,7 +39,7 @@ Cleanup is transactional and conservative:
 - Expired results lose response text and artifact payloads.
 - Assignment, session, result, batch, requester, workspace, timestamps, states, and stop reasons remain for attribution.
 - Events are never deleted or changed.
-- Expired or released workspace leases are deleted.
+- Released workspace leases are deleted. Expiry alone never releases or deletes a writer lease; reconciliation must first prove release.
 - Idempotency records are deleted after their explicit expiry or configured maximum age.
 - A `retention.cleanup_completed` event records cleanup counts.
 

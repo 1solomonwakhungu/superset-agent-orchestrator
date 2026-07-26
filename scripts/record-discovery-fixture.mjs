@@ -70,8 +70,12 @@ function createRedactor() {
     `${String(n).padStart(32, "0")}`);
 
   return function redact(node, key) {
-    if (Array.isArray(node)) return node.map((item) => redact(item, key));
+    if (Array.isArray(node)) {
+      if (key === "args" || key === "promptArgs") return node.map((item, index) => typeof item === "string" ? `recorded-arg-${index + 1}` : redact(item, key));
+      return node.map((item) => redact(item, key));
+    }
     if (node !== null && typeof node === "object") {
+      if (key === "env") return Object.fromEntries(Object.keys(node).map((name) => [name, "recorded-secret"]));
       return Object.fromEntries(Object.entries(node).map(([name, value]) => [name, redact(value, name)]));
     }
     if (typeof node !== "string") return node;
@@ -79,6 +83,7 @@ function createRedactor() {
     if (LABEL_KEYS.has(key)) return pseudonym(key, node, (n) => `recorded-${key.toLowerCase()}-${n}`);
     if (PATH_KEYS.has(key)) return pseudonym("path", node, (n) => `/recorded/workspace-${n}`);
     if (key === "repoCloneUrl") return pseudonym("repo", node, (n) => `https://github.com/recorded-org/recorded-repo-${n}`);
+    if (key === "command") return pseudonym("command", node, (n) => `recorded-command-${n}`);
     return node;
   };
 }

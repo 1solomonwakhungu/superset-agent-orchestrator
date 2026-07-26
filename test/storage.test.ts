@@ -104,8 +104,12 @@ test("cleanup redacts payloads but preserves attribution and immutable history",
         "lease-1", "workspace-1", "writer", "session-1", "batch-1", "2026-05-01T00:00:00.000Z", "2026-05-02T00:00:00.000Z", null,
       );
       assert.deepEqual(storage.cleanup(new Date("2026-07-24T00:00:00.000Z")), {
-        assignmentsRedacted: 1, resultsRedacted: 1, idempotencyDeleted: 1, leasesDeleted: 1,
+        assignmentsRedacted: 1, resultsRedacted: 1, idempotencyDeleted: 1, leasesDeleted: 0,
       });
+      assert.equal(storage.database.prepare("SELECT id FROM workspace_leases").get()?.id, "lease-1");
+      assert.throws(() => storage.database.prepare("INSERT INTO workspace_leases VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
+        "lease-2", "workspace-1", "writer", "session-1", "batch-1", "2026-07-24T00:00:00.000Z", "2026-07-25T00:00:00.000Z", null,
+      ), /UNIQUE/);
       assert.equal(storage.database.prepare("SELECT prompt FROM assignments").get()?.prompt, null);
       assert.equal(storage.database.prepare("SELECT body FROM results").get()?.body, null);
       assert.equal(storage.database.prepare("SELECT requester FROM batches").get()?.requester, "solomon");
@@ -141,5 +145,51 @@ test("corruption fails closed without replacing the original bytes", async () =>
     await writeFile(path, corrupt);
     assert.throws(() => new OrchestratorStorage(path), /Cannot open orchestrator registry/);
     assert.deepEqual(await readFile(path), corrupt);
+  });
+});
+
+test("startup and integrity checks reject altered schema definitions", async () => {
+  await temporaryDirectory((directory) => {
+    const path = join(directory, "registry.sqlite");
+    const storage = new OrchestratorStorage(path);
+    storage.close();
+    const mutation = new DatabaseSync(path);
+    mutation.exec("DROP TRIGGER events_no_update; CREATE TRIGGER events_no_update BEFORE UPDATE ON events BEGIN SELECT 1; END;");
+    mutation.close();
+    const report = OrchestratorStorage.checkIntegrity(path);
+    assert.equal(report.ok, false);
+    assert.match(report.schemaErrors.join("\n"), /definition mismatch for trigger events_no_update/);
+    assert.throws(() => new OrchestratorStorage(path), /schema validation failed/);
+  });
+});
+
+test("read-only export rejects an older schema without upgrading it", async () => {
+  await temporaryDirectory((directory) => {
+    const path = join(directory, "registry.sqlite");
+    const storage = new OrchestratorStorage(path);
+    storage.rollback(1, join(directory, "backup.sqlite"));
+    storage.close();
+    assert.throws(() => OrchestratorStorage.exportJson(path, join(directory, "export.json")), /expected schema version 2, found 1/);
+    const source = new DatabaseSync(path, { readOnly: true });
+    assert.equal(source.prepare("SELECT MAX(version) version FROM schema_migrations").get()?.version, 1);
+    assert.equal(source.prepare("SELECT COUNT(*) count FROM sqlite_schema WHERE name = 'workspace_leases'").get()?.count, 0);
+    source.close();
+  });
+});
+
+test("startup rejects an altered prior schema before applying migrations", async () => {
+  await temporaryDirectory((directory) => {
+    const path = join(directory, "registry.sqlite");
+    const storage = new OrchestratorStorage(path);
+    storage.rollback(1, join(directory, "backup.sqlite"));
+    storage.close();
+    const mutation = new DatabaseSync(path);
+    mutation.exec("DROP TRIGGER events_no_delete; CREATE TRIGGER events_no_delete BEFORE DELETE ON events BEGIN SELECT 1; END;");
+    mutation.close();
+    assert.throws(() => new OrchestratorStorage(path), /schema validation failed before migration/);
+    const source = new DatabaseSync(path, { readOnly: true });
+    assert.equal(source.prepare("SELECT MAX(version) version FROM schema_migrations").get()?.version, 1);
+    assert.equal(source.prepare("SELECT COUNT(*) count FROM sqlite_schema WHERE name = 'workspace_leases'").get()?.count, 0);
+    source.close();
   });
 });
