@@ -365,7 +365,13 @@ function validateSchema(database: DatabaseSync, report: IntegrityReport, expecte
     else if (actual.get(object) !== sql) report.schemaErrors.push(`definition mismatch for ${object.replace(":", " ")}`);
   }
   for (const object of actual.keys()) {
-    if (!expected.has(object)) report.schemaErrors.push(`unexpected schema object ${object}`);
+    if (!expected.has(object)) {
+      // The generation ledger deliberately survives a v3 rollback so a later
+      // upgrade can never reuse authority held by a stale writer.
+      const durableLedger = expectedVersion < 3 && object === "table:workspace_fencing"
+        && actual.get(object) === expectedSchemaDefinitions(3).get(object);
+      if (!durableLedger) report.schemaErrors.push(`unexpected schema object ${object}`);
+    }
   }
 }
 
