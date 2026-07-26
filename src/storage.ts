@@ -648,6 +648,9 @@ export class OrchestratorStorage {
 
   /** Freezes a lease whose evidence is inconclusive. Quarantine denies new writers. */
   quarantineWriterLease(observed: WorkspaceLeaseStatus, reason: string, actor: string, now = new Date()): void {
+    if (observed.state !== "active" && observed.state !== "releasing") {
+      throw new LeaseStateCorruptError("Only an active or releasing lease can be quarantined");
+    }
     this.transaction(() => {
       const row = this.database.prepare(`UPDATE workspace_leases SET state = 'quarantined',
         quarantine_reason = ?, row_version = row_version + 1
