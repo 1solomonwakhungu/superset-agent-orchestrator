@@ -1,4 +1,10 @@
 import type { AgentAdapter } from "./agent-adapter.js";
+import {
+  parseProviderCancellation,
+  parseProviderResult,
+  parseProviderStatus,
+  ProviderProtocolError,
+} from "./provider-protocol.js";
 import { normalize } from "./result-capture.js";
 import {
   BatchQueryError,
@@ -155,7 +161,9 @@ export class LifecycleService {
     }
     const handle = { runId: intent.worker.runId };
     try {
-      const outcome = await this.providerCall((signal) => this.adapter.cancel(handle, detail ?? reason, signal));
+      const outcome = parseProviderCancellation(await this.providerCall(
+        (signal) => this.adapter.cancel(handle, detail ?? reason, signal),
+      ));
       if (outcome !== undefined && outcome.status === "unsupported") {
         const restored = await this.store.clearWorkerCancellation(sessionId);
         return {
@@ -198,10 +206,12 @@ export class LifecycleService {
       let providerStopError: string | undefined;
       if (this.adapter.cancellation === "supported" && settled.runId !== undefined) {
         try {
-          await this.providerCall((signal) => this.adapter.cancel({ runId: settled.runId! }, "deadline_exceeded", signal));
+          parseProviderCancellation(await this.providerCall(
+            (signal) => this.adapter.cancel({ runId: settled.runId! }, "deadline_exceeded", signal),
+          ));
           await this.settleFromProvider(worker.id, { runId: settled.runId });
-        } catch {
-          providerStopError = PROVIDER_UNAVAILABLE_MESSAGE;
+        } catch (error) {
+          providerStopError = error instanceof ProviderProtocolError ? error.message : PROVIDER_UNAVAILABLE_MESSAGE;
         }
       }
       return {
@@ -220,11 +230,11 @@ export class LifecycleService {
       try {
         if (worker.cancellationDeliveryPending) {
           try {
-            const outcome = await this.providerCall((signal) => this.adapter.cancel(
+            const outcome = parseProviderCancellation(await this.providerCall((signal) => this.adapter.cancel(
               { runId: worker.runId! },
               worker.stopDetail ?? worker.stopReason,
               signal,
-            ));
+            )));
             if (outcome?.status === "unsupported") {
               const restored = await this.store.clearWorkerCancellation(worker.id);
               return {
@@ -256,11 +266,11 @@ export class LifecycleService {
     return Promise.all((await this.store.workersPendingLifecycleReconciliation()).map(async (worker): Promise<CancellationResult> => {
       try {
         return await this.settleFromProvider(worker.id, { runId: worker.runId! });
-      } catch {
+      } catch (error) {
         return {
           sessionId: worker.id,
-          error: "PROVIDER_UNAVAILABLE",
-          message: PROVIDER_UNAVAILABLE_MESSAGE,
+          error: error instanceof ProviderProtocolError ? "PROVIDER_PROTOCOL_ERROR" : "PROVIDER_UNAVAILABLE",
+          message: error instanceof ProviderProtocolError ? error.message : PROVIDER_UNAVAILABLE_MESSAGE,
           status: worker.status,
         };
       }
@@ -311,9 +321,9 @@ export class LifecycleService {
     handle: { runId: string },
     intentClaimed = false,
   ): Promise<CancellationResult> {
-    const observed = await this.providerCall((signal) => this.adapter.status(handle, signal));
+    const observed = parseProviderStatus(await this.providerCall((signal) => this.adapter.status(handle, signal)));
     if (observed.runId !== handle.runId) {
-      throw new ProviderProtocolError("Provider returned a different execution identity");
+      throw new ProviderProtocolError("status", "malformed");
     }
     if (observed.status === "queued" || observed.status === "running") {
       const worker = await this.store.worker(sessionId);
@@ -324,18 +334,24 @@ export class LifecycleService {
         changed: intentClaimed,
       };
     }
-    const result = await this.providerCall((signal) => this.adapter.result(handle, signal));
     // `cancelled` keeps the reason already persisted with the intent; `succeeded` is classified by the
     // store so a completion that beat cancellation becomes succeeded_before_cancellation.
     const stopReason = observed.status === "failed" ? "execution_error" : undefined;
-    const claim = result === undefined
-      ? normalize({ kind: "stopped_without_result", status: observed.status })
-      : result.status === observed.status
-        ? normalize({ kind: "adapter_result", result })
-        : normalize({
-          kind: "malformed",
-          error: `Adapter result status ${JSON.stringify(result.status)} did not match observed status ${JSON.stringify(observed.status)}`,
-        });
+    let claim;
+    try {
+      const result = parseProviderResult(await this.providerCall((signal) => this.adapter.result(handle, signal)));
+      claim = result === undefined
+        ? normalize({ kind: "stopped_without_result", status: observed.status })
+        : result.status === observed.status
+          ? normalize({ kind: "adapter_result", result })
+          : normalize({
+            kind: "malformed",
+            error: `Adapter result status ${JSON.stringify(result.status)} did not match observed status ${JSON.stringify(observed.status)}`,
+          });
+    } catch (error) {
+      if (!(error instanceof ProviderProtocolError)) throw error;
+      claim = normalize({ kind: "malformed", error: error.message });
+    }
     const terminal = terminalStatusFor(observed.status);
     const options = {
       result: claim,
@@ -367,8 +383,6 @@ export class LifecycleService {
     }
   }
 }
-
-class ProviderProtocolError extends Error {}
 
 async function mapConcurrent<T, R>(items: T[], limit: number, operation: (item: T) => Promise<R>): Promise<R[]> {
   const results = new Array<R>(items.length);
