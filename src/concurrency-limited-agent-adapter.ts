@@ -16,6 +16,7 @@ export type RecoveryScopeResolver = (
 
 export class ConcurrencyLimitedAgentAdapter implements AgentAdapter {
   private readonly releases = new Map<string, () => void>();
+  private readonly unresolvedLaunches = new Map<string, () => void>();
   private readonly recoveries = new Map<string, Promise<RunHandle | undefined>>();
   private readonly recoveringRuns = new Set<string>();
   private readonly terminalRuns = new Set<string>();
@@ -54,13 +55,16 @@ export class ConcurrencyLimitedAgentAdapter implements AgentAdapter {
       }
       return handle;
     } catch (error) {
-      release();
+      this.unresolvedLaunches.set(request.idempotencyKey, release);
       throw error;
     }
   }
 
   async status(handle: RunHandle): Promise<RunState> {
     const state = await this.adapter.status(handle);
+    if (state.runId !== handle.runId) {
+      throw new Error(`Status returned run ${state.runId} for requested run ${handle.runId}`);
+    }
     if (state.status === "succeeded" || state.status === "failed" || state.status === "cancelled") {
       this.markTerminalDuringRecovery(handle.runId);
       this.release(handle.runId);
@@ -79,8 +83,6 @@ export class ConcurrencyLimitedAgentAdapter implements AgentAdapter {
 
   async cancel(handle: RunHandle, reason?: string): Promise<void> {
     await this.adapter.cancel(handle, reason);
-    this.markTerminalDuringRecovery(handle.runId);
-    this.release(handle.runId);
   }
 
   resumeMetadata(handle: RunHandle): Promise<ResumeMetadata | undefined> {
@@ -89,26 +91,43 @@ export class ConcurrencyLimitedAgentAdapter implements AgentAdapter {
 
   private async recover(idempotencyKey: string): Promise<RunHandle | undefined> {
     const handle = await this.adapter.findByIdempotencyKey(idempotencyKey);
-    if (handle === undefined || this.releases.has(handle.runId)) return handle;
+    const unresolvedRelease = this.unresolvedLaunches.get(idempotencyKey);
+    if (handle === undefined) {
+      unresolvedRelease?.();
+      this.unresolvedLaunches.delete(idempotencyKey);
+      return undefined;
+    }
+    if (unresolvedRelease !== undefined) {
+      this.unresolvedLaunches.delete(idempotencyKey);
+      if (this.releases.has(handle.runId)) unresolvedRelease();
+      else this.releases.set(handle.runId, unresolvedRelease);
+      return this.inspectRecoveredRun(handle);
+    }
+    if (this.releases.has(handle.runId)) return handle;
     this.recoveringRuns.add(handle.runId);
     try {
-      const state = await this.adapter.status(handle);
-      if (state.status === "succeeded" || state.status === "failed" || state.status === "cancelled") return handle;
       const release = await this.scheduler.acquire({
         id: idempotencyKey,
         ...await this.resolveRecoveryScope(idempotencyKey, handle),
       });
-      const current = await this.adapter.status(handle);
-      if (current.status === "succeeded" || current.status === "failed" || current.status === "cancelled") {
-        this.terminalRuns.add(handle.runId);
-      }
       if (this.terminalRuns.has(handle.runId) || this.releases.has(handle.runId)) release();
       else this.releases.set(handle.runId, release);
-      return handle;
+      return await this.inspectRecoveredRun(handle);
     } finally {
       this.recoveringRuns.delete(handle.runId);
       this.terminalRuns.delete(handle.runId);
     }
+  }
+
+  private async inspectRecoveredRun(handle: RunHandle): Promise<RunHandle> {
+    const state = await this.adapter.status(handle);
+    if (state.runId !== handle.runId) {
+      throw new Error(`Status returned run ${state.runId} for requested run ${handle.runId}`);
+    }
+    if (state.status === "succeeded" || state.status === "failed" || state.status === "cancelled") {
+      this.release(handle.runId);
+    }
+    return handle;
   }
 
   private markTerminalDuringRecovery(runId: string): void {

@@ -205,7 +205,7 @@ test("cancellation unblocks the queue when a pressure hook does not settle", asy
   release();
 });
 
-test("agent adapter holds capacity until terminal status and releases on cancellation", async () => {
+test("agent adapter holds capacity until terminal status, including after cancellation", async () => {
   const scheduler = new ConcurrencyScheduler({ global: 1 });
   const delegate = new FakeAgentAdapter([
     { statuses: ["queued", "succeeded"], result: { status: "succeeded", output: "first" } },
@@ -228,13 +228,56 @@ test("agent adapter holds capacity until terminal status and releases on cancell
   const second = await secondPromise;
   assert.equal(delegate.launches.length, 2);
   await adapter.cancel(second, "operator request");
+  assert.equal(scheduler.snapshot().active, 1);
+  assert.equal((await adapter.status(second)).status, "cancelled");
+  assert.equal(scheduler.snapshot().active, 0);
+});
+
+test("retains an indeterminate launch permit until lookup resolves the outcome", async () => {
+  const scheduler = new ConcurrencyScheduler({ global: 1 });
+  const delegate = new FakeAgentAdapter([
+    { statuses: ["running", "succeeded"], result: { status: "succeeded", output: "accepted" } },
+  ]);
+  const launch = delegate.launch.bind(delegate);
+  delegate.launch = async (request) => {
+    await launch(request);
+    throw new Error("transport failed after acceptance");
+  };
+  const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => base, () => base);
+
+  await assert.rejects(
+    adapter.launch({ idempotencyKey: "uncertain", prompt: "first", workspacePath: "/first" }),
+    /transport failed/,
+  );
+  const queued = scheduler.acquire({ ...base, id: "new-work", workspaceId: "workspace-2" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(scheduler.snapshot().queued[0]?.id, "new-work");
+
+  const recovered = await adapter.findByIdempotencyKey("uncertain");
+  assert.ok(recovered);
+  assert.equal(scheduler.snapshot().active, 1);
+  assert.equal((await adapter.status(recovered)).status, "succeeded");
+  (await queued)();
+});
+
+test("releases an indeterminate launch permit when lookup proves absence", async () => {
+  const scheduler = new ConcurrencyScheduler({ global: 1 });
+  const delegate = new FakeAgentAdapter([]);
+  const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => base, () => base);
+
+  await assert.rejects(
+    adapter.launch({ idempotencyKey: "rejected", prompt: "first", workspacePath: "/first" }),
+    /No fake run script/,
+  );
+  assert.equal(scheduler.snapshot().active, 1);
+  assert.equal(await adapter.findByIdempotencyKey("rejected"), undefined);
   assert.equal(scheduler.snapshot().active, 0);
 });
 
 test("recovered running retries reacquire capacity without duplicate permits", async () => {
   const scheduler = new ConcurrencyScheduler({ global: 1 });
   const delegate = new FakeAgentAdapter([
-    { statuses: ["running", "running", "running", "succeeded"], result: { status: "succeeded", output: "recovered" } },
+    { statuses: ["running", "running", "succeeded"], result: { status: "succeeded", output: "recovered" } },
   ]);
   const scope = {
     hostId: "local", projectId: "project", agentId: "codex", workspaceId: "workspace",
@@ -288,10 +331,38 @@ test("recovery releases capacity when a queued run becomes terminal", async () =
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(scheduler.snapshot().queued[0]?.id, "recovered");
 
-  assert.equal((await delegate.status(handle)).status, "succeeded");
+  assert.equal((await delegate.status(handle)).status, "running");
   blocker();
   assert.deepEqual(await recovery, handle);
   assert.equal(scheduler.snapshot().active, 0);
+});
+
+test("recovery retains capacity when status is indeterminate", async () => {
+  const scheduler = new ConcurrencyScheduler({ global: 1 });
+  const delegate = new FakeAgentAdapter([
+    { statuses: ["running", "succeeded"], result: { status: "succeeded", output: "complete" } },
+  ]);
+  const handle = await delegate.launch({ idempotencyKey: "recovered", prompt: "first", workspacePath: "/first" });
+  delegate.status = async () => { throw new Error("status unavailable"); };
+  const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => base, () => base);
+
+  await assert.rejects(adapter.findByIdempotencyKey("recovered"), /status unavailable/);
+  assert.equal(scheduler.snapshot().active, 1);
+  assert.equal(scheduler.snapshot().activeByWorkspace[base.workspaceId], 1);
+  assert.deepEqual(handle, { runId: "fake-1" });
+});
+
+test("status identity mismatch fails closed without releasing capacity", async () => {
+  const scheduler = new ConcurrencyScheduler({ global: 1 });
+  const delegate = new FakeAgentAdapter([
+    { statuses: ["running", "succeeded"], result: { status: "succeeded", output: "complete" } },
+  ]);
+  const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => base, () => base);
+  const handle = await adapter.launch({ idempotencyKey: "first", prompt: "first", workspacePath: "/first" });
+  delegate.status = async () => ({ runId: "other-run", status: "succeeded", updatedAt: "2000-01-01T00:00:00.000Z" });
+
+  await assert.rejects(adapter.status(handle), /other-run.*fake-1/);
+  assert.equal(scheduler.snapshot().active, 1);
 });
 
 test("copies admission scope so caller mutation cannot leak capacity", async () => {
