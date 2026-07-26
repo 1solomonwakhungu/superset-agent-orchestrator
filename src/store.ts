@@ -10,6 +10,8 @@ import { auditField, RedactionPolicy, SecurityError, SECURITY_POLICY_VERSION } f
 import { assertPrivateStatePath } from "./state-path.js";
 import { preparePrivateDirectory, secureCreatedFile, validateOwnerOnlyFile } from "./storage.js";
 
+const processLockQueues = new Map<string, Promise<void>>();
+
 export type WorkerStatus = "requested" | "running" | "canceling" | "succeeded" | "failed" | "canceled" | "unknown_outcome";
 export type TerminalWorkerStatus = Extract<WorkerStatus, "succeeded" | "failed" | "canceled" | "unknown_outcome">;
 /** Stop reasons the state machine allows for a canceled session. */
@@ -136,6 +138,7 @@ export interface Assignment {
   updatedAt: string;
   runId?: string;
   error?: string;
+  errorCode?: string;
 }
 
 export interface AgentResultClaim {
@@ -174,6 +177,7 @@ export interface LaunchAuditEvent {
   occurredAt: string;
   runId?: string;
   error?: string;
+  errorCode?: string;
 }
 
 export interface SecurityAuditEvent {
@@ -320,6 +324,7 @@ const assignmentSchema = z.strictObject({
   prompt: z.string().min(1), workspaceId: z.string().min(1).optional(), workspacePath: z.string().min(1),
   attemptId: z.string().min(1).optional(), attempt: z.number().int().positive().optional(), acceptedAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(), runId: z.string().min(1).optional(), error: z.string().min(1).optional(),
+  errorCode: z.string().min(1).optional(),
 });
 const resultClaimSchema = z.strictObject({
   status: z.enum(["succeeded", "failed", "cancelled", "stopped_without_result", "malformed"]),
@@ -339,6 +344,7 @@ const auditEventSchema = z.strictObject({
   id: z.string().min(1), assignmentId: z.string().min(1),
   type: z.enum(["launch_accepted", "launch_reserved", "execution_started", "launch_failed"]),
   occurredAt: z.iso.datetime(), runId: z.string().min(1).optional(), error: z.string().min(1).optional(),
+  errorCode: z.string().min(1).optional(),
 });
 const securityAuditEventSchema = z.object({
   id: z.string().min(1), sequence: z.number().int().positive(), occurredAt: z.iso.datetime(),
@@ -421,7 +427,7 @@ const stateSchema = z.strictObject({
     const hasSession = sessionIds.has(worker.sessionId);
     // Fully orphaned historical workers remain recoverable. Partial or
     // contradictory relationships are corruption rather than recovery state.
-    if ((batch === undefined) !== !hasSession || (batch !== undefined && batch.sessionId !== worker.sessionId)) {
+    if ((batch === undefined) !== !hasSession) {
       context.addIssue({ code: "custom", message: `Worker ${worker.id} has contradictory batch or session identity` });
     }
   }
@@ -432,7 +438,7 @@ const stateSchema = z.strictObject({
   }
   for (const assignment of state.assignments) {
     const batch = batchById.get(assignment.batchId);
-    if (batch === undefined || !sessionIds.has(assignment.sessionId) || batch.sessionId !== assignment.sessionId) {
+    if (batch === undefined || !sessionIds.has(assignment.sessionId)) {
       context.addIssue({ code: "custom", message: `Assignment ${assignment.id} has invalid batch or session identity` });
     }
   }
@@ -534,7 +540,7 @@ export class DurableStore {
       realpath: false,
       stale: this.dispatchLockStaleMs,
       update: Math.max(1_000, Math.floor(this.dispatchLockStaleMs / 5)),
-      retries: { retries: 50, minTimeout: 50, maxTimeout: 200 },
+      retries: { retries: 300, minTimeout: 50, maxTimeout: 200 },
     });
     try {
       return await operation();
@@ -1038,7 +1044,7 @@ export class DurableStore {
 
       for (const worker of this.state.workers) {
         const batch = batches.get(worker.batchId);
-        if (!sessionIds.has(worker.sessionId) || batch === undefined || batch.sessionId !== worker.sessionId) {
+        if (!sessionIds.has(worker.sessionId) || batch === undefined) {
           diagnose("orphan", worker, "Worker references a missing or inconsistent durable session or batch");
         }
 
@@ -1217,6 +1223,73 @@ export class DurableStore {
     });
   }
 
+  async acceptLaunchBatch(input: {
+    assignments: Assignment[];
+    sessions: Session[];
+    batch: Batch;
+    workers: Worker[];
+    events: LaunchAuditEvent[];
+    securityAudits: SecurityAuditInput[];
+  }): Promise<{ assignments: Assignment[]; created: boolean }> {
+    return this.withLock(async () => {
+      await this.load();
+      input.assignments.forEach((assignment) => assignmentSchema.parse(assignment));
+      input.sessions.forEach((session) => sessionSchema.parse(session));
+      input.workers.forEach((worker) => workerSchema.parse(worker));
+      batchSchema.parse(input.batch);
+      input.events.forEach((auditEvent) => auditEventSchema.parse(auditEvent));
+      if (input.sessions.length !== input.assignments.length
+        || input.workers.length !== input.assignments.length
+        || input.events.length !== input.assignments.length
+        || input.securityAudits.length !== input.assignments.length
+        || input.assignments.some((assignment, index) => input.sessions[index]?.id !== assignment.sessionId
+          || input.workers[index]?.sessionId !== assignment.sessionId
+          || input.events[index]?.assignmentId !== assignment.id
+          || input.events[index]?.type !== "launch_accepted"
+          || input.securityAudits[index]?.assignmentId !== assignment.id)) {
+        throw new Error("Launch batch records must match assignments in order");
+      }
+      const existing = input.assignments.map((assignment) =>
+        this.state.assignments.find(({ idempotencyKey }) => idempotencyKey === assignment.idempotencyKey));
+      if (existing.some((assignment) => assignment !== undefined)) {
+        if (existing.some((assignment) => assignment === undefined)) {
+          throw new Error("A batch idempotency replay matched only part of the original batch");
+        }
+        const replay = existing as Assignment[];
+        for (const [index, assignment] of replay.entries()) {
+          if (assignment.requestFingerprint !== input.assignments[index]?.requestFingerprint
+            || assignment.batchId !== input.batch.id) {
+            throw new Error("A batch idempotency key was reused with different launch input");
+          }
+        }
+        return { assignments: structuredClone(replay), created: false };
+      }
+      if (this.state.batches.some(({ id }) => id === input.batch.id)) {
+        throw new Error("A batch idempotency key was reused with different assignments");
+      }
+      const previousState = structuredClone(this.state);
+      try {
+        this.state.sessions.push(...input.sessions);
+        this.state.batches.push(input.batch);
+        this.state.assignments.push(...input.assignments);
+        this.state.workers.push(...input.workers);
+        this.state.auditEvents.push(...input.events);
+        this.rebuildIndexes();
+        input.securityAudits.forEach((audit, index) => {
+          this.appendSecurityAuditToState(audit, new Date(input.events[index]!.occurredAt));
+        });
+        await this.persist();
+      } catch (error) {
+        await this.load().catch(() => {
+          this.state = previousState;
+          this.rebuildIndexes();
+        });
+        throw error;
+      }
+      return { assignments: structuredClone(input.assignments), created: true };
+    });
+  }
+
   /**
    * Appends a normalized, redacted, tamper-evident security decision. Every field
    * that can carry untrusted text is bounded and stripped of control characters so
@@ -1319,7 +1392,8 @@ export class DurableStore {
         || existingEvent.type !== event.type
         || existingEvent.occurredAt !== event.occurredAt
         || existingEvent.runId !== event.runId
-        || existingEvent.error !== event.error)) {
+        || existingEvent.error !== event.error
+        || existingEvent.errorCode !== event.errorCode)) {
         throw new Error(`Launch audit event ID ${JSON.stringify(event.id)} conflicts with existing evidence`);
       }
       const allowed = assignment.status === "accepted" && (status === "launching" || status === "failed")
@@ -1341,6 +1415,7 @@ export class DurableStore {
           }
         }
         if (event.error !== undefined) assignment.error = this.redaction.text(event.error);
+        if (event.errorCode !== undefined) assignment.errorCode = event.errorCode;
         if (status === "failed") {
           const worker = this.state.workers.find(({ id }) => id === assignment.sessionId);
           if (worker === undefined) throw new Error(`Missing lifecycle worker for assignment: ${assignmentId}`);
@@ -1415,6 +1490,20 @@ export class DurableStore {
     });
   }
 
+  async assignmentsForSessions(sessionIds: readonly string[]): Promise<Array<Assignment | undefined>> {
+    return this.withFreshState(() => sessionIds.map((sessionId) => {
+      const assignment = this.state.assignments.find((candidate) => candidate.sessionId === sessionId);
+      return assignment === undefined ? undefined : structuredClone(assignment);
+    }));
+  }
+
+  async resultsForSessions(sessionIds: readonly string[]): Promise<Array<CapturedResult | undefined>> {
+    return this.withFreshState(() => sessionIds.map((sessionId) => {
+      const result = this.state.capturedResults?.find((candidate) => candidate.sessionId === sessionId);
+      return result === undefined ? undefined : structuredClone(result);
+    }));
+  }
+
   async captureResult(input: CapturedResult): Promise<{ result: CapturedResult; duplicate: boolean }> {
     return this.withLock(async () => {
       await this.load();
@@ -1449,6 +1538,20 @@ export class DurableStore {
         return { result: structuredClone(existingAttempt), duplicate: true };
       }
       results.push(input);
+      const worker = this.state.workers.find(({ id }) => id === input.sessionId);
+      if (worker === undefined) throw new Error(`Missing lifecycle worker for result: ${input.assignmentId}`);
+      if (!DurableStore.isTerminal(worker.status)) {
+        worker.status = input.claim.status === "succeeded" ? "succeeded"
+          : input.claim.status === "cancelled" ? "canceled" : "failed";
+        worker.result = structuredClone(input);
+        worker.completedAt = input.capturedAt;
+        worker.stopReason = input.claim.status === "succeeded" ? "succeeded"
+          : input.claim.status === "cancelled" ? "user_requested"
+            : input.claim.status === "malformed" ? "artifact_error" : "execution_error";
+        delete worker.preCancelStatus;
+        delete worker.lifecycleReconcilePending;
+        delete worker.cancellationDeliveryPending;
+      }
       await this.persist();
       return { result: structuredClone(input), duplicate: false };
     });
@@ -1599,17 +1702,26 @@ export class DurableStore {
   }
 
   private async withLock<T>(operation: () => Promise<T>): Promise<T> {
-    await assertPrivateStatePath(this.path);
-    const release = await lockfile.lock(this.path, {
-      realpath: false,
-      stale: 10_000,
-      update: 2_000,
-      retries: { retries: 50, minTimeout: 50, maxTimeout: 200 },
-    });
+    const previous = processLockQueues.get(this.path) ?? Promise.resolve();
+    let releaseQueue!: () => void;
+    const queued = new Promise<void>((resolve) => { releaseQueue = resolve; });
+    const tail = previous.then(() => queued);
+    processLockQueues.set(this.path, tail);
+    await previous;
+    let release: (() => Promise<void>) | undefined;
     try {
+      await assertPrivateStatePath(this.path);
+      release = await lockfile.lock(this.path, {
+        realpath: false,
+        stale: 10_000,
+        update: 2_000,
+        retries: { retries: 50, minTimeout: 50, maxTimeout: 200 },
+      });
       return await operation();
     } finally {
-      await release();
+      if (release !== undefined) await release();
+      releaseQueue();
+      if (processLockQueues.get(this.path) === tail) processLockQueues.delete(this.path);
     }
   }
 
