@@ -6,16 +6,17 @@
   harnesses with machine-readable and reviewer-readable reports.
 - The fake benchmark accepted, completed, attributed, persisted, queried, and
   restart-recovered 100/100 results with 0 failures and 0 attribution mismatches.
-- Measured launch p95 27.124 ms, indexed-query p95 0.131 ms, 114,491,392-byte RSS,
-  692.127 CPU ms, 0 descriptor growth, and 10.634 ms restart recovery.
+- Measured launch p95 28.195 ms, indexed-query p95 0.126 ms, 115,343,360-byte RSS,
+  683.715 CPU ms, 0 descriptor growth, and 11.732 ms restart recovery.
 - The 30-real-agent run is blocked: only this assigned writer workspace is in
   scope, while the harness requires 30 authorized isolated workspaces and public
   Superset APIs cannot observe completion, results, cancellation, recovery, or
   aggregate agent resource use. The safe dry-run launched 0 paid agents.
 - Hardened CLI argument handling and fail-closed report validation so incomplete,
   failed, aborted, misattributed, or internally inconsistent runs cannot pass.
-- Verification: typecheck, focused load tests, the 100-session benchmark, safe
-  30-session dry-run, both report verifications, build, and Markdown lint passed.
+- Verification after merging current `origin/main`: typecheck, 107/107 non-live
+  tests, the 100-session benchmark, safe 30-session dry-run, both report
+  verifications, build, and Markdown lint passed.
   The repository suite passes except for its pre-existing live discovery smoke
   test, which requires the unavailable and out-of-scope Superset executable.
 - Next: provision 30 explicitly authorized isolated workspaces, then run the paid
