@@ -6,9 +6,9 @@
   adapter-level unsupported outcome instead of misreporting provider unavailability.
 - Added fake-provider integration coverage proving lifecycle cancellation restores
   durable state and issues exactly one provider cancellation request.
-- Focused regression, typecheck, lint, and diff checks passed. The full check
-  reached 336 tests but failed on 9 pre-existing PR-head integration/security
-  assertions unrelated to this cancellation change.
+- Focused regression, typecheck, lint, and diff checks passed. After integrating
+  the latest PR head, the full check reached 369 tests with one unrelated
+  filesystem cleanup race; that lifecycle test passed immediately in isolation.
 
 ## PER-344 post-merge recovery accounting, 2026-07-26
 
