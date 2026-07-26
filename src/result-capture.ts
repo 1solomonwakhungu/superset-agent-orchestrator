@@ -1,17 +1,7 @@
 import { createHash } from "node:crypto";
-import { z } from "zod";
 import type { AgentAdapter, RunResult, TerminalRunStatus } from "./agent-adapter.js";
+import { parseProviderResult, parseProviderStatus, ProviderProtocolError } from "./provider-protocol.js";
 import { DurableStore, type AgentResultClaim, type CapturedResult } from "./store.js";
-
-const stateSchema = z.object({
-  runId: z.string().min(1), status: z.enum(["queued", "running", "succeeded", "failed", "cancelled"]),
-  updatedAt: z.iso.datetime(),
-}).strict();
-const resultSchema = z.discriminatedUnion("status", [
-  z.object({ status: z.literal("succeeded"), output: z.string(), resume: z.object({ adapter: z.string(), token: z.string() }).strict().optional() }).strict(),
-  z.object({ status: z.literal("failed"), error: z.string(), retryable: z.boolean(), output: z.string().optional(), resume: z.object({ adapter: z.string(), token: z.string() }).strict().optional() }).strict(),
-  z.object({ status: z.literal("cancelled"), reason: z.string().optional(), output: z.string().optional(), resume: z.object({ adapter: z.string(), token: z.string() }).strict().optional() }).strict(),
-]);
 
 export type ResultDelivery =
   | { kind: "adapter_result"; result: RunResult }
@@ -31,13 +21,23 @@ export class ResultCaptureService {
       throw new Error("Result collection requires a launched assignment with a bound run ID");
     }
     requireExactIdentities(assignment);
-    const state = stateSchema.parse(await this.adapter.status({ runId: assignment.runId }));
-    if (state.runId !== assignment.runId) throw new Error("Adapter status returned a different run ID");
+    let state;
+    try {
+      state = parseProviderStatus(await this.adapter.status({ runId: assignment.runId }));
+    } catch (error) {
+      if (!(error instanceof ProviderProtocolError)) throw error;
+      return this.ingest(assignmentId, deliveryId, { kind: "malformed", error: error.message });
+    }
+    if (state.runId !== assignment.runId) {
+      return this.ingest(assignmentId, deliveryId, {
+        kind: "malformed",
+        error: "Provider status response used a different execution identity",
+      });
+    }
     if (state.status === "queued" || state.status === "running") return { duplicate: false };
     let result: RunResult | undefined;
     try {
-      const raw = await this.adapter.result({ runId: assignment.runId });
-      result = raw === undefined ? undefined : resultSchema.parse(raw) as RunResult;
+      result = parseProviderResult(await this.adapter.result({ runId: assignment.runId }));
     } catch (error) {
       return this.ingest(assignmentId, deliveryId, {
         kind: "malformed",
