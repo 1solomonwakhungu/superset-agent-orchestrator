@@ -80,6 +80,33 @@ test("fake Superset timeout and malformed output fail deterministically without 
   }
 });
 
+test("accepted launches recover after one-shot timeout and malformed responses without duplicate execution", async () => {
+  for (const action of ["hang", "malformed"] as const) {
+    await withHarness({
+      faults: [{ id: `first-launch-${action}`, command: "launch", occurrence: 1, action }],
+      defaultScript: successScript(),
+    }, async ({ adapter, statePath, fakeState, calls }) => {
+      const store = new DurableStore(statePath);
+      const accepted = await new LaunchService(store, adapter, now).accept(request(0, action));
+
+      await new LaunchService(store, adapter, now).dispatchPending();
+      assert.equal(Object.keys((await fakeState()).runs).length, 1);
+
+      const restartedStore = new DurableStore(statePath);
+      await new LaunchService(restartedStore, adapter.restart(), now).dispatchPending();
+      const assignment = await restartedStore.assignmentForResult(accepted.assignmentId);
+      assert.equal(assignment.status, "launched");
+      assert.equal(assignment.runId, "fake-001");
+
+      const ledger = await calls();
+      assert.deepEqual(ledger.map(({ command }) => command), ["launch", "find"]);
+      assert.deepEqual(ledger[0]?.fault, { id: `first-launch-${action}`, action });
+      assert.deepEqual(ledger[0]?.response, { runId: "fake-001" });
+      assert.equal(Object.keys((await fakeState()).runs).length, 1);
+    }, action === "hang" ? 250 : 10_000);
+  }
+});
+
 test("fake Superset covers every process adapter typed error", async () => {
   const cases = [
     [{ launchError: "rejected", defaultScript: successScript() }, "launch", "LAUNCH_REJECTED"],
@@ -159,6 +186,20 @@ test("fake Superset serializes concurrent provider state transactions", async ()
   });
 });
 
+test("fake Superset deduplicates concurrent launches with the same provider key", async () => {
+  await withHarness({ defaultScript: successScript() }, async ({ adapter, fakeState, calls }) => {
+    const handles = await Promise.all(Array.from({ length: 40 }, () => adapter.launch({
+      idempotencyKey: "same-key",
+      prompt: "same prompt",
+      workspacePath: "/tmp/same",
+    })));
+    assert.deepEqual(new Set(handles.map(({ runId }) => runId)), new Set(["fake-001"]));
+    assert.equal(Object.keys((await fakeState()).runs).length, 1);
+    assert.equal((await calls()).filter(({ command }) => command === "launch").length, 40);
+    assert.deepEqual(await adapter.findByIdempotencyKey("same-key"), { runId: "fake-001" });
+  });
+});
+
 test("fake Superset completes and attributes a deterministic 100-session batch", async () => {
   await withHarness({ defaultScript: successScript() }, async ({ adapter, statePath, calls }) => {
     const store = new DurableStore(statePath);
@@ -214,7 +255,11 @@ async function withHarness(
       payload: { prompt?: string };
       argv: string[];
       environment: Record<string, string | undefined>;
+      response?: unknown;
+      failure?: unknown;
+      fault?: { id: string; action: string };
     }>>;
+    fakeState: () => Promise<{ runs: Record<string, unknown> }>;
   }) => Promise<void>,
   timeoutMs = 10_000,
 ) {
@@ -230,17 +275,21 @@ async function withHarness(
   });
   const adapter = makeAdapter() as SupersetProcessAdapter & { restart(): SupersetProcessAdapter };
   adapter.restart = makeAdapter;
-  const calls = async () => {
-    const state = JSON.parse(await readFile(fakeStatePath, "utf8")) as { calls: Array<{
+  const readFakeState = async () => JSON.parse(await readFile(fakeStatePath, "utf8")) as {
+    runs: Record<string, unknown>;
+    calls: Array<{
       command: string;
-       payload: { prompt?: string };
+      payload: { prompt?: string };
       argv: string[];
       environment: Record<string, string | undefined>;
-    }> };
-    return state.calls;
+      response?: unknown;
+      failure?: unknown;
+      fault?: { id: string; action: string };
+    }>;
   };
+  const calls = async () => (await readFakeState()).calls;
   try {
-    await run({ adapter, statePath, calls });
+    await run({ adapter, statePath, calls, fakeState: readFakeState });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
