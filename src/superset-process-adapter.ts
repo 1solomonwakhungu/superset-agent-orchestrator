@@ -65,6 +65,7 @@ export class SupersetProcessAdapter implements AgentAdapter {
   }
 
   async launch(request: LaunchRequest): Promise<RunHandle> {
+    await request.revalidateWorkspace();
     return this.invoke("launch", request, handleSchema);
   }
 
@@ -108,7 +109,7 @@ export class SupersetProcessAdapter implements AgentAdapter {
           env: this.options.env ?? childEnvironment(),
           encoding: "utf8",
           timeout: this.options.timeoutMs ?? 30_000,
-          maxBuffer: 1024 * 1024,
+          maxBuffer: 4 * 1024 * 1024,
         },
         (error, stdout, stderr) => {
           if (error !== null) {
