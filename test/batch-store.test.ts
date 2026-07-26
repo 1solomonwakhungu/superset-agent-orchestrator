@@ -120,7 +120,7 @@ test("cursors are batch-bound and ordering remains deterministic without positio
     const second = await fixture.store.createBatch("second", "client", [{ agent: "b", task: "x" }]);
     const page = await fixture.store.getBatch(first.batch.id, { limit: 1 });
     assert.ok(page.nextCursor);
-    const cursor = page.nextCursor!;
+    const cursor = page.nextCursor;
     await assert.rejects(
       fixture.store.getBatch(second.batch.id, { cursor }),
       (error) => error instanceof BatchQueryError && error.code === "invalid_cursor",
