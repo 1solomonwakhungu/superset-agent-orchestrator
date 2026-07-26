@@ -30,7 +30,7 @@ test("a replacement MCP client reopens an attributed batch from a killed server"
     auditEvents: [],
     launchIntents: [],
   };
-  await writeFile(statePath, JSON.stringify(state), "utf8");
+  await writeFile(statePath, JSON.stringify(state), { encoding: "utf8", mode: 0o600 });
 
   const connect = async () => {
     const transport = new StdioClientTransport({

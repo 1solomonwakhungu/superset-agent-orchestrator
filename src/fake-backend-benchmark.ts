@@ -27,7 +27,14 @@ export async function runFakeBenchmark(options: {
     statuses: ["queued", "running", "succeeded"], result: { status: "succeeded", output: `result-${index}` },
   }));
   const adapter = new FakeAgentAdapter(scripts);
-  const coordinator = new LaunchCoordinator(store, adapter);
+  const coordinator = new LaunchCoordinator(store, adapter, {
+    authorize: async (workspaceId) => ({
+      workspaceId,
+      projectId: "per-351-fake",
+      canonicalPath: join(directory, workspaceId),
+      revalidate: async () => undefined,
+    }),
+  });
   const launchLatencies: number[] = [];
   const failures: string[] = [];
   const measurements = options.measurements ?? realMeasurements();
@@ -50,7 +57,7 @@ export async function runFakeBenchmark(options: {
       workerId: worker.id,
       attribution: worker.attribution,
       prompt: `Deterministic benchmark task ${index}`,
-      workspacePath: join(directory, `workspace-${index}`),
+      workspaceId: `workspace-${index}`,
     }));
     for (const request of requests) {
       try {

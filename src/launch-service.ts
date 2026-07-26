@@ -9,6 +9,18 @@ import {
   type Worker,
   type WorkerAttribution,
 } from "./store.js";
+import {
+  assertBoundedText,
+  assertIdentifier,
+  assertDataOperand,
+  childEnvironment,
+  MAX_ATTRIBUTION_BYTES,
+  MAX_IDEMPOTENCY_KEY_BYTES,
+  reasonCode,
+  SecurityError,
+  type WorkspaceAuthorizer,
+  type WorkspaceGrant,
+} from "./security.js";
 
 export type LaunchBoundary =
   | "after_acceptance"
@@ -24,7 +36,7 @@ export interface AsynchronousLaunchRequest {
   attribution: WorkerAttribution;
   prompt: string;
   workspaceId: string;
-  workspacePath: string;
+  workspacePath?: string;
 }
 
 export interface LaunchAcceptance {
@@ -50,6 +62,7 @@ export class LaunchService {
   constructor(
     private readonly store: DurableStore,
     private readonly adapter: AgentAdapter,
+    private readonly workspaceAuthorizer: WorkspaceAuthorizer,
     private readonly now: () => Date = () => new Date(),
     private readonly injectCrash: (boundary: LaunchBoundary) => void = () => undefined,
     private readonly retryDelayMs = 1_000,
@@ -77,6 +90,10 @@ export class LaunchService {
     if (new Set(request.assignments.map(({ idempotencyKey }) => idempotencyKey)).size !== request.assignments.length) {
       throw new Error("Batch assignment idempotency keys must be unique");
     }
+    const clientId = this.store.redactText(assertBoundedText(request.clientId, "clientId", 256));
+    const batchName = this.store.redactText(assertBoundedText(request.batchName, "batchName", 256));
+    assertIdentifier(request.idempotencyKey, "idempotencyKey", MAX_IDEMPOTENCY_KEY_BYTES);
+    const grants: WorkspaceGrant[] = [];
     for (const item of request.assignments) {
       const fullRequest = { ...item, clientId: request.clientId, batchName: request.batchName };
       for (const [name, value] of Object.entries(fullRequest)) {
@@ -85,16 +102,26 @@ export class LaunchService {
       if (item.attribution.agent.length === 0 || item.attribution.task.length === 0) {
         throw new Error("attribution requires non-empty agent and task values");
       }
+      assertIdentifier(item.idempotencyKey, "idempotencyKey", MAX_IDEMPOTENCY_KEY_BYTES);
+      assertIdentifier(item.workspaceId, "workspaceId");
+      if (this.store.redactText(item.idempotencyKey) !== item.idempotencyKey
+        || this.store.redactText(item.workspaceId) !== item.workspaceId) {
+        throw new SecurityError("INVALID_ARGUMENT", "Launch identities must not contain credentials");
+      }
+      assertIdentifier(item.attribution.agent, "attribution.agent", MAX_ATTRIBUTION_BYTES);
+      assertBoundedText(item.attribution.task, "attribution.task", MAX_ATTRIBUTION_BYTES);
+      assertBoundedText(item.prompt, "prompt");
+      grants.push(await this.workspaceAuthorizer.authorize(item.workspaceId));
     }
     const acceptedAt = this.now().toISOString();
-    const batchScope = scopedKey(request.clientId, request.idempotencyKey);
+    const batchScope = scopedKey(clientId, request.idempotencyKey);
     const batchId = stableId("batch", batchScope);
     const sessions = request.assignments.map((item) => ({
-      id: stableId("session", scopedKey(request.clientId, item.idempotencyKey)), clientId: request.clientId,
+      id: stableId("session", scopedKey(clientId, item.idempotencyKey)), clientId,
       createdAt: acceptedAt, lastSeenAt: acceptedAt,
     }));
     const batch: Batch = {
-      id: batchId, name: request.batchName, sessionId: sessions[0]!.id,
+      id: batchId, name: batchName, sessionId: sessions[0]!.id,
       createdAt: acceptedAt, updatedAt: acceptedAt,
     };
     const assignments = request.assignments.map((item, index): Assignment => {
@@ -102,12 +129,13 @@ export class LaunchService {
         ...item, clientId: request.clientId, batchName: request.batchName,
       };
       return {
-        id: stableId("assignment", scopedKey(request.clientId, item.idempotencyKey)),
-        idempotencyKey: scopedKey(request.clientId, item.idempotencyKey),
+        id: stableId("assignment", scopedKey(clientId, item.idempotencyKey)),
+        idempotencyKey: scopedKey(clientId, item.idempotencyKey),
         requestFingerprint: fingerprint(fullRequest), batchId, sessionId: sessions[index]!.id,
-        status: "accepted", attribution: item.attribution, prompt: item.prompt,
-        workspaceId: item.workspaceId, workspacePath: item.workspacePath,
-        attemptId: stableId("attempt", scopedKey(request.clientId, item.idempotencyKey)), attempt: 1,
+        status: "accepted", attribution: this.store.redactValue(item.attribution) as WorkerAttribution,
+        prompt: this.store.redactText(item.prompt), workspaceId: item.workspaceId,
+        workspacePath: assertDataOperand(grants[index]!.canonicalPath, "workspace path"),
+        attemptId: stableId("attempt", scopedKey(clientId, item.idempotencyKey)), attempt: 1,
         acceptedAt, updatedAt: acceptedAt,
       };
     });
@@ -123,43 +151,76 @@ export class LaunchService {
     const stored = await this.store.acceptLaunchBatch({
       assignments, sessions, batch, workers,
       events: assignments.map(({ id }) => event(id, "launch_accepted", acceptedAt)),
+      securityAudits: assignments.map((assignment, index) => this.auditAssignmentInput(
+        assignment,
+        "allowed",
+        "launch_accepted",
+        grants[index]!.projectId,
+      )),
     });
     this.injectCrash("after_acceptance");
     return stored.assignments.map(acceptance);
   }
 
   async accept(request: AsynchronousLaunchRequest): Promise<LaunchAcceptance> {
-    for (const [name, value] of Object.entries(request)) {
-      if (typeof value === "string" && value.length === 0) throw new Error(`${name} must not be empty`);
-    }
-    if (request.attribution === undefined
-      || request.attribution.agent.length === 0
-      || request.attribution.task.length === 0) {
-      throw new Error("attribution requires non-empty agent and task values");
+    let grant: WorkspaceGrant;
+    let prompt: string;
+    let clientId: string;
+    let batchName: string;
+    let attribution: WorkerAttribution;
+    try {
+      for (const [name, value] of Object.entries(request)) {
+        if (typeof value === "string" && value.length === 0) throw new SecurityError("INVALID_ARGUMENT", `${name} must not be empty`);
+      }
+      if (request.attribution === undefined
+        || request.attribution.agent.length === 0
+        || request.attribution.task.length === 0) {
+        throw new SecurityError("INVALID_ARGUMENT", "attribution requires non-empty agent and task values");
+      }
+      assertIdentifier(request.idempotencyKey, "idempotencyKey", MAX_IDEMPOTENCY_KEY_BYTES);
+      assertIdentifier(request.workspaceId, "workspaceId");
+      if (this.store.redactText(request.idempotencyKey) !== request.idempotencyKey
+        || this.store.redactText(request.workspaceId) !== request.workspaceId) {
+        throw new SecurityError("INVALID_ARGUMENT", "Launch identities must not contain credentials");
+      }
+      assertIdentifier(request.attribution.agent, "attribution.agent", MAX_ATTRIBUTION_BYTES);
+      assertBoundedText(request.attribution.task, "attribution.task", MAX_ATTRIBUTION_BYTES);
+      prompt = this.store.redactText(assertBoundedText(request.prompt, "prompt"));
+      clientId = this.store.redactText(assertBoundedText(request.clientId, "clientId", 256));
+      batchName = this.store.redactText(assertBoundedText(request.batchName, "batchName", 256));
+      attribution = this.store.redactValue(request.attribution) as WorkerAttribution;
+      grant = await this.workspaceAuthorizer.authorize(request.workspaceId);
+    } catch (error) {
+      await this.audit(request, "denied", reasonCode(error));
+      const message = this.store.safeError(error);
+      const sanitizedCause = new Error(message);
+      throw error instanceof SecurityError
+        ? new SecurityError(error.code, message, error.retryable, { cause: sanitizedCause })
+        : new Error(message, { cause: sanitizedCause });
     }
     const acceptedAt = this.now().toISOString();
-    const key = scopedKey(request.clientId, request.idempotencyKey);
+    const key = scopedKey(clientId, request.idempotencyKey);
     const assignmentId = stableId("assignment", key);
     const attemptId = stableId("attempt", key);
     const session: Session = {
-      id: stableId("session", key), clientId: request.clientId,
+      id: stableId("session", key), clientId,
       createdAt: acceptedAt, lastSeenAt: acceptedAt,
     };
     const batch: Batch = {
-      id: stableId("batch", key), name: request.batchName, sessionId: session.id,
+      id: stableId("batch", key), name: batchName, sessionId: session.id,
       createdAt: acceptedAt, updatedAt: acceptedAt,
     };
     const assignment: Assignment = {
       id: assignmentId,
       idempotencyKey: key,
-      requestFingerprint: fingerprint(request),
+      requestFingerprint: fingerprint({ ...request, prompt, clientId, batchName, attribution }),
       batchId: batch.id,
       sessionId: session.id,
       status: "accepted",
-      attribution: request.attribution,
-      prompt: request.prompt,
+      attribution,
+      prompt,
       workspaceId: request.workspaceId,
-      workspacePath: request.workspacePath,
+      workspacePath: assertDataOperand(grant.canonicalPath, "workspace path"),
       attemptId,
       attempt: 1,
       acceptedAt,
@@ -170,16 +231,22 @@ export class LaunchService {
       batchId: batch.id,
       sessionId: session.id,
       status: "requested" as const,
-      attribution: request.attribution,
+      attribution,
       startedAt: acceptedAt,
       position: 0,
     };
     const accepted = await this.store.acceptLaunch({
       assignment, session, batch, worker,
       event: event(assignmentId, "launch_accepted", acceptedAt),
+      securityAudit: this.auditInput(request, "allowed", "launch_accepted", assignmentId, grant.projectId),
     });
     this.injectCrash("after_acceptance");
     return acceptance(accepted.assignment);
+  }
+
+  /** Stops scheduled work and waits for an in-flight background dispatch. */
+  async close(): Promise<void> {
+    await this.stop();
   }
 
   async dispatchPending(): Promise<void> {
@@ -193,7 +260,17 @@ export class LaunchService {
   }
 
   private async dispatchAllPending(): Promise<void> {
-    for (const assignment of await this.store.pendingAssignments()) await this.dispatch(assignment);
+    let retryableFailure: unknown;
+    for (const assignment of await this.store.pendingAssignments()) {
+      try {
+        await this.dispatch(assignment);
+      } catch (error) {
+        retryableFailure = error;
+      }
+    }
+    if (retryableFailure !== undefined) {
+      throw retryableFailure instanceof Error ? retryableFailure : new Error("Retryable dispatch failure");
+    }
   }
 
   async stop(): Promise<void> {
@@ -230,6 +307,28 @@ export class LaunchService {
     await this.store.withLaunchDispatchLock(assignment.id, async () => {
       assignment = await this.store.assignmentForResult(assignment.id);
       if (assignment.status !== "accepted" && assignment.status !== "launching") return;
+      let grant: WorkspaceGrant;
+      try {
+        if (assignment.workspaceId === undefined) throw new SecurityError("INVALID_ARGUMENT", "Launch has no workspace identity");
+        grant = await this.workspaceAuthorizer.authorize(assignment.workspaceId);
+        await grant.revalidate();
+        if (grant.canonicalPath !== assignment.workspacePath) {
+          throw new SecurityError("INTEGRITY_FAILURE", "Workspace identity changed before launch");
+        }
+      } catch (error) {
+        if (error instanceof SecurityError && error.retryable) {
+          await this.auditAssignment(assignment, "denied", reasonCode(error));
+          throw error;
+        }
+        const failedAt = this.now().toISOString();
+        await this.store.recordLaunchEvent(
+          assignment.id,
+          "failed",
+          event(assignment.id, "launch_failed", failedAt, { error: this.store.safeError(error) }),
+          this.auditAssignmentInput(assignment, "denied", reasonCode(error)),
+        );
+        return;
+      }
       if (assignment.status === "accepted") {
         const startedAt = this.now().toISOString();
         const reserved = await this.store.recordLaunchEvent(
@@ -244,13 +343,16 @@ export class LaunchService {
       this.injectCrash("before_adapter_launch");
       let handle: RunHandle | undefined;
       try {
+        await this.auditAssignment(assignment, "allowed", "launch_intent", grant.projectId);
         handle = assignment.status === "launching"
           ? validRunHandle(await this.adapter.findByIdempotencyKey(assignment.idempotencyKey))
           : undefined;
         handle ??= await this.adapter.launch({
           idempotencyKey: assignment.idempotencyKey,
           prompt: assignment.prompt,
-          workspacePath: assignment.workspacePath,
+          workspacePath: assertDataOperand(grant.canonicalPath, "workspace path"),
+          environment: childEnvironment(),
+          revalidateWorkspace: () => grant.revalidate(),
         });
         handle = validRunHandle(handle);
       } catch (error) {
@@ -260,7 +362,12 @@ export class LaunchService {
           recovered = validRunHandle(await this.adapter.findByIdempotencyKey(assignment.idempotencyKey));
         } catch (lookupError) {
           if (!(lookupError instanceof MalformedRunHandleError)) throw lookupError;
-          await this.recordLaunchFailure(assignment, "Provider returned a malformed run handle");
+          await this.recordLaunchFailure(
+            assignment,
+            "Provider returned a malformed run handle",
+            "INVALID_PROVIDER_RESPONSE",
+            grant.projectId,
+          );
           return;
         }
         if (recovered !== undefined) {
@@ -269,20 +376,29 @@ export class LaunchService {
             assignment.id,
             "launched",
             event(assignment.id, "execution_started", launchedAt, { runId: recovered.runId }),
+            this.auditAssignmentInput(assignment, "allowed", "launch_started", grant.projectId),
           );
           return;
         }
         if (error instanceof MalformedRunHandleError) {
-          await this.recordLaunchFailure(assignment, error.message);
+          await this.recordLaunchFailure(assignment, error.message, "INVALID_PROVIDER_RESPONSE", grant.projectId);
           return;
         }
-        if (!hasErrorCode(error, "LAUNCH_REJECTED")) throw error;
-        const message = error instanceof Error ? error.message : String(error);
-        await this.recordLaunchFailure(assignment, message, error.code);
+        await this.recordLaunchFailure(
+          assignment,
+          this.store.safeError(error),
+          hasErrorCode(error, "LAUNCH_REJECTED") ? error.code : reasonCode(error),
+          grant.projectId,
+        );
         return;
       }
       if (handle === undefined) {
-        await this.recordLaunchFailure(assignment, "Provider returned a malformed run handle");
+        await this.recordLaunchFailure(
+          assignment,
+          "Provider returned a malformed run handle",
+          "INVALID_PROVIDER_RESPONSE",
+          grant.projectId,
+        );
         return;
       }
       this.injectCrash("after_adapter_launch");
@@ -291,19 +407,72 @@ export class LaunchService {
         assignment.id,
         "launched",
         event(assignment.id, "execution_started", launchedAt, { runId: handle.runId }),
+        this.auditAssignmentInput(assignment, "allowed", "launch_started", grant.projectId),
       );
       this.injectCrash("after_launch_recorded");
     });
   }
 
-  private async recordLaunchFailure(assignment: Assignment, error: string, errorCode?: string): Promise<void> {
+  private audit(
+    request: AsynchronousLaunchRequest,
+    decision: "allowed" | "denied" | "failed",
+    reason: string,
+    assignmentId?: string,
+    projectId?: string,
+  ): Promise<unknown> {
+    return this.store.appendSecurityAudit(this.auditInput(request, decision, reason, assignmentId, projectId));
+  }
+
+  private auditInput(
+    request: AsynchronousLaunchRequest,
+    decision: "allowed" | "denied" | "failed",
+    reason: string,
+    assignmentId?: string,
+    projectId?: string,
+  ) {
+    return {
+      requesterId: request.clientId || "invalid-requester", operation: "sessions_launch", decision,
+      reasonCode: reason, correlationId: request.idempotencyKey || "invalid-correlation",
+      ...(request.workspaceId ? { workspaceId: request.workspaceId } : {}),
+      ...(projectId === undefined ? {} : { projectId }),
+      ...(assignmentId === undefined ? {} : { assignmentId }),
+    };
+  }
+
+  private auditAssignment(
+    assignment: Assignment,
+    decision: "allowed" | "denied" | "failed",
+    reason: string,
+    projectId?: string,
+  ): Promise<unknown> {
+    return this.store.appendSecurityAudit(this.auditAssignmentInput(assignment, decision, reason, projectId));
+  }
+
+  private auditAssignmentInput(
+    assignment: Assignment,
+    decision: "allowed" | "denied" | "failed",
+    reason: string,
+    projectId?: string,
+  ) {
+    return {
+      requesterId: assignment.sessionId, operation: "sessions_launch", decision,
+      reasonCode: reason, correlationId: assignment.idempotencyKey, assignmentId: assignment.id,
+      ...(assignment.workspaceId === undefined ? {} : { workspaceId: assignment.workspaceId }),
+      ...(projectId === undefined ? {} : { projectId }),
+    };
+  }
+
+  private async recordLaunchFailure(
+    assignment: Assignment,
+    error: string,
+    reason: string,
+    projectId?: string,
+  ): Promise<void> {
     await this.store.recordLaunchEvent(
       assignment.id,
       "failed",
-      event(assignment.id, "launch_failed", this.now().toISOString(), {
-        error,
-        ...(errorCode === undefined ? {} : { errorCode }),
-      }),
+      event(assignment.id, "launch_failed", this.now().toISOString(), { error, errorCode: reason }),
+      this.auditAssignmentInput(assignment, "failed", reason, projectId),
     );
   }
 }
@@ -331,7 +500,6 @@ function fingerprint(request: AsynchronousLaunchRequest): string {
     attribution: { agent: request.attribution.agent, task: request.attribution.task },
     prompt: request.prompt,
     workspaceId: request.workspaceId,
-    workspacePath: request.workspacePath,
   });
   return createHash("sha256").update(canonical).digest("hex");
 }

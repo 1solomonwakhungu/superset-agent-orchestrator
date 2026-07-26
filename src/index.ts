@@ -13,6 +13,8 @@ export * from "./storage.js";
 export * from "./workspace-safety.js";
 export * from "./repositories.js";
 export * from "./store.js";
+export * from "./security.js";
+export * from "./tool-security.js";
 export * from "./tool-contract.js";
 export * from "./discovery-parser.js";
 export * from "./superset-discovery.js";

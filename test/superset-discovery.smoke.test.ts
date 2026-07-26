@@ -71,7 +71,7 @@ function assertSupportedDiscovery(result: SupersetDiscoveryResult, source: strin
 // Superset contract does not depend on the optional executable being installed.
 test("recorded Superset CLI responses match supported discovery schemas", async () => {
   const runner = recordedRunner(fixture.responses);
-  const result = await new SupersetDiscoveryAdapter({ runner }).discover();
+  const result = await new SupersetDiscoveryAdapter({ executable: process.execPath, runner }).discover();
   assertSupportedDiscovery(result, "recorded");
   assert.equal(result.version, fixture.recordedFromVersion);
 });
@@ -139,7 +139,7 @@ test("live Superset CLI responses match supported discovery schemas", { skip }, 
 
   // Guards against the recorded fixture drifting away from the real CLI.
   const runner = recordedRunner(fixture.responses);
-  const recorded = await new SupersetDiscoveryAdapter({ runner }).discover();
+  const recorded = await new SupersetDiscoveryAdapter({ executable: process.execPath, runner }).discover();
   for (const [label, live, sample] of [
     ["host", result.host, recorded.host],
     ["projects", result.projects, recorded.projects],
