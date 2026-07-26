@@ -76,8 +76,21 @@ Recovery tools:
   pagination without per-agent polling.
 - `recovery_diagnostics` reports orphan, unknown-outcome, and missing-result records.
 
+Lifecycle tools:
+
+- `sessions_cancel` and `batches_cancel` persist cancellation intent before the
+  provider call. Repeated and concurrent requests issue exactly one stop command.
+  Unsupported backends return `CANCEL_UNSUPPORTED` without changing state.
+- `batches_wait` waits at most 30 seconds and returns exact partial counts on
+  timeout rather than an error.
+- `sessions_set_deadline` and `deadlines_enforce` expire overdue nonterminal
+  sessions as `failed` with stop reason `deadline_exceeded`. The server also
+  sweeps deadlines on a background interval.
+
 Set `SUPERSET_ORCHESTRATOR_STATE` to choose the state file. By default it is
 stored at `~/.local/share/superset-agent-orchestrator/state.json`.
+`SUPERSET_ORCHESTRATOR_DEADLINE_MS` sets the background deadline sweep interval
+and defaults to 5000 milliseconds.
 
 ## Configuration contract
 
@@ -102,11 +115,7 @@ node --test test/configuration-contract.test.mjs
 - [Idempotency and reconciliation contract](docs/idempotency-and-reconciliation.md)
 - [Workspace lease and writer-safety policy](docs/workspace-lease-and-writer-safety.md)
 
-The MCP contract publishes typed TypeScript/Zod schemas and a client-neutral JSON
-Schema catalog. It defines asynchronous launch, stable IDs, batches of 100
-sessions, pagination, bounded wait, cancellation, results, and restart recovery.
-The contract is normative; tools not listed under Recovery above are not yet
-registered runtime handlers.
+The MCP contract publishes typed TypeScript/Zod schemas and a client-neutral JSON Schema catalog. It defines asynchronous launch, stable IDs, batches of 100 sessions, pagination, bounded wait, cancellation, deadlines, results, and restart recovery. The versioned lifecycle tools listed above are registered runtime handlers; other normative tools remain contract-only until their implementations land.
 
 ## Agent adapter boundary
 
@@ -136,6 +145,16 @@ discover the healthy local host and its projects, workspaces, and agent presets.
 Every child command is launched with an argument array and no shell. Discovery
 probes the CLI version, applies per-command timeouts, validates structured
 responses, and rejects ambiguous or remote-only results with normalized errors.
+
+Discovery schema coverage runs offline. `test/fixtures/` holds sanitized Superset
+1.16.1 responses that are replayed through the real adapter, so `npm run verify`
+is deterministic on machines without the CLI installed.
+
+The live smoke test additionally runs the real CLI when it is installed. It is
+skipped only when the executable cannot be found at all; a CLI that is present
+but broken, unhealthy, or returning malformed responses still fails the suite. To
+require the live run, set `SUPERSET_ORCHESTRATOR_REQUIRE_LIVE_SMOKE=1` or point
+`SUPERSET_ORCHESTRATOR_EXECUTABLE` at a specific binary.
 
 ## Agency availability monitor
 
