@@ -688,6 +688,30 @@ export class DurableStore {
       .sort((left, right) => left.deadlineAt!.localeCompare(right.deadlineAt!))));
   }
 
+  async recordWorkerResult(
+    workerId: string,
+    status: Extract<WorkerStatus, "succeeded" | "failed">,
+    result: unknown,
+    completedAt = new Date(),
+  ): Promise<Worker> {
+    return this.withLock(async () => {
+      await this.load();
+      const worker = this.workersById.get(workerId);
+      if (worker === undefined) throw new Error(`Unknown worker: ${workerId}`);
+      if (worker.status === "succeeded" || worker.status === "failed") {
+        if (worker.status !== status || JSON.stringify(worker.result) !== JSON.stringify(result)) {
+          throw new Error(`Worker ${workerId} already has a different terminal result`);
+        }
+        return structuredClone(worker);
+      }
+      worker.status = status;
+      worker.result = structuredClone(result);
+      worker.completedAt = completedAt.toISOString();
+      await this.persist();
+      return structuredClone(worker);
+    });
+  }
+
   async reconcile(now = new Date()): Promise<ReconciliationSummary> {
     return this.withLock(async () => {
       await this.load();
