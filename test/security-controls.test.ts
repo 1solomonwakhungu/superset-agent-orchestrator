@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { realpathSync } from "node:fs";
 import { access, chmod, copyFile, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -36,6 +37,7 @@ import {
 const HOST = "host-local";
 const ORGANIZATION = "organization-local";
 const TOKEN_CANARY = "ghp_CANARY0000000000000000000000000000";
+const NODE_EXECUTABLE = realpathSync(process.execPath);
 
 function project(path: string | null, id = "project-1"): Project {
   return { id, name: "Orchestrator", slug: "orchestrator", repoCloneUrl: null, githubRepositoryId: null, setUp: "yes", path };
@@ -231,7 +233,7 @@ test("T-CMD-01 spawning is shell free, so metacharacters stay inert data", async
     const sentinel = join(base, "sentinel");
     const payload = `; touch ${sentinel} && echo pwned | cat $(id) \`id\``;
     const result = await runProcess(
-      process.execPath,
+      NODE_EXECUTABLE,
       ["-e", "process.stdout.write(process.argv[1])", payload],
       20_000,
     );
@@ -248,11 +250,11 @@ test("T-CMD-02 only a pinned executable and a control-free argument vector can s
     await assert.rejects(runProcess(executable, ["--version"], 1_000), SecurityError);
   }
   assert.throws(() => assertPinnedExecutable("superset"), SecurityError);
-  assert.equal(assertPinnedExecutable(process.execPath), process.execPath);
+  assert.equal(assertPinnedExecutable(NODE_EXECUTABLE), NODE_EXECUTABLE);
 
   for (const argument of ["a\nb", "a\u0000b", "a\u001b[2Jb", "a\rb"]) {
     assert.throws(() => assertFixedArguments(["status", argument]), SecurityError);
-    await assert.rejects(runProcess(process.execPath, ["-e", "0", argument], 1_000), SecurityError);
+    await assert.rejects(runProcess(NODE_EXECUTABLE, ["-e", "0", argument], 1_000), SecurityError);
   }
   assert.deepEqual(assertFixedArguments(["workspaces", "list", "--local", "--json"]),
     ["workspaces", "list", "--local", "--json"]);
@@ -265,7 +267,7 @@ test("T-CMD-02 rejects group or other writable executables on POSIX", async (con
   }
   await withDirectory(async (base) => {
     const executable = join(base, "node-copy");
-    await copyFile(process.execPath, executable);
+    await copyFile(NODE_EXECUTABLE, executable);
     for (const mode of [0o775, 0o757]) {
       await chmod(executable, mode);
       await assert.rejects(runProcess(executable, ["--version"], 5_000), /provenance is not trusted/);
@@ -276,7 +278,7 @@ test("T-CMD-02 rejects group or other writable executables on POSIX", async (con
 test("T-CMD-02 discovery output is bounded while the child is running", async () => {
   await assert.rejects(
     runProcess(
-      process.execPath,
+      NODE_EXECUTABLE,
       ["-e", `process.stdout.write("x".repeat(${4 * 1024 * 1024 + 1}))`],
       20_000,
     ),
@@ -286,7 +288,7 @@ test("T-CMD-02 discovery output is bounded while the child is running", async ()
 
 test("T-CMD-02 discovery preserves UTF-8 split across child writes", async () => {
   const result = await runProcess(
-    process.execPath,
+    NODE_EXECUTABLE,
     ["-e", "process.stdout.write(Buffer.from([0xe2])); setTimeout(() => process.stdout.write(Buffer.from([0x82, 0xac])), 10)"],
     20_000,
   );
@@ -329,7 +331,7 @@ test("T-ENV-01 the child environment is an allowlist and carries no seeded secre
   for (const name of seeded) process.env[name] = TOKEN_CANARY;
   try {
     const inherited = await runProcess(
-      process.execPath,
+      NODE_EXECUTABLE,
       ["-e", "process.stdout.write(JSON.stringify(process.env))"],
       20_000,
     );

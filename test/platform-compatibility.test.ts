@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { realpathSync } from "node:fs";
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +7,8 @@ import test from "node:test";
 import { DurableStore } from "../src/store.js";
 import { SecurityError } from "../src/security.js";
 import { runProcess, SupersetDiscoveryError } from "../src/superset-discovery.js";
+
+const NODE_EXECUTABLE = realpathSync(process.execPath);
 
 test("durable state supports nested paths with spaces and non-ASCII characters", async () => {
   const directory = await mkdtemp(join(tmpdir(), "orchestrator portability "));
@@ -25,7 +28,7 @@ test("durable state supports nested paths with spaces and non-ASCII characters",
 
 test("real process runner preserves literal arguments and separates output", async () => {
   const literal = "space ; $HOME [brackets]";
-  const result = await runProcess(process.execPath, [
+  const result = await runProcess(NODE_EXECUTABLE, [
     "-e",
     "process.stdout.write(process.argv[1]); process.stderr.write('diagnostic')",
     literal,
@@ -41,7 +44,7 @@ test("real process runner reports missing executables and timeouts", async () =>
     (error: unknown) => error instanceof SecurityError && error.code === "POLICY_DENIED",
   );
   await assert.rejects(
-    runProcess(process.execPath, ["-e", "setInterval(() => {}, 1000)"], 50),
+    runProcess(NODE_EXECUTABLE, ["-e", "setInterval(() => {}, 1000)"], 50),
     (error: unknown) => error instanceof SupersetDiscoveryError && error.code === "TIMED_OUT",
   );
 });
