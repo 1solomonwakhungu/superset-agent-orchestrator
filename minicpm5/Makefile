@@ -10,7 +10,7 @@ test:
 	uv run --frozen pytest
 
 capture:
-	uv run --frozen python scripts/capture_env.py
+	./scripts/run_capture.sh
 
 fingerprint:
-	sh scripts/run_fingerprint.sh
+	./scripts/run_fingerprint.sh

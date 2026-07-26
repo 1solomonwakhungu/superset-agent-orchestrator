@@ -66,7 +66,32 @@ def test_fingerprint_wrapper_sets_deterministic_environment(tmp_path) -> None:
     fake_uv.chmod(0o755)
 
     completed = subprocess.run(
-        ["/bin/sh", "scripts/run_fingerprint.sh", "--local-files-only"],
+        ["scripts/run_fingerprint.sh", "--local-files-only"],
+        cwd=project,
+        env={"PATH": str(fake_bin)},
+        check=False,
+    )
+
+    assert completed.returncode == 0
+
+
+def test_capture_wrapper_sets_deterministic_environment(tmp_path) -> None:
+    project = Path(__file__).parents[1]
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_uv = fake_bin / "uv"
+    fake_uv.write_text(
+        "#!/bin/sh\n"
+        "test \"$OMP_NUM_THREADS,$MKL_NUM_THREADS,$OPENBLAS_NUM_THREADS,"
+        "$VECLIB_MAXIMUM_THREADS,$NUMEXPR_NUM_THREADS,$PYTHONHASHSEED,"
+        "$TOKENIZERS_PARALLELISM\" = \"1,1,1,1,1,0,false\"\n"
+        "test \"$*\" = \"run --frozen python scripts/capture_env.py --output capture.md\"\n",
+        encoding="utf-8",
+    )
+    fake_uv.chmod(0o755)
+
+    completed = subprocess.run(
+        ["scripts/run_capture.sh", "--output", "capture.md"],
         cwd=project,
         env={"PATH": str(fake_bin)},
         check=False,
