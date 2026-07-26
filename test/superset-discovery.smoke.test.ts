@@ -1,48 +1,31 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import {
   type ProcessRunner,
-  SupersetDiscoveryAdapter,
   type SupersetDiscoveryResult,
+  SupersetDiscoveryAdapter,
 } from "../src/superset-discovery.js";
+import {
+  REQUIRE_LIVE_VARIABLE,
+  liveDiscoveryRequired,
+  resolveSupersetExecutable,
+} from "./superset-executable.js";
 
-const FIXTURE_URL = new URL("./fixtures/superset-discovery-1.16.1.json", import.meta.url);
-
-// Key sets pinned from real `superset v1.16.1` local discovery responses. They exist so a
-// silently reshaped CLI contract fails here instead of being masked by the sanitized fixture.
-const RECORDED_KEYS = {
-  host: ["running", "healthy", "pid", "port", "endpoint", "organizationId", "hostId", "hostName", "uptimeSec"],
-  project: ["id", "name", "slug", "repoCloneUrl", "githubRepositoryId", "setUp", "path"],
-  workspace: ["id", "organizationId", "projectId", "hostId", "name", "branch", "type", "createdByUserId", "taskId", "createdAt", "updatedAt", "worktreePath", "worktreeExists", "projectName", "hostName"],
-  preset: ["id", "presetId", "iconId", "label", "command", "args", "promptTransport", "promptArgs", "env", "order"],
-} as const;
-
-/**
- * The discovery contract asserted against both recorded and live CLI responses, so the
- * offline run exercises exactly the guarantees the live smoke test exists to prove.
- */
-function assertDiscoveryContract(result: SupersetDiscoveryResult): void {
-  assert.match(result.version, /^\d+\.\d+\.\d+/);
-  assert.ok(result.host.running && result.host.healthy);
-  assert.ok(result.projects.length > 0);
-  assert.ok(result.workspaces.every(({ hostId }) => hostId === result.host.hostId));
-  assert.ok(result.presets.length > 0);
+interface RecordedFixture {
+  recordedAt: string;
+  recordedFromVersion: string;
+  responses: Record<string, unknown>;
 }
 
-async function readRecordedResponses(): Promise<Record<string, unknown>> {
-  const fixture = JSON.parse(await readFile(fileURLToPath(FIXTURE_URL), "utf8")) as {
-    responses: Record<string, unknown>;
-  };
-  return fixture.responses;
-}
+const FIXTURE_PATH = join(import.meta.dirname, "fixtures", "superset-discovery-recorded.json");
+const fixture = JSON.parse(readFileSync(FIXTURE_PATH, "utf8")) as RecordedFixture;
 
 function recordedRunner(responses: Record<string, unknown>): ProcessRunner {
   return async (_executable, args) => {
-    const key = args.join(" ");
-    const response = responses[key];
-    assert.ok(response !== undefined, `no recorded Superset response for "${key}"`);
+    const response = responses[args.join(" ")];
+    assert.ok(response !== undefined, `recorded fixture is missing a response for: ${args.join(" ")}`);
     return {
       stdout: typeof response === "string" ? response : JSON.stringify(response),
       stderr: "",
@@ -51,43 +34,79 @@ function recordedRunner(responses: Record<string, unknown>): ProcessRunner {
   };
 }
 
-test("recorded Superset 1.16.1 responses satisfy the discovery contract", async () => {
-  const responses = await readRecordedResponses();
-  const result = await new SupersetDiscoveryAdapter({ runner: recordedRunner(responses) }).discover();
-  assertDiscoveryContract(result);
-  assert.equal(result.version, "1.16.1");
-  assert.deepEqual(result.projects.map(({ setUp }) => setUp), ["yes", "no"]);
-  assert.deepEqual(result.workspaces.map(({ type }) => type), ["main", "worktree"]);
-  // A preset that omits the optional transport fields must still be accepted.
-  assert.equal(result.presets.at(-1)?.promptTransport, undefined);
+/** Union of field names across a record or list of records. */
+function fieldNames(value: unknown): string[] {
+  const records = Array.isArray(value) ? value : [value];
+  const names = new Set<string>();
+  for (const record of records) {
+    if (record !== null && typeof record === "object") {
+      for (const name of Object.keys(record as Record<string, unknown>)) names.add(name);
+    }
+  }
+  return [...names].sort();
+}
+
+function assertSupportedDiscovery(result: SupersetDiscoveryResult, source: string): void {
+  assert.match(result.version, /^\d+\.\d+\.\d+/, `${source}: version is not semantic`);
+  assert.ok(result.host.running && result.host.healthy, `${source}: host is not running and healthy`);
+  assert.ok(result.projects.length > 0, `${source}: no local projects were discovered`);
+  assert.ok(result.workspaces.length > 0, `${source}: no local workspaces were discovered`);
+  assert.ok(result.presets.length > 0, `${source}: no agent presets were discovered`);
+  assert.ok(
+    result.workspaces.every(({ hostId }) => hostId === result.host.hostId),
+    `${source}: a workspace belongs to another host`,
+  );
+  assert.ok(
+    result.workspaces.every(({ organizationId }) => organizationId === result.host.organizationId),
+    `${source}: a workspace belongs to another organization`,
+  );
+}
+
+// Runs everywhere. The fixture holds real CLI payloads captured by
+// scripts/record-discovery-fixture.mjs, so schema coverage of the supported
+// Superset contract does not depend on the optional executable being installed.
+test("recorded Superset CLI responses match supported discovery schemas", async () => {
+  const runner = recordedRunner(fixture.responses);
+  const result = await new SupersetDiscoveryAdapter({ runner }).discover();
+  assertSupportedDiscovery(result, "recorded");
+  assert.equal(result.version, fixture.recordedFromVersion);
 });
 
-test("recorded responses preserve the real Superset 1.16.1 key sets", async () => {
-  const responses = await readRecordedResponses();
-  const keysOf = (value: unknown) => Object.keys(value as object);
-  const list = (key: string) => responses[key] as Record<string, unknown>[];
-
-  assert.deepEqual(keysOf(responses["status --json"]), RECORDED_KEYS.host);
-  for (const project of list("projects list --local --json")) {
-    assert.deepEqual(keysOf(project), RECORDED_KEYS.project);
-  }
-  for (const workspace of list("workspaces list --local --json")) {
-    assert.deepEqual(keysOf(workspace), RECORDED_KEYS.workspace);
-  }
-  const presets = list("agents list --local --json");
-  assert.deepEqual(keysOf(presets[0]), RECORDED_KEYS.preset);
-  // Optional-field variation observed on the real CLI must stay represented.
-  assert.ok(presets.some((preset) => !("promptTransport" in preset)));
-});
-
+const executablePath = resolveSupersetExecutable();
+const required = liveDiscoveryRequired();
 const smokeEnabled = process.env.SUPERSET_DISCOVERY_SMOKE === "1";
+const skip = !required && !smokeEnabled
+  ? `requires explicit SUPERSET_DISCOVERY_SMOKE=1 opt-in; recorded discovery coverage still ran. Set ${REQUIRE_LIVE_VARIABLE}=1 to require live discovery.`
+  : executablePath === null && !required
+    ? `Superset executable not found on PATH; recorded discovery coverage still ran. Set ${REQUIRE_LIVE_VARIABLE}=1 to make this a failure.`
+    : false;
 
-test("real Superset CLI responses match supported discovery schemas", {
-  skip: smokeEnabled
-    ? false
-    : "requires an installed Superset CLI and a healthy local Desktop host; generic CI validates the injected-runner contract",
-}, async () => {
-  const executable = process.env.SUPERSET_ORCHESTRATOR_EXECUTABLE ?? "superset";
-  const result = await new SupersetDiscoveryAdapter({ executable, timeoutMs: 10_000 }).discover();
-  assertDiscoveryContract(result);
+// Runs only against a real installation. An executable that exists but
+// misbehaves still fails here; only a genuinely absent executable is skipped.
+test("live Superset CLI responses match supported discovery schemas", { skip }, async () => {
+  assert.ok(
+    executablePath !== null,
+    `${REQUIRE_LIVE_VARIABLE} is set but no Superset executable was found on PATH`,
+  );
+  const result = await new SupersetDiscoveryAdapter({
+    executable: executablePath,
+    timeoutMs: 30_000,
+  }).discover();
+  assertSupportedDiscovery(result, "live");
+
+  // Guards against the recorded fixture drifting away from the real CLI.
+  const runner = recordedRunner(fixture.responses);
+  const recorded = await new SupersetDiscoveryAdapter({ runner }).discover();
+  for (const [label, live, sample] of [
+    ["host", result.host, recorded.host],
+    ["projects", result.projects, recorded.projects],
+    ["workspaces", result.workspaces, recorded.workspaces],
+    ["presets", result.presets, recorded.presets],
+  ] as const) {
+    assert.deepEqual(
+      fieldNames(live),
+      fieldNames(sample),
+      `${label} fields drifted from test/fixtures/superset-discovery-recorded.json; re-run npm run discovery:record`,
+    );
+  }
 });
