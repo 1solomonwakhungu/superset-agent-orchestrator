@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { AgentAdapter, RunResult, TerminalRunStatus } from "./agent-adapter.js";
 import { parseProviderResult, parseProviderStatus, ProviderProtocolError } from "./provider-protocol.js";
-import { assertBoundedOptionalText, assertIdentifier, MAX_RESULT_BYTES, SecurityError } from "./security.js";
+import { assertBoundedOptionalText, assertIdentifier, MAX_RESULT_BYTES } from "./security.js";
 import { DurableStore, type AgentResultClaim, type CapturedResult } from "./store.js";
 
 export type ResultDelivery =
@@ -45,10 +45,11 @@ export class ResultCaptureService {
       }
       result = parseProviderResult(providerResult);
     } catch (error) {
-      if (error instanceof SecurityError) throw error;
       return this.ingest(assignmentId, deliveryId, {
         kind: "malformed",
-        error: error instanceof Error ? error.message : String(error),
+        error: error instanceof Error && error.message.includes("exceeds the 4194304 byte limit")
+          ? "Provider result response was oversized"
+          : error instanceof Error ? error.message : String(error),
       });
     }
     if (result !== undefined && result.status !== state.status) {
