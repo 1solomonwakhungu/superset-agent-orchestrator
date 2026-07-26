@@ -878,12 +878,14 @@ export class DurableStore {
     assignments: Assignment[];
     sessions: Session[];
     batch: Batch;
+    workers: Worker[];
     events: LaunchAuditEvent[];
   }): Promise<{ assignments: Assignment[]; created: boolean }> {
     return this.withLock(async () => {
       await this.load();
       input.assignments.forEach((assignment) => assignmentSchema.parse(assignment));
       input.sessions.forEach((session) => sessionSchema.parse(session));
+      input.workers.forEach((worker) => workerSchema.parse(worker));
       batchSchema.parse(input.batch);
       input.events.forEach((auditEvent) => auditEventSchema.parse(auditEvent));
       const existing = input.assignments.map((assignment) =>
@@ -907,7 +909,9 @@ export class DurableStore {
       this.state.sessions.push(...input.sessions);
       this.state.batches.push(input.batch);
       this.state.assignments.push(...input.assignments);
+      this.state.workers.push(...input.workers);
       this.state.auditEvents.push(...input.events);
+      this.rebuildIndexes();
       await this.persist();
       return { assignments: structuredClone(input.assignments), created: true };
     });
