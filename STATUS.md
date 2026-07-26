@@ -39,6 +39,16 @@
   (`WORKSPACE_IDENTITY_CHANGED`), read-only sandbox sentinel enforcement, and
   process-group descendant reconciliation. Writer launch stays disabled.
 
+## PER-364 MiniCPM5 architecture audit
+
+- Added a no-model-load audit of the pinned checkpoint's actual safetensors header,
+  config, tokenizer metadata, special tokens, and exact chat template.
+- Generates deterministic tensor inventory, layer/module totals, tokenizer report,
+  exact template, and a round-tripped tool-call rendering under `audit/`.
+- Verified 219 tensors and 1,080,632,832 parameters; `npm run verify` passed
+  131 runnable TypeScript tests and 6 Python tests with one explicit skip.
+- Next: PR delivery, exact-head CI, merge, and merged-main readback.
+
 ## PER-344 concurrency limits and backpressure
 
 - Added configurable global, per-host, per-project, per-agent, and per-workspace
