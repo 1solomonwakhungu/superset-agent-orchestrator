@@ -391,6 +391,39 @@ test("an expired deadline is a failed/deadline_exceeded outcome that stops the r
   assert.equal(worker!.stopReason, "deadline_exceeded");
 }));
 
+test("deadline claims are serialized while provider cleanup remains bounded and concurrent", async () => harness(async (store) => {
+  const created = await store.createBatch("deadline-concurrency", "client", Array.from(
+    { length: 8 },
+    (_, index) => ({ agent: "codex", task: `work-${index}` }),
+  ));
+  const deadline = new Date("2026-07-25T01:00:00.000Z");
+  for (const [index, worker] of created.sessions.entries()) {
+    await store.bindWorkerRun(worker.id, `deadline-run-${index}`);
+    await store.setWorkerDeadline(worker.id, deadline);
+  }
+  let active = 0;
+  let maximum = 0;
+  let releaseProviderCalls!: () => void;
+  const providerCallsReady = new Promise<void>((resolve) => { releaseProviderCalls = resolve; });
+  const adapter = stub({
+    cancellation: "supported",
+    cancel: async () => {
+      active += 1;
+      maximum = Math.max(maximum, active);
+      if (active === 4) releaseProviderCalls();
+      await providerCallsReady;
+      active -= 1;
+      return { status: "accepted" as const };
+    },
+    status: async ({ runId }) => ({ runId, status: "cancelled" as const, updatedAt: "2026-07-25T01:00:01.000Z" }),
+    result: async () => ({ status: "cancelled" as const }),
+  });
+
+  const expired = await new LifecycleService(store, adapter).enforceDeadlines(new Date("2026-07-25T01:00:01.000Z"));
+  assert.equal(expired.length, created.sessions.length);
+  assert.equal(maximum, 4);
+}));
+
 test("deadline claim rechecks a concurrently extended deadline", async () => harness(async (store) => {
   const created = await store.createBatch("deadline-extended", "client", [{ agent: "codex", task: "work" }]);
   const id = created.sessions[0]!.id;
