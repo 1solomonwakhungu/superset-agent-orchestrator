@@ -119,7 +119,7 @@ export class SupersetProcessAdapter implements AgentAdapter {
         (error, stdout, stderr) => {
           if (error !== null) {
             if (signal?.aborted) {
-              reject(signal.reason);
+              reject(signal.reason instanceof Error ? signal.reason : new Error("Provider operation aborted"));
               return;
             }
             const processError = error as NodeJS.ErrnoException & { killed?: boolean; signal?: NodeJS.Signals };
