@@ -5,6 +5,8 @@ export * from "./concurrency-scheduler.js";
 export * from "./opencode-response-adapter.js";
 export * from "./fake-agent-adapter.js";
 export * from "./launch-service.js";
+export * from "./lifecycle-service.js";
+export * from "./provider-protocol.js";
 export * from "./result-capture.js";
 export * from "./launch-coordinator.js";
 export * from "./storage.js";
