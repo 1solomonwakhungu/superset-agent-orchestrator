@@ -13,6 +13,7 @@
     }
   },
   "bin": {
+    "experiment-registry": "dist/src/experiment-registry-cli.js",
     "superset-agent-orchestrator": "dist/src/server.js",
     "superset-agent-orchestrator-storage": "dist/src/storage-cli.js"
   },

@@ -26,6 +26,21 @@
   report JSON Schema validation; and `git diff --check`.
 - Next: open and merge the PR, then synchronize Linear with exact identifiers.
 
+## PER-370 experiment registry, 2026-07-26
+
+- Implemented a strict append-only JSONL experiment registry with generated IDs,
+  terminal immutable records, deterministic hypothesis/checkpoint queries, and
+  structured baseline diffs.
+- Added filesystem locking and reload-under-lock writes; a real 12-process test
+  proves concurrent writers preserve every unique entry.
+- Added the `experiment-registry` CLI and policy for baseline linkage, lineage
+  separation, sensitive environment data, artifact handling, and Git conflicts.
+- Verification: focused tests passed 4/4; full `npm run check` passed 438/439 Node
+  tests with one intentional skip, all coverage thresholds, 5/6 Python tests with
+  one intentional skip, and all schema, provenance, and research gates.
+- Next: merge the exact-head PR after review and CI, then record its URL and merge
+  SHA in the canonical Linear completion note.
+
 ## PER-346 deadline claim serialization, 2026-07-26
 
 - PR #80 serialized durable deadline-expiry claims before retaining bounded
