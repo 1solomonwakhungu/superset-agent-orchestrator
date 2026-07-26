@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { FakeAgentAdapter, type FakeRunScript } from "./fake-agent-adapter.js";
 import { LaunchCoordinator, type AttributedLaunchRequest } from "./launch-coordinator.js";
 import { descriptorCount, numericArgument, parseArguments, percentile, realMeasurements, rejectUnknownArguments, writeReports, type PerformanceMeasurements } from "./performance-report.js";
+import type { WorkspaceAuthorizer } from "./security.js";
 import { DurableStore, type QueryMeasurement } from "./store.js";
 
 export const FAKE_BENCHMARK_SCHEMA = "per-351.fake-backend.v1";
@@ -27,14 +28,15 @@ export async function runFakeBenchmark(options: {
     statuses: ["queued", "running", "succeeded"], result: { status: "succeeded", output: `result-${index}` },
   }));
   const adapter = new FakeAgentAdapter(scripts);
-  const coordinator = new LaunchCoordinator(store, adapter, {
+  const workspaceAuthorizer: WorkspaceAuthorizer = {
     authorize: async (workspaceId) => ({
       workspaceId,
-      projectId: "per-351-fake",
+      projectId: "per-351-benchmark",
       canonicalPath: join(directory, workspaceId),
       revalidate: async () => undefined,
     }),
-  });
+  };
+  const coordinator = new LaunchCoordinator(store, adapter, workspaceAuthorizer);
   const launchLatencies: number[] = [];
   const failures: string[] = [];
   const measurements = options.measurements ?? realMeasurements();
