@@ -222,11 +222,15 @@ export class LifecycleService {
    */
   async enforceDeadlines(now = this.wallClockNow()): Promise<ExpiredWorker[]> {
     const overdue = await this.store.overdueWorkers(now);
-    const outcomes = await mapConcurrent(overdue, MAX_PROVIDER_CONCURRENCY, async (worker): Promise<ExpiredWorker | undefined> => {
-      // The deadline is claimed before the provider is touched, so concurrent sweeps expire and report
-      // each session exactly once. Stopping the run afterwards is best-effort cleanup.
+    const claimedWorkers = [];
+    for (const worker of overdue) {
       const { worker: settled, claimed } = await this.store.expireWorker(worker.id, { at: now });
-      if (!claimed || !DurableStore.isTerminal(settled.status)) return undefined;
+      if (claimed && DurableStore.isTerminal(settled.status)) {
+        claimedWorkers.push({ worker, settled: { ...settled, status: settled.status } });
+      }
+    }
+    const outcomes = await mapConcurrent(claimedWorkers, MAX_PROVIDER_CONCURRENCY, async ({ worker, settled }): Promise<ExpiredWorker> => {
+      // Durable claims are serialized through the single-writer store. Only provider cleanup fans out.
       let providerStopError: string | undefined;
       if (this.adapter.cancellation === "supported" && settled.runId !== undefined) {
         const runId = settled.runId;
@@ -255,7 +259,7 @@ export class LifecycleService {
         ...(providerStopError === undefined ? {} : { providerStopError }),
       };
     });
-    return outcomes.filter((outcome): outcome is ExpiredWorker => outcome !== undefined);
+    return outcomes;
   }
 
   async hasOverdueDeadlines(now = this.wallClockNow()): Promise<boolean> {
