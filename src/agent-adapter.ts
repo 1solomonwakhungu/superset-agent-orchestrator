@@ -32,7 +32,7 @@ export type RunResult =
 export interface AgentAdapter {
   /** Returns the one run previously accepted for this key, or undefined when absence is authoritative. */
   findByIdempotencyKey(idempotencyKey: string): Promise<RunHandle | undefined>;
-  /** Must revalidate the workspace immediately before spawning and use only the supplied environment. */
+  /** Atomically returns the existing run for the key after revalidation, using only the supplied environment. */
   launch(request: LaunchRequest): Promise<RunHandle>;
   status(handle: RunHandle): Promise<RunState>;
   result(handle: RunHandle): Promise<RunResult | undefined>;

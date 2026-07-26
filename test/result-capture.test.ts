@@ -110,6 +110,54 @@ test("makes duplicate and late delivery idempotent and rejects conflicts", async
   }
 });
 
+test("concurrent conflicting deliveries persist exactly one authoritative result", async () => {
+  const context = await fixture();
+  try {
+    const deliveries = [
+      { kind: "adapter_result", result: { status: "succeeded", output: "winner-a" } } as const,
+      { kind: "adapter_result", result: { status: "failed", error: "winner-b", retryable: false } } as const,
+    ];
+    const settled = await Promise.allSettled(deliveries.map((delivery, index) =>
+      new ResultCaptureService(new DurableStore(context.path), context.adapter)
+        .ingest(context.accepted.assignmentId, `racing-delivery-${index}`, delivery)));
+
+    assert.equal(settled.filter(({ status }) => status === "fulfilled").length, 1);
+    assert.equal(settled.filter(({ status }) => status === "rejected").length, 1);
+    const state = JSON.parse(await readFile(context.path, "utf8")) as DurableState;
+    assert.equal(state.capturedResults?.length, 1);
+    assert.match(state.capturedResults?.[0]?.deliveryId ?? "", /^racing-delivery-[01]$/);
+  } finally {
+    await rm(context.directory, { recursive: true, force: true });
+  }
+});
+
+test("rejects forged result attribution without mutating durable state", async () => {
+  const context = await fixture();
+  try {
+    const assignment = await context.store.assignmentForResult(context.accepted.assignmentId);
+    const before = await readFile(context.path, "utf8");
+    await assert.rejects(context.store.captureResult({
+      deliveryId: "forged-attribution",
+      deliveryFingerprint: "a".repeat(64),
+      assignmentId: assignment.id,
+      batchId: assignment.batchId,
+      sessionId: assignment.sessionId,
+      workspaceId: assignment.workspaceId ?? "",
+      workspacePath: assignment.workspacePath,
+      attemptId: assignment.attemptId ?? "",
+      attempt: assignment.attempt ?? 0,
+      runId: assignment.runId ?? "",
+      attribution: { agent: "attacker", task: assignment.attribution.task },
+      claim: { status: "succeeded", completeness: "complete", output: "forged" },
+      verifiedArtifacts: [],
+      capturedAt: new Date().toISOString(),
+    }), /attribution does not match/);
+    assert.equal(await readFile(context.path, "utf8"), before);
+  } finally {
+    await rm(context.directory, { recursive: true, force: true });
+  }
+});
+
 test("does not capture a nonterminal adapter result", async () => {
   const directory = await mkdtemp(join(tmpdir(), "orchestrator-result-"));
   try {
