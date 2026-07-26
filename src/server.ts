@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
-import { realpath } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -98,12 +98,20 @@ async function main(): Promise<void> {
 
   const providerExecutable = process.env.SUPERSET_ORCHESTRATOR_PROVIDER_EXECUTABLE;
   const providerArgs = JSON.parse(process.env.SUPERSET_ORCHESTRATOR_PROVIDER_ARGS ?? "[]") as string[];
+  const providerTimeoutMs = Number(process.env.SUPERSET_ORCHESTRATOR_PROVIDER_TIMEOUT_MS ?? 30_000);
   const provider = providerExecutable === undefined ? undefined : new SupersetProcessAdapter({
     executable: providerExecutable,
     args: providerArgs,
-    timeoutMs: Number(process.env.SUPERSET_ORCHESTRATOR_PROVIDER_TIMEOUT_MS ?? 30_000),
+    timeoutMs: providerTimeoutMs,
   });
-  const lifecycle = new LifecycleService(store, provider ?? unsupportedBackend);
+  const lifecycle = new LifecycleService(
+    store,
+    provider ?? unsupportedBackend,
+    undefined,
+    undefined,
+    undefined,
+    provider === undefined ? undefined : providerTimeoutMs,
+  );
   let lifecycleSweep: Promise<void> | undefined;
   const deadlineTimer = setInterval(() => {
     if (lifecycleSweep !== undefined) return;
@@ -131,15 +139,18 @@ async function main(): Promise<void> {
   const workspaceAuthorizer: WorkspaceAuthorizer | undefined = integrationToolsEnabled && integrationWorkspaceRoot !== undefined
     ? {
         authorize: async (workspaceId) => {
-          const canonicalPath = assertDataOperand(await realpath(join(integrationWorkspaceRoot, workspaceId)), "workspace path");
+          if (isAbsolute(workspaceId) || workspaceId === "." || workspaceId === ".." || workspaceId.includes("/") || workspaceId.includes("\\")) {
+            throw new SecurityError("POLICY_DENIED", "Integration workspace ID must name a direct child of the configured test root");
+          }
+          const canonicalPath = assertDataOperand(await realpath(resolve(canonicalIntegrationWorkspaceRoot!, workspaceId)), "workspace path");
           const rootRelativePath = relative(canonicalIntegrationWorkspaceRoot!, canonicalPath);
-          if (rootRelativePath === "" || rootRelativePath === ".." || rootRelativePath.startsWith(`..${sep}`) || isAbsolute(rootRelativePath)) {
+          if (rootRelativePath === "" || rootRelativePath === ".." || rootRelativePath.startsWith(`..${sep}`) || isAbsolute(rootRelativePath) || !(await stat(canonicalPath)).isDirectory()) {
             throw new SecurityError("POLICY_DENIED", "Integration workspace must be a child of the configured test root");
           }
           return {
             workspaceId, projectId: "provider-integration", canonicalPath,
             revalidate: async () => {
-              const revalidatedPath = await realpath(join(integrationWorkspaceRoot, workspaceId));
+              const revalidatedPath = await realpath(join(canonicalIntegrationWorkspaceRoot!, workspaceId));
               const revalidatedRelativePath = relative(canonicalIntegrationWorkspaceRoot!, revalidatedPath);
               if (revalidatedPath !== canonicalPath || revalidatedRelativePath === "" || revalidatedRelativePath === ".." || revalidatedRelativePath.startsWith(`..${sep}`) || isAbsolute(revalidatedRelativePath)) {
                 throw new Error("Integration workspace identity changed before launch");
@@ -273,15 +284,15 @@ async function main(): Promise<void> {
             });
             continue;
           }
-          const cancellation = await provider.cancel({ runId: assignment.runId }, reason);
-          if (cancellation?.status === "unsupported") {
+          const cancellation = await lifecycle.cancelSession(sessionId, "user_requested", reason);
+          if ("error" in cancellation) {
             items.push({
               session_id: sessionId,
-              error: contractError("CANCEL_UNSUPPORTED", "The backend rejected cancellation as unsupported"),
+              error: contractError(cancellation.error, cancellation.message),
             });
             continue;
           }
-          items.push({ session_id: sessionId, canceled: true });
+          items.push({ session_id: sessionId, canceled: cancellation.status === "canceled" });
         } catch (error) {
           const failure = error instanceof SupersetProcessError
             ? contractError(error.code, error.message)
