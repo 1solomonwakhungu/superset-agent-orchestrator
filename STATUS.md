@@ -1,5 +1,15 @@
 # Status
 
+## PER-347 provider cancellation contract, 2026-07-26
+
+- Mapped a subprocess provider's declared `CANCEL_UNSUPPORTED` failure to the
+  adapter-level unsupported outcome instead of misreporting provider unavailability.
+- Added fake-provider integration coverage proving lifecycle cancellation restores
+  durable state and issues exactly one provider cancellation request.
+- Focused regression, typecheck, lint, and diff checks passed. After integrating
+  the latest PR head, the full check reached 369 tests with one unrelated
+  filesystem cleanup race; that lifecycle test passed immediately in isolation.
+
 ## PER-344 post-merge recovery accounting, 2026-07-26
 
 - Confirmed merged implementation PR 23 and lineage restoration PR 55 are on
@@ -31,45 +41,46 @@
   partial output with exact completeness.
 - Added MCP tools `batches_cancel`, `batches_wait`, `sessions_set_deadline`, and
   `deadlines_enforce`, plus a background deadline sweep.
-- Merged current `main` (`90cef0d`); the only conflict was additive `STATUS.md`
-  sections and both sides were kept.
-- Made offline verification deterministic: the live Superset smoke test now skips
-  only when the executable is genuinely absent (spawn `ENOENT`). A present but
-  broken, unhealthy, or malformed CLI still fails, and the run is mandatory when
-  `SUPERSET_ORCHESTRATOR_EXECUTABLE` is set or
-  `SUPERSET_ORCHESTRATOR_REQUIRE_LIVE_SMOKE=1`.
 - Kept real discovery schema coverage offline by recording sanitized Superset
   1.16.1 responses in `test/fixtures/`, replaying them through the real adapter
   against the same contract assertions, and pinning the real CLI key sets plus
   observed optional-field variation.
-- Verification: `npm run verify` passed 136/136 with the Superset CLI present and
-  135/136 with 1 declared skip and exit code 0 with the CLI absent from `PATH`;
-  focused lifecycle and race tests passed 33/33 across 10 consecutive runs;
-  `npm run check` and `git diff --check` passed.
-- Addressed all five PR review findings: atomic local cancellation, asynchronous
-  provider reconciliation, locked deadline rechecks, immediate all-error waits,
-  and the dedicated batch-cancellation response schema.
-- Final verification: `npm run verify` passed 143 tests with 1 expected live-CLI
-  skip; `npm run check`, schema generation, strict routing verification, and
-  `git diff --check` passed.
 - Independent review fixed published-schema/runtime drift for cancellation and
   wait, bounded and sanitized provider lifecycle calls, provider identity
   validation, single-flight background sweeps, parallel batch controls, and a
   production reconciliation path that retains results arriving after timeout.
-- Current verification: `npm run verify` passed 145 tests with 1 expected
-  live-CLI skip; focused lifecycle/MCP tests passed 42/42 across 10 runs (420
-  checks); typecheck, schema generation/diff, strict routing, and diff checks
-  passed.
 - Integrated signed quality-gate baseline `cbd44e1` and connected asynchronous
   launch acceptance/binding to lifecycle workers, including cancellation while
   provider launch is in flight. Added versioned deadline contracts, bounded
   provider abort coverage, limited batch cancellation concurrency, sequential
   reconciliation phases, protocol-identity errors, and pre-persist validation.
-- Post-integration verification: `npm ci` passed; `npm run check` passed 153/154
-  tests with 1 declared live smoke skip, 3/3 Python tests, schema no-diff, and
-  94.78% statement / 87.47% branch / 92.47% function coverage. Focused
-  launch/lifecycle/MCP tests passed 52/52 across 10 runs (520 checks), and
-  `git diff --check` passed.
+- Verifier hardening adds truthful launch-failure settlement, durable late-bound
+  stop handoff after deadline/cancellation, terminal settlement despite result
+  retrieval failure, runtime provider payload validation, bounded lifecycle
+  fan-out, restart-safe stop retry flags, and terminal deadline refusal.
+- Integrated merged PER-336 security hotfix `d0b57fe`; lifecycle projection files
+  now use fail-closed owner-only, no-follow, single-link validation and secure
+  atomic publication. Final local gates passed 197/198 tests with one declared
+  live smoke skip, Python 3/3, schema no-diff, and 93.36% statement / 87.13%
+  branch / 87.39% function coverage. Focused lifecycle/result tests passed 78/78
+  across 10 runs (780 checks).
+- Follow-up verification hardened terminal-result retries across cancellation,
+  deadline, restart, replica-lag, and concurrent-reconciler races; fenced stop
+  delivery through crash and unsupported-response races; and bounded durable
+  observation history and deadline sweeps with explicit `has_more` continuation.
+- Follow-up focused lifecycle/MCP tests passed 72/72. Full pre-commit verification
+  passed 299 runnable Node tests with 1 intentional skip, coverage, and 5 Python
+  tests with 1 intentional skip; clean-commit verification follows.
+- PR #66 follow-up integrated current `main`, retained both state-path security
+  layers, and keeps terminal reconciliation pending when the provider result is
+  temporarily absent. Focused lifecycle, launch, and security tests passed
+  111/111; the complete quality gate passed 343/344 TypeScript tests with one
+  declared live smoke skip, 6 Python tests with one model-dependent skip, schema
+  no-diff, provenance, and research verification.
+- Final review hardening also makes normal cancellation result failures retryable,
+  reports a deadline that wins the delivery-claim race from durable state, and
+  records `launch_failed` evidence when local cancellation beats stale dispatch.
+
 ## PER-351 performance and load validation
 
 - Added reproducible 100-session fake-backend and staged 30-agent controlled-load
@@ -610,6 +621,98 @@ locally.
   passed 32/32; lifecycle tests passed 40/40 across five consecutive runs; the
   complete quality gate passed once before the final state assertions and is being
   rerun at the exact commit head before merge.
+PER-345 path, command, environment, and audit security controls are implemented
+locally.
+
+- Added `src/security.ts`: typed `SecurityError` codes, canonical workspace
+  authorization through the registered local inventory, device and inode identity
+  revalidation before spawn, bounded text validation, pinned executable and fixed
+  argument-vector checks, data-operand checks, an exact-case child environment
+  allowlist, and recursive cycle-safe secret redaction.
+- Added `src/tool-security.ts`: the reviewed MVP tool snapshot plus exclusion of
+  shell, terminal, destructive, raw filesystem, raw Git, environment, secret,
+  database, relay, process-kill, and dynamic-plugin capabilities. `src/server.ts`
+  now asserts every registration and the whole surface before connecting.
+- Added a durable security audit trail in `src/store.ts`: normalized bounded
+  redacted fields, policy version, sequence numbers, a SHA-256 event chain, and
+  `verifySecurityAuditChain` for tamper detection. Launch acceptance and dispatch
+  record an allowed intent before every external launch and a typed denial for
+  every refusal.
+- Launch requests now carry `workspaceId` only. The canonical path is derived from
+  Superset's local inventory, never supplied by a client.
+- Added `docs/security/path-command-environment-audit-controls.md` mapping each
+  implemented control and its proving test.
+- Hardened the implementation review gaps: real process spawning now requires a
+  canonical absolute regular-file executable; relative inventory paths fail closed;
+  adapters receive only the child environment allowlist and must revalidate the
+  workspace at their actual launch boundary; result claims are redacted before
+  persistence and egress; and typed audit integrity checks run on load and append
+  against a persisted chain head so suffix truncation is detected.
+- Verification: `npm run verify` passed 110 tests including 18 new adversarial
+  tests for traversal, symlink and prefix escape, time-of-check/time-of-use
+  retargeting, shell-free spawning, executable and argument injection, malicious
+  environment seeding, secret canaries in state and audit, audit chain tampering,
+  and tool-surface drift. `npm run schema` produced no snapshot change and
+  `./scripts/verify-per-323.sh`, Markdown lint for `docs/security`, and
+  `git diff --check` passed.
+- Next: commit and push the hardening follow-up, open the PER-345 pull request, and
+  reconcile Linear from the parent factory.
+- PR 28 follow-up integrated `origin/main`, kept transient workspace discovery
+  failures retryable, and prevented pre-adapter audit failures from becoming
+  unknown external outcomes. Discovery tests now use an explicitly pinned
+  executable, and the external CLI smoke test is opt-in.
+- Verification: `npm run verify` passed 123 tests with 1 explicit external smoke
+  skip; `npm run check`, `npm run schema`, `./scripts/verify-per-323.sh`, security
+  Markdown lint, Python bytecode compilation, and `git diff --check` passed. The
+  merged PER-258 Python suite passed 2/3 under Apple system Python; its TLS
+  recovery fixture fails because LibreSSL ignores the subprocess `SSL_CERT_FILE`.
+- Final review hardening made launch acceptance and successful outcomes atomic
+  with their hash-chained security audit records, rejects a removed audit trail,
+  bounds result claims and live discovery output to 4 MiB, isolates retryable
+  workspace failures per assignment, and adds deterministic background shutdown.
+- Final verification after integrating current `origin/main`: `npm run verify`
+  passed 135 tests with 1 opt-in smoke
+  skip; the final 60-test security/launch/discovery/platform focus passed 20
+  consecutive runs (1,200/1,200); the repository quality gate passed formatting,
+  lint, typecheck, build, tests, coverage, Python 3.11 tests, and schema diff; routing
+  contract, security Markdown lint, Python
+  bytecode compilation, and `git diff --check` passed.
+- Verifier follow-up: fresh workspace inventory binding now rejects registration,
+  host/organization, owner, project/path, device, and inode drift at launch and
+  recovery; executable provenance rejects symlinks, unsafe POSIX modes/owners,
+  and replacement; all launch identities and metadata are explicitly bounded.
+- One injected redaction policy now covers raw and encoded literal canaries across
+  state, audit, diagnostics, errors, results, logs, and MCP egress. Coordinator
+  started/failed/recovered outcomes are atomic with their audit records, legacy
+  intents fail closed, and audit fields are well-formed and at most 256 characters.
+- Follow-up verification: full `npm run check` passed 145 tests with one opt-in
+  smoke skip, coverage at 95.35% statements/86.78% branches/90.29% functions/
+  95.35% lines, and Python 3.11 tests 3/3; the focused 71-test suite passed 20
+  consecutive runs (1,420/1,420), with schema no-diff, routing, Markdown lint,
+  compileall, and `git diff --check` also passing.
+PER-347/PER-345 merge resolution is complete locally.
+
+- Preserved fake-provider batch, lifecycle, restart, typed-error, and exact
+  attribution behavior while applying canonical workspace authorization, bounded
+  redaction, strict schemas, executable pinning, and hash-chained security audits.
+- Batch acceptance now persists one allowed security audit per assignment in the
+  same transaction, and the bounded redactor supports the documented 100-session
+  response size without truncating array items.
+- Verification: `npm run build` passed; focused launch, result, security,
+  discovery, fake-provider, and MCP integration tests passed 79/79; staged diff
+  checks passed with no unresolved merge paths.
+
+- Concurrent PER-347 merge resolution retained canonical production workspace
+  discovery and authorization while isolating the explicitly enabled fake-provider
+  tools behind their deterministic test authorizer. Launch rejection codes and
+  lifecycle failure state now persist atomically with launch evidence.
+- Merge verification: `npm run build` passed; focused security, launch,
+  idempotency, fake-provider process/MCP, and result tests passed 88/88; focused
+  lifecycle tests passed 40/40; conflict-marker and whitespace checks passed.
+- Latest concurrent PER-347 merge resolution preserves atomic batch acceptance
+  rollback, assignment/worker launch-failure transitions, hash-chained security
+  audits, typed provider errors, canonical workspace authorization, and lifecycle
+  synchronization. `npm run build` and 122 focused tests passed.
 
 PER-348 adversarial resilience regression coverage is complete locally.
 
@@ -765,3 +868,11 @@ PER-336 security hotfix is complete locally after insecure PR 26 merged as `8989
 - Follow-up PR 38 was opened at `2ae84ac`, then verifier review required committed no-overwrite concurrency coverage. New deterministic worker-barrier tests prove two simultaneous exports produce exactly one valid `0600` output and one refusal, while preexisting backup/export files and hard-link sources retain exact bytes and modes. The storage-focused 20/20 suite passed five consecutive runs.
 - Exact-head review then found missing ownership checks. Preexisting directories, registries, and sidecars now fail closed unless their UID matches the effective process UID where the platform exposes ownership; generated artifacts are explicitly ownership-tested.
 - Next: push the coverage follow-up to PR 38 and leave it unmerged for independent verification.
+
+## PER-347 final integration
+
+- Reconciled PR 33 and its merged provider-error companion with current main's workspace authorization, path security, redaction, audit-chain, and tool-surface controls.
+- Batch acceptance now authorizes canonical workspaces, writes one security audit per assignment atomically, preserves client-scoped idempotency, and persists complete typed provider errors before the durable write.
+- The gated production MCP fixture uses explicit canonical test workspaces; both fake-provider suites cover deterministic 100-session batches without weakening normal registered-workspace authorization.
+- Verification: `npm run check` passed with 0 failures, including formatting, ESLint, typecheck, build, TypeScript tests and coverage, Python tests (one optional skip), schema no-diff, provenance manifests, and the 28-work research contract. `git diff --check` passed.
+- Next: push the verified merge to PR 33, wait for exact-head checks, merge to main, and synchronize PER-347.

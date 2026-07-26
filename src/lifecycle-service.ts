@@ -1,4 +1,4 @@
-import type { AgentAdapter } from "./agent-adapter.js";
+import type { AgentAdapter, RunResult } from "./agent-adapter.js";
 import {
   parseProviderCancellation,
   parseProviderResult,
@@ -19,6 +19,7 @@ export const MAX_LIFECYCLE_WAIT_MS = 30_000;
 const DEFAULT_POLL_INTERVAL_MS = 25;
 export const PROVIDER_OPERATION_TIMEOUT_MS = 5_000;
 const PROVIDER_UNAVAILABLE_MESSAGE = "The backend lifecycle operation is temporarily unavailable";
+const MAX_PROVIDER_CONCURRENCY = 4;
 
 export type LifecycleErrorCode =
   | "SESSION_NOT_FOUND"
@@ -83,6 +84,9 @@ export function isCancellationRefused(result: CancellationResult): result is Can
  * CANCEL_UNSUPPORTED and leaves durable state untouched.
  */
 export class LifecycleService {
+  private activeProviderOperations = 0;
+  private readonly providerWaiters: Array<{ resolve: () => void; signal: AbortSignal }> = [];
+
   constructor(
     private readonly store: DurableStore,
     private readonly adapter: AgentAdapter,
@@ -160,12 +164,22 @@ export class LifecycleService {
       };
     }
     const handle = { runId: intent.worker.runId };
+    if (!await this.store.claimCancellationDelivery(sessionId)) {
+      const worker = await this.store.worker(sessionId);
+      return {
+        sessionId,
+        status: worker?.status ?? "canceling",
+        ...(worker?.stopReason === undefined ? {} : { stopReason: worker.stopReason }),
+        changed: true,
+      };
+    }
+    let deliveryCompleted = false;
     try {
       const outcome = parseProviderCancellation(await this.providerCall(
         (signal) => this.adapter.cancel(handle, detail ?? reason, signal),
       ));
       if (outcome !== undefined && outcome.status === "unsupported") {
-        const restored = await this.store.clearWorkerCancellation(sessionId);
+        const restored = await this.store.handleUnsupportedCancellation(sessionId);
         return {
           sessionId,
           error: "CANCEL_UNSUPPORTED",
@@ -174,8 +188,10 @@ export class LifecycleService {
         };
       }
       await this.store.markCancellationDelivered(sessionId);
+      deliveryCompleted = true;
       return await this.settleFromProvider(sessionId, handle, true);
     } catch (error) {
+      if (!deliveryCompleted) await this.store.releaseCancellationDelivery(sessionId);
       // Delivery is unknown, so cancellation intent stays recorded and the session remains canceling.
       return {
         sessionId,
@@ -189,7 +205,7 @@ export class LifecycleService {
   /** Cancels every session concurrently while preserving the durable batch order in the response. */
   async cancelBatch(batchId: string, reason: CancellationReason = "user_requested", detail?: string): Promise<CancellationResult[]> {
     const workers = await this.store.workersInBatch(batchId);
-    return mapConcurrent(workers, 8, (worker) => this.cancelSession(worker.id, reason, detail));
+    return mapConcurrent(workers, MAX_PROVIDER_CONCURRENCY, (worker) => this.cancelSession(worker.id, reason, detail));
   }
 
   /**
@@ -198,18 +214,28 @@ export class LifecycleService {
    */
   async enforceDeadlines(now = this.wallClockNow()): Promise<ExpiredWorker[]> {
     const overdue = await this.store.overdueWorkers(now);
-    const outcomes = await Promise.all(overdue.map(async (worker): Promise<ExpiredWorker | undefined> => {
+    const outcomes = await mapConcurrent(overdue, MAX_PROVIDER_CONCURRENCY, async (worker): Promise<ExpiredWorker | undefined> => {
       // The deadline is claimed before the provider is touched, so concurrent sweeps expire and report
       // each session exactly once. Stopping the run afterwards is best-effort cleanup.
       const { worker: settled, claimed } = await this.store.expireWorker(worker.id, { at: now });
       if (!claimed || !DurableStore.isTerminal(settled.status)) return undefined;
       let providerStopError: string | undefined;
       if (this.adapter.cancellation === "supported" && settled.runId !== undefined) {
+        const runId = settled.runId;
         try {
-          parseProviderCancellation(await this.providerCall(
-            (signal) => this.adapter.cancel({ runId: settled.runId! }, "deadline_exceeded", signal),
-          ));
-          await this.settleFromProvider(worker.id, { runId: settled.runId });
+          if (await this.store.claimProviderStop(worker.id)) {
+            try {
+              const outcome = parseProviderCancellation(await this.providerCall(
+                (signal) => this.adapter.cancel({ runId }, "deadline_exceeded", signal),
+              ));
+              if (outcome?.status === "unsupported") await this.store.markProviderStopUnsupported(worker.id);
+              else await this.store.markProviderStopDelivered(worker.id);
+            } catch (error) {
+              await this.store.releaseProviderStop(worker.id);
+              throw error;
+            }
+          }
+          await this.settleFromProvider(worker.id, { runId });
         } catch (error) {
           providerStopError = error instanceof ProviderProtocolError ? error.message : PROVIDER_UNAVAILABLE_MESSAGE;
         }
@@ -220,15 +246,27 @@ export class LifecycleService {
         status: settled.status,
         ...(providerStopError === undefined ? {} : { providerStopError }),
       };
-    }));
+    });
     return outcomes.filter((outcome): outcome is ExpiredWorker => outcome !== undefined);
+  }
+
+  async hasOverdueDeadlines(now = this.wallClockNow()): Promise<boolean> {
+    return (await this.store.overdueWorkers(now)).length > 0;
   }
 
   /** Advances accepted asynchronous cancellations from the provider's latest durable observation. */
   async reconcileCancellations(): Promise<CancellationResult[]> {
-    return Promise.all((await this.store.cancelingWorkers()).map(async (worker): Promise<CancellationResult> => {
+    return mapConcurrent(await this.store.cancelingWorkers(), MAX_PROVIDER_CONCURRENCY, async (worker): Promise<CancellationResult> => {
       try {
         if (worker.cancellationDeliveryPending) {
+          if (!await this.store.claimCancellationDelivery(worker.id)) {
+            return {
+              sessionId: worker.id,
+              status: worker.status,
+              ...(worker.stopReason === undefined ? {} : { stopReason: worker.stopReason }),
+              changed: false,
+            };
+          }
           try {
             const outcome = parseProviderCancellation(await this.providerCall((signal) => this.adapter.cancel(
               { runId: worker.runId! },
@@ -236,7 +274,7 @@ export class LifecycleService {
               signal,
             )));
             if (outcome?.status === "unsupported") {
-              const restored = await this.store.clearWorkerCancellation(worker.id);
+              const restored = await this.store.handleUnsupportedCancellation(worker.id);
               return {
                 sessionId: worker.id,
                 error: "CANCEL_UNSUPPORTED",
@@ -247,6 +285,7 @@ export class LifecycleService {
             await this.store.markCancellationDelivered(worker.id);
           } catch {
             // Status may still provide terminal evidence when stop delivery is uncertain.
+            await this.store.releaseCancellationDelivery(worker.id);
           }
         }
         return await this.settleFromProvider(worker.id, { runId: worker.runId! });
@@ -258,13 +297,30 @@ export class LifecycleService {
           status: "canceling",
         };
       }
-    }));
+    });
   }
 
   /** Retains terminal provider evidence that arrives after an orchestrator deadline won the race. */
   async reconcileTimedOutResults(): Promise<CancellationResult[]> {
-    return Promise.all((await this.store.workersPendingLifecycleReconciliation()).map(async (worker): Promise<CancellationResult> => {
+    return mapConcurrent(
+      await this.store.workersPendingLifecycleReconciliation(),
+      MAX_PROVIDER_CONCURRENCY,
+      async (worker): Promise<CancellationResult> => {
       try {
+        if (worker.providerStopPending && this.adapter.cancellation === "supported") {
+          if (await this.store.claimProviderStop(worker.id)) {
+            try {
+              const outcome = parseProviderCancellation(await this.providerCall(
+                (signal) => this.adapter.cancel({ runId: worker.runId! }, worker.stopReason, signal),
+              ));
+              if (outcome?.status === "unsupported") await this.store.markProviderStopUnsupported(worker.id);
+              else await this.store.markProviderStopDelivered(worker.id);
+            } catch (error) {
+              await this.store.releaseProviderStop(worker.id);
+              throw error;
+            }
+          }
+        }
         return await this.settleFromProvider(worker.id, { runId: worker.runId! });
       } catch (error) {
         return {
@@ -274,7 +330,7 @@ export class LifecycleService {
           status: worker.status,
         };
       }
-    }));
+    });
   }
 
   /**
@@ -334,29 +390,37 @@ export class LifecycleService {
         changed: intentClaimed,
       };
     }
+    let result: RunResult | undefined;
+    let resultFailure: string | undefined;
+    try {
+      result = parseProviderResult(await this.providerCall((signal) => this.adapter.result(handle, signal)));
+    } catch (error) {
+      resultFailure = error instanceof ProviderProtocolError
+        ? error.message
+        : "Provider terminal result could not be retrieved";
+    }
     // `cancelled` keeps the reason already persisted with the intent; `succeeded` is classified by the
     // store so a completion that beat cancellation becomes succeeded_before_cancellation.
     const stopReason = observed.status === "failed" ? "execution_error" : undefined;
-    let claim;
-    try {
-      const result = parseProviderResult(await this.providerCall((signal) => this.adapter.result(handle, signal)));
-      claim = result === undefined
+    const claim = resultFailure !== undefined
+      ? normalize({ kind: "malformed", error: resultFailure })
+      : result === undefined
         ? normalize({ kind: "stopped_without_result", status: observed.status })
-        : result.status === observed.status
-          ? normalize({ kind: "adapter_result", result })
-          : normalize({
-            kind: "malformed",
-            error: `Adapter result status ${JSON.stringify(result.status)} did not match observed status ${JSON.stringify(observed.status)}`,
-          });
-    } catch (error) {
-      if (!(error instanceof ProviderProtocolError)) throw error;
-      claim = normalize({ kind: "malformed", error: error.message });
-    }
+      : result.status === observed.status
+        ? normalize({ kind: "adapter_result", result })
+        : normalize({
+          kind: "malformed",
+          error: `Adapter result status ${JSON.stringify(result.status)} did not match observed status ${JSON.stringify(observed.status)}`,
+        });
     const terminal = terminalStatusFor(observed.status);
+    const resultMismatch = result !== undefined && result.status !== observed.status;
     const options = {
       result: claim,
       ...(stopReason === undefined ? {} : { stopReason }),
       at: this.wallClockNow(),
+      ...(result !== undefined && !resultMismatch && resultFailure === undefined
+        ? {}
+        : { keepReconciliationPending: true }),
     };
     const { worker: settled, claimed } = await this.store.settleWorkerCancellation(sessionId, terminal, options);
     return {
@@ -371,15 +435,58 @@ export class LifecycleService {
   private async providerCall<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.providerOperationTimeoutMs);
+    await this.acquireProviderSlot(controller.signal);
+    let providerOperation: Promise<T>;
+    try {
+      providerOperation = operation(controller.signal);
+    } catch (error) {
+      clearTimeout(timeout);
+      this.releaseProviderSlot();
+      throw error;
+    }
+    let timedOut = false;
     try {
       return await Promise.race([
-        operation(controller.signal),
+        providerOperation,
         new Promise<never>((_, reject) => controller.signal.addEventListener("abort", () => {
+          timedOut = true;
           reject(new Error("Provider lifecycle operation timed out"));
         }, { once: true })),
       ]);
     } finally {
       clearTimeout(timeout);
+      if (timedOut) void providerOperation.then(
+        () => this.releaseProviderSlot(),
+        () => this.releaseProviderSlot(),
+      );
+      else this.releaseProviderSlot();
+    }
+  }
+
+  private async acquireProviderSlot(signal: AbortSignal): Promise<void> {
+    if (this.activeProviderOperations >= MAX_PROVIDER_CONCURRENCY) {
+      await new Promise<void>((resolve, reject) => {
+        const waiter = { resolve, signal };
+        this.providerWaiters.push(waiter);
+        signal.addEventListener("abort", () => {
+          const index = this.providerWaiters.indexOf(waiter);
+          if (index >= 0) this.providerWaiters.splice(index, 1);
+          reject(new Error("Provider lifecycle operation timed out while queued"));
+        }, { once: true });
+      });
+    }
+    if (signal.aborted) throw new Error("Provider lifecycle operation timed out while queued");
+    this.activeProviderOperations += 1;
+  }
+
+  private releaseProviderSlot(): void {
+    this.activeProviderOperations -= 1;
+    while (this.providerWaiters.length > 0) {
+      const waiter = this.providerWaiters.shift()!;
+      if (!waiter.signal.aborted) {
+        waiter.resolve();
+        break;
+      }
     }
   }
 }

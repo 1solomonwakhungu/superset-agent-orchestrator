@@ -72,7 +72,6 @@ export interface SupersetDiscoveryResult {
 
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const MINIMUM_SUPPORTED_MAJOR = 1;
-
 function discoverExecutable(): string {
   for (const directory of (process.env.PATH ?? "").split(delimiter)) {
     if (directory.length === 0) continue;
@@ -86,7 +85,6 @@ function discoverExecutable(): string {
   }
   throw new SecurityError("POLICY_DENIED", "Superset executable could not be pinned to an absolute path");
 }
-
 export const runProcess: ProcessRunner = async (executable, args, timeoutMs) => {
   const pin = await pinExecutable(executable);
   await revalidateExecutable(pin);
