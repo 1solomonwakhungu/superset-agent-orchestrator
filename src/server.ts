@@ -1,11 +1,29 @@
 #!/usr/bin/env node
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { RedactionPolicy } from "./security.js";
 import { BatchQueryError, DurableStore } from "./store.js";
+import type { AgentAdapter } from "./agent-adapter.js";
+import { LifecycleService } from "./lifecycle-service.js";
+import {
+  batchCancelRequestSchema,
+  batchCancelResultSchema,
+  cancelRequestSchema,
+  cancelResultSchema,
+  CONTRACT_VERSION,
+  errorDefinitions,
+  enforceDeadlinesRequestSchema,
+  enforceDeadlinesResultSchema,
+  setDeadlineRequestSchema,
+  setDeadlineResultSchema,
+  waitRequestSchema,
+  waitResultSchema,
+  type ErrorCode,
+} from "./tool-contract.js";
 import { assertRegisteredToolNames, assertSafeToolNames } from "./tool-security.js";
 
 const statePath = process.env.SUPERSET_ORCHESTRATOR_STATE
@@ -15,6 +33,20 @@ const redaction = new RedactionPolicy((process.env.SUPERSET_ORCHESTRATOR_REDACTI
 const store = new DurableStore(statePath, undefined, (measurement) => {
   console.error(`Batch query: ${JSON.stringify(measurement)}`);
 }, undefined, redaction);
+/**
+ * The stable Superset surface exposes no supported cancellation or status query today, so the default
+ * backend refuses honestly instead of pretending. Swapping in a capable adapter enables the full path.
+ */
+const unsupportedBackend: AgentAdapter = {
+  cancellation: "unsupported",
+  findByIdempotencyKey: async () => undefined,
+  launch: async () => { throw new Error("Launch adapter is not configured"); },
+  status: async () => { throw new Error("Lifecycle status is not supported by the stable Superset API"); },
+  result: async () => undefined,
+  cancel: async () => ({ status: "unsupported" }),
+  resumeMetadata: async () => undefined,
+};
+const lifecycle = new LifecycleService(store, unsupportedBackend);
 
 function result(value: unknown) {
   const safe = store.redactValue(value);
@@ -41,6 +73,10 @@ function tool(name: string): string {
   return name;
 }
 
+function contractError(code: ErrorCode, message: string) {
+  return { code, ...errorDefinitions[code], message };
+}
+
 async function main(): Promise<void> {
   if (process.platform !== "darwin" && process.platform !== "linux") {
     throw new Error(
@@ -55,6 +91,21 @@ async function main(): Promise<void> {
     });
   }, Number(process.env.SUPERSET_ORCHESTRATOR_RECONCILE_MS ?? 30_000));
   reconciliationTimer.unref();
+
+  let lifecycleSweep: Promise<void> | undefined;
+  const deadlineTimer = setInterval(() => {
+    if (lifecycleSweep !== undefined) return;
+    lifecycleSweep = lifecycle.enforceDeadlines().then(async (expired) => {
+      await lifecycle.reconcileCancellations();
+      await lifecycle.reconcileTimedOutResults();
+      if (expired.length > 0) console.error(`Deadlines enforced: ${JSON.stringify(store.redactValue(expired))}`);
+    }).catch((error: unknown) => {
+      console.error("Lifecycle enforcement failed:", store.safeError(error));
+    }).finally(() => {
+      lifecycleSweep = undefined;
+    });
+  }, Number(process.env.SUPERSET_ORCHESTRATOR_DEADLINE_MS ?? 5_000));
+  deadlineTimer.unref();
 
   const server = new McpServer({ name: "superset-agent-orchestrator", version: "0.1.0" });
   const pageSchema = {
@@ -99,6 +150,118 @@ async function main(): Promise<void> {
     });
   }
   server.registerTool(
+    tool("sessions_cancel"),
+    {
+      description: "Request cancellation for sessions; unsupported backends return CANCEL_UNSUPPORTED without changing state",
+      inputSchema: cancelRequestSchema.shape,
+    },
+    async ({ session_ids: sessionIds, reason }) => {
+      const items = [];
+      for (const id of sessionIds) {
+        const outcome = await lifecycle.cancelSession(id, "user_requested", reason);
+        items.push("error" in outcome
+          ? { session_id: id, error: contractError(outcome.error, outcome.message) }
+          : {
+            session_id: id,
+            state: contractState(outcome.status),
+            ...(outcome.stopReason === undefined ? {} : { stop_reason: outcome.stopReason }),
+            changed: outcome.changed,
+          });
+      }
+      return result(cancelResultSchema.parse(contractEnvelope({ items })));
+    },
+  );
+  server.registerTool(
+    tool("batches_cancel"),
+    {
+      description: "Request cancellation for every nonterminal session in a batch and return item-level outcomes",
+      inputSchema: batchCancelRequestSchema.shape,
+    },
+    async ({ batch_ids: batchIds, reason }) => {
+      const items = [];
+      for (const batchId of batchIds) {
+        try {
+          const sessions = (await lifecycle.cancelBatch(batchId, "user_requested", reason)).map((outcome) => {
+            if ("error" in outcome) {
+              return { session_id: outcome.sessionId, error: contractError(outcome.error, outcome.message) };
+            }
+            return {
+              session_id: outcome.sessionId,
+              state: contractState(outcome.status),
+              ...(outcome.stopReason === undefined ? {} : { stop_reason: outcome.stopReason }),
+              changed: outcome.changed,
+            };
+          });
+          items.push({ batch_id: batchId, sessions });
+        } catch (error) {
+          items.push({
+            batch_id: batchId,
+            error: contractError(
+              error instanceof BatchQueryError && error.code === "not_found" ? "BATCH_NOT_FOUND" : "STATE_UNAVAILABLE",
+              error instanceof Error ? error.message : String(error),
+            ),
+          });
+        }
+      }
+      return result(batchCancelResultSchema.parse(contractEnvelope({ items })));
+    },
+  );
+  server.registerTool(
+    tool("batches_wait"),
+    {
+      description: "Wait at most 30 seconds for aggregate batch progress and return exact partial counts on timeout",
+      inputSchema: waitRequestSchema.shape,
+    },
+    async ({ batch_ids: batchIds, timeout_ms: timeoutMs, until }) => {
+      const waited = await lifecycle.waitForBatches(batchIds, { timeoutMs, until });
+      const items = waited.map((item) => "error" in item
+        ? { batch_id: item.batchId, error: contractError(item.error, item.message) }
+        : { batch_id: item.batchId, timed_out: item.timedOut, counts: contractCounts(item.counts) });
+      return result(waitResultSchema.parse(contractEnvelope({ items })));
+    },
+  );
+  server.registerTool(
+    tool("sessions_set_deadline"),
+    {
+      description: "Set an absolute deadline after which nonterminal sessions are expired as failed/deadline_exceeded",
+      inputSchema: setDeadlineRequestSchema.shape,
+    },
+    async ({ session_ids: sessionIds, deadline_ms: deadlineMs }) => {
+      const deadline = new Date(Date.now() + deadlineMs);
+      const items = [];
+      for (const id of [...new Set(sessionIds)]) {
+        try {
+          const worker = await store.setWorkerDeadline(id, deadline);
+          items.push({ session_id: id, deadline_at: worker.deadlineAt, state: contractState(worker.status) });
+        } catch (error) {
+          items.push({
+            session_id: id,
+            error: contractError(
+              error instanceof BatchQueryError && error.code === "not_found" ? "SESSION_NOT_FOUND" : "STATE_UNAVAILABLE",
+              error instanceof BatchQueryError && error.code === "not_found" ? error.message : "Unable to persist the session deadline",
+            ),
+          });
+        }
+      }
+      return result(setDeadlineResultSchema.parse(contractEnvelope({ items })));
+    },
+  );
+  server.registerTool(
+    tool("deadlines_enforce"),
+    {
+      description: "Expire every nonterminal session whose deadline has passed and report the exact expirations",
+      inputSchema: enforceDeadlinesRequestSchema.shape,
+    },
+    async () => result(enforceDeadlinesResultSchema.parse(contractEnvelope({
+      expired: (await lifecycle.enforceDeadlines()).map((worker) => ({
+        session_id: worker.sessionId,
+        deadline_at: worker.deadlineAt,
+        state: "failed" as const,
+        ...(worker.providerStopError === undefined ? {} : { provider_stop_error: worker.providerStopError }),
+      })),
+    }))),
+  );
+  server.registerTool(
     tool("recent_sessions"),
     {
       description: "List durable orchestration sessions after a server or client restart",
@@ -132,6 +295,29 @@ async function main(): Promise<void> {
 
   assertRegisteredToolNames(registeredToolNames);
   await server.connect(new StdioServerTransport());
+}
+
+function contractState(status: import("./store.js").WorkerStatus) {
+  if (status === "succeeded") return "completed" as const;
+  if (status === "unknown_outcome") return "lost" as const;
+  return status;
+}
+
+function contractEnvelope(data: unknown) {
+  return { contract_version: CONTRACT_VERSION, request_id: randomUUID(), warnings: [], data };
+}
+
+function contractCounts(counts: Record<import("./store.js").WorkerStatus, number>) {
+  return {
+    requested: counts.requested,
+    launching: 0,
+    running: counts.running,
+    canceling: counts.canceling,
+    lost: counts.unknown_outcome,
+    completed: counts.succeeded,
+    failed: counts.failed,
+    canceled: counts.canceled,
+  };
 }
 
 main().catch((error: unknown) => {

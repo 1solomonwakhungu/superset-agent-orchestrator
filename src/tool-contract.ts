@@ -277,7 +277,26 @@ export const resultsResultSchema = z.object({
 });
 
 export const cancelRequestSchema = idsRequestSchema.extend({ reason: z.string().min(1).max(1000).optional() }).strict();
-export const cancelResultSchema = statusResultSchema;
+const cancellationItemSchema = z.union([
+  z.object({
+    session_id: identifier,
+    state: sessionStateSchema,
+    stop_reason: stopReasonSchema.optional(),
+    changed: z.boolean(),
+  }).strict(),
+  itemErrorSchema,
+]);
+export const cancelResultSchema = z.object({
+  ...envelopeFields,
+  data: z.object({ items: z.array(cancellationItemSchema).min(1).max(MAX_BATCH_SIZE) }).strict(),
+}).strict().superRefine(({ data }, context) => {
+  const ids = data.items.map(({ session_id }) => session_id);
+  if (new Set(ids).size !== ids.length) context.addIssue({ code: "custom", message: "item session_ids must be unique" });
+});
+export const batchCancelRequestSchema = versionedRequest.extend({
+  batch_ids: uniqueIdentifiers,
+  reason: z.string().min(1).max(1000).optional(),
+}).strict();
 
 export const pageRequestSchema = versionedRequest.extend({
   batch_id: identifier,
@@ -322,6 +341,53 @@ export const waitResultSchema = z.object({
   const ids = data.items.map(({ batch_id }) => batch_id);
   if (new Set(ids).size !== ids.length) context.addIssue({ code: "custom", message: "item batch_ids must be unique" });
 });
+export const setDeadlineRequestSchema = versionedRequest.extend({
+  session_ids: uniqueIdentifiers,
+  deadline_ms: z.number().int().positive().max(2_147_483_647),
+}).strict();
+export const setDeadlineResultSchema = z.object({
+  ...envelopeFields,
+  data: z.object({
+    items: z.array(z.union([
+      z.object({
+        session_id: identifier,
+        deadline_at: timestamp,
+        state: sessionStateSchema,
+      }).strict(),
+      itemErrorSchema,
+    ])).min(1).max(MAX_BATCH_SIZE),
+  }).strict(),
+}).strict();
+export const enforceDeadlinesRequestSchema = versionedRequest.strict();
+export const enforceDeadlinesResultSchema = z.object({
+  ...envelopeFields,
+  data: z.object({
+    expired: z.array(z.object({
+      session_id: identifier,
+      deadline_at: timestamp,
+      state: z.literal("failed"),
+      provider_stop_error: z.string().min(1).optional(),
+    }).strict()).max(MAX_BATCH_SIZE),
+  }).strict(),
+}).strict();
+export const batchCancelResultSchema = z.object({
+  ...envelopeFields,
+  data: z.object({
+    items: z.array(z.union([
+      z.object({
+        batch_id: identifier,
+        sessions: z.array(cancellationItemSchema).max(250),
+      }).strict().superRefine(({ sessions }, context) => {
+        const ids = sessions.map(({ session_id }) => session_id);
+        if (new Set(ids).size !== ids.length) context.addIssue({ code: "custom", message: "session_ids must be unique" });
+      }),
+      z.object({ batch_id: identifier, error: orchestratorErrorSchema }).strict(),
+    ])).min(1).max(MAX_BATCH_SIZE),
+  }).strict(),
+}).strict().superRefine(({ data }, context) => {
+  const ids = data.items.map(({ batch_id }) => batch_id);
+  if (new Set(ids).size !== ids.length) context.addIssue({ code: "custom", message: "item batch_ids must be unique" });
+});
 
 export const recoveryRequestSchema = pageRequestSchema;
 export const recoveryResultSchema = batchGetResultSchema;
@@ -339,8 +405,11 @@ export const toolContract = {
   sessions_status: { input: idsRequestSchema, output: z.union([statusResultSchema, failureResultSchema]) },
   sessions_results: { input: idsRequestSchema, output: z.union([resultsResultSchema, failureResultSchema]) },
   sessions_cancel: { input: cancelRequestSchema, output: z.union([cancelResultSchema, failureResultSchema]) },
+  batches_cancel: { input: batchCancelRequestSchema, output: z.union([batchCancelResultSchema, failureResultSchema]) },
   batches_get: { input: pageRequestSchema, output: z.union([batchGetResultSchema, failureResultSchema]) },
   batches_wait: { input: waitRequestSchema, output: z.union([waitResultSchema, failureResultSchema]) },
+  sessions_set_deadline: { input: setDeadlineRequestSchema, output: z.union([setDeadlineResultSchema, failureResultSchema]) },
+  deadlines_enforce: { input: enforceDeadlinesRequestSchema, output: z.union([enforceDeadlinesResultSchema, failureResultSchema]) },
   batches_recover: { input: recoveryRequestSchema, output: z.union([recoveryResultSchema, failureResultSchema]) },
 } as const;
 
@@ -351,8 +420,11 @@ const semanticRules = {
   sessions_status: ["session_ids MUST be unique", "data.items[].session_id MUST be unique", "an item's session.session_id MUST equal its session_id"],
   sessions_results: ["session_ids MUST be unique", "data.items[].session_id MUST be unique", "completed results MUST have complete=true", "failed and canceled results MUST have complete=false"],
   sessions_cancel: ["session_ids MUST be unique", "data.items[].session_id MUST be unique", "an item's session.session_id MUST equal its session_id"],
+  batches_cancel: ["batch_ids MUST be unique", "data.items[].batch_id MUST be unique"],
   batches_get: ["next_cursor MUST be present exactly when has_more=true", "terminal sessions MUST have a state-appropriate stop_reason", "completed sessions MUST have artifact_manifest_id"],
   batches_wait: ["batch_ids MUST be unique", "data.items[].batch_id MUST be unique"],
+  sessions_set_deadline: ["session_ids MUST be unique", "data.items[].session_id MUST be unique"],
+  deadlines_enforce: [],
   batches_recover: ["next_cursor MUST be present exactly when has_more=true", "terminal sessions MUST have a state-appropriate stop_reason", "completed sessions MUST have artifact_manifest_id"],
 } satisfies Record<ToolName, string[]>;
 

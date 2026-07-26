@@ -11,6 +11,7 @@ import {
   type LaunchBoundary,
 } from "../src/launch-service.js";
 import { DurableStore, type DurableState } from "../src/store.js";
+import { LifecycleService } from "../src/lifecycle-service.js";
 
 const authorizer = {
   authorize: async (workspaceId: string) => ({
@@ -53,7 +54,47 @@ test("returns stable IDs only after durable acceptance and before adapter launch
     assert.match(accepted.assignmentId, /^assignment_[a-f0-9]{24}$/);
     assert.equal(accepted.status, "accepted");
     assert.equal(persisted.assignments[0]?.id, accepted.assignmentId);
+    assert.equal(persisted.workers[0]?.id, accepted.sessionId);
     assert.equal(persisted.auditEvents[0]?.type, "launch_accepted");
+  });
+});
+
+test("cancellation racing adapter launch is delivered after the run is bound", async () => {
+  await withStore(async (path) => {
+    let releaseLaunch: (() => void) | undefined;
+    let markEntered: (() => void) | undefined;
+    const entered = new Promise<void>((resolve) => { markEntered = resolve; });
+    const cancellations: string[] = [];
+    const adapter = {
+      cancellation: "supported" as const,
+      findByIdempotencyKey: async () => undefined,
+      launch: async () => new Promise<{ runId: string }>((resolve) => {
+        releaseLaunch = () => resolve({ runId: "provider-race" });
+        markEntered?.();
+      }),
+      status: async ({ runId }: { runId: string }) => ({ runId, status: "cancelled" as const, updatedAt: new Date().toISOString() }),
+      result: async () => ({ status: "cancelled" as const }),
+      cancel: async ({ runId }: { runId: string }) => { cancellations.push(runId); },
+      resumeMetadata: async () => undefined,
+    };
+    const store = new DurableStore(path);
+    const launch = new LaunchService(store, adapter, authorizer);
+    const accepted = await launch.launch(request);
+    await entered;
+
+    const pending = await new LifecycleService(store, adapter).cancelSession(accepted.sessionId);
+    assert.equal("status" in pending ? pending.status : undefined, "canceling");
+    assert.deepEqual(cancellations, []);
+    releaseLaunch?.();
+
+    let bound = false;
+    for (let attempt = 0; attempt < 100 && !bound; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      bound = (await store.worker(accepted.sessionId))?.runId === "provider-race";
+    }
+    await new LifecycleService(store, adapter).reconcileCancellations();
+    assert.deepEqual(cancellations, ["provider-race"]);
+    assert.equal((await store.worker(accepted.sessionId))?.status, "canceled");
   });
 });
 
@@ -185,6 +226,35 @@ test("retries transient background dispatch failure without another launch reque
     await service.close();
     assert.equal(adapter.launches.length, 1);
     assert.ok(attempts >= 2);
+    await service.stop();
+  });
+});
+
+test("stop suppresses retries after an active background dispatch fails", async () => {
+  await withStore(async (path) => {
+    const store = new DurableStore(path);
+    const adapter = new FakeAgentAdapter([script]);
+    let rejectPending: ((error: Error) => void) | undefined;
+    let markEntered: (() => void) | undefined;
+    let attempts = 0;
+    const entered = new Promise<void>((resolve) => { markEntered = resolve; });
+    store.pendingAssignments = async () => {
+      attempts += 1;
+      markEntered?.();
+      return new Promise((_, reject) => { rejectPending = reject; });
+    };
+    const service = new LaunchService(store, adapter, authorizer, () => new Date(), () => undefined, 5);
+    await service.launch(request);
+    await entered;
+
+    const stopped = service.stop();
+    rejectPending?.(new Error("storage unavailable"));
+    await assert.rejects(stopped, /storage unavailable/);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    assert.equal(attempts, 1);
+    assert.equal(adapter.launches.length, 0);
+    await assert.rejects(service.launch({ ...request, idempotencyKey: "after-stop" }), /stopped/);
   });
 });
 

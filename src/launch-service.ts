@@ -48,7 +48,7 @@ export interface LaunchAcceptance {
 export class LaunchService {
   private dispatchTimer: NodeJS.Timeout | undefined;
   private dispatching: Promise<void> | undefined;
-  private closed = false;
+  private stopped = false;
 
   constructor(
     private readonly store: DurableStore,
@@ -60,6 +60,7 @@ export class LaunchService {
   ) {}
 
   async launch(request: AsynchronousLaunchRequest): Promise<LaunchAcceptance> {
+    if (this.stopped) throw new Error("Launch service is stopped");
     const accepted = await this.accept(request);
     this.scheduleDispatch(0);
     return accepted;
@@ -129,8 +130,17 @@ export class LaunchService {
       acceptedAt,
       updatedAt: acceptedAt,
     };
+    const worker = {
+      id: session.id,
+      batchId: batch.id,
+      sessionId: session.id,
+      status: "requested" as const,
+      attribution: request.attribution,
+      startedAt: acceptedAt,
+      position: 0,
+    };
     const accepted = await this.store.acceptLaunch({
-      assignment, session, batch,
+      assignment, session, batch, worker,
       event: event(assignmentId, "launch_accepted", acceptedAt),
       securityAudit: this.auditInput(request, "allowed", "launch_accepted", assignmentId, grant.projectId),
     });
@@ -140,7 +150,7 @@ export class LaunchService {
 
   /** Stops scheduled work and waits for an in-flight background dispatch. */
   async close(): Promise<void> {
-    this.closed = true;
+    this.stopped = true;
     if (this.dispatchTimer !== undefined) {
       clearTimeout(this.dispatchTimer);
       this.dispatchTimer = undefined;
@@ -166,8 +176,22 @@ export class LaunchService {
     }
   }
 
+  async stop(): Promise<void> {
+    this.stopped = true;
+    if (this.dispatchTimer !== undefined) {
+      clearTimeout(this.dispatchTimer);
+      this.dispatchTimer = undefined;
+    }
+    try {
+      await this.dispatching;
+    } finally {
+      if (this.dispatchTimer !== undefined) clearTimeout(this.dispatchTimer);
+      this.dispatchTimer = undefined;
+    }
+  }
+
   private scheduleDispatch(delayMs: number): void {
-    if (this.closed || this.dispatchTimer !== undefined || this.dispatching !== undefined) return;
+    if (this.stopped || this.dispatchTimer !== undefined || this.dispatching !== undefined) return;
     this.dispatchTimer = setTimeout(() => {
       this.dispatchTimer = undefined;
       this.dispatching = this.dispatchPending();
@@ -176,69 +200,108 @@ export class LaunchService {
           () => { this.dispatching = undefined; },
           () => {
             this.dispatching = undefined;
-            if (!this.closed) this.scheduleDispatch(this.retryDelayMs);
+            if (!this.stopped) this.scheduleDispatch(this.retryDelayMs);
           },
         );
     }, delayMs);
   }
 
   private async dispatch(assignment: Assignment): Promise<void> {
-    let grant: WorkspaceGrant;
-    try {
-      if (assignment.workspaceId === undefined) throw new SecurityError("INVALID_ARGUMENT", "Launch has no workspace identity");
-      grant = await this.workspaceAuthorizer.authorize(assignment.workspaceId);
-      await grant.revalidate();
-      if (grant.canonicalPath !== assignment.workspacePath) {
-        throw new SecurityError("INTEGRITY_FAILURE", "Workspace identity changed before launch");
+    await this.store.withLaunchDispatchLock(assignment.id, async () => {
+      assignment = await this.store.assignmentForResult(assignment.id);
+      if (assignment.status !== "accepted" && assignment.status !== "launching") return;
+      const recovering = assignment.status === "launching";
+      let grant: WorkspaceGrant;
+      try {
+        if (assignment.workspaceId === undefined) {
+          throw new SecurityError("INVALID_ARGUMENT", "Launch has no workspace identity");
+        }
+        grant = await this.workspaceAuthorizer.authorize(assignment.workspaceId);
+        await grant.revalidate();
+        if (grant.canonicalPath !== assignment.workspacePath) {
+          throw new SecurityError("INTEGRITY_FAILURE", "Workspace identity changed before launch");
+        }
+      } catch (error) {
+        await this.auditAssignment(assignment, "denied", reasonCode(error));
+        if (error instanceof SecurityError && error.retryable) throw error;
+        if (assignment.status === "accepted") {
+          const reserved = await this.store.recordLaunchEvent(
+            assignment.id,
+            "launching",
+            event(assignment.id, "launch_reserved", this.now().toISOString()),
+          );
+          if (!reserved.transitioned) return;
+        }
+        await this.store.recordLaunchEvent(
+          assignment.id,
+          "failed",
+          event(assignment.id, "launch_failed", this.now().toISOString(), { error: this.store.safeError(error) }),
+        );
+        return;
       }
-    } catch (error) {
-      await this.auditAssignment(assignment, "denied", reasonCode(error));
-      if (error instanceof SecurityError && error.retryable) throw error;
-      await this.store.recordLaunchEvent(assignment.id, "failed", event(
-        assignment.id, "launch_failed", this.now().toISOString(), { error: this.store.safeError(error) },
-      ));
-      return;
-    }
-    const startedAt = this.now().toISOString();
-    const reserved = await this.store.recordLaunchEvent(
-      assignment.id,
-      "launching",
-      event(assignment.id, "launch_reserved", startedAt),
-    );
-    if (reserved.status !== "launching") return;
-    this.injectCrash("after_launch_started");
-    this.injectCrash("before_adapter_launch");
-    let handle;
-    try {
-      await this.auditAssignment(assignment, "allowed", "launch_intent", grant.projectId);
-      handle = await this.adapter.launch({
-        idempotencyKey: assignment.idempotencyKey,
-        prompt: assignment.prompt,
-        workspacePath: assertDataOperand(grant.canonicalPath, "workspace path"),
-        environment: childEnvironment(),
-        revalidateWorkspace: () => grant.revalidate(),
-      });
-    } catch (error) {
-      if (error instanceof InjectedCrash) throw error;
-      await this.auditAssignment(assignment, "failed", reasonCode(error), grant.projectId);
-      const message = this.store.safeError(error);
-      const failedAt = this.now().toISOString();
+      if (assignment.status === "accepted") {
+        const startedAt = this.now().toISOString();
+        const reserved = await this.store.recordLaunchEvent(
+          assignment.id,
+          "launching",
+          event(assignment.id, "launch_reserved", startedAt),
+        );
+        if (!reserved.transitioned) return;
+      }
+      this.injectCrash("after_launch_started");
+      this.injectCrash("before_adapter_launch");
+      let handle;
+      try {
+        handle = recovering
+          ? await this.adapter.findByIdempotencyKey(assignment.idempotencyKey)
+          : undefined;
+        if (handle === undefined) await this.auditAssignment(assignment, "allowed", "launch_intent", grant.projectId);
+        handle ??= await this.adapter.launch({
+          idempotencyKey: assignment.idempotencyKey,
+          prompt: assignment.prompt,
+          workspacePath: assertDataOperand(grant.canonicalPath, "workspace path"),
+          environment: childEnvironment(),
+          revalidateWorkspace: () => grant.revalidate(),
+        });
+      } catch (error) {
+        if (error instanceof InjectedCrash) throw error;
+        let recovered;
+        try {
+          recovered = await this.adapter.findByIdempotencyKey(assignment.idempotencyKey);
+        } catch (recoveryError) {
+          await this.auditAssignment(assignment, "failed", reasonCode(recoveryError), grant.projectId);
+          throw recoveryError;
+        }
+        if (recovered !== undefined) {
+          const launchedAt = this.now().toISOString();
+          await this.store.recordLaunchEvent(
+            assignment.id,
+            "launched",
+            event(assignment.id, "execution_started", launchedAt, { runId: recovered.runId }),
+            this.auditAssignmentInput(assignment, "allowed", "launch_started", grant.projectId),
+          );
+          return;
+        }
+        await this.auditAssignment(assignment, "failed", reasonCode(error), grant.projectId);
+        const message = this.store.safeError(error);
+        const failedAt = this.now().toISOString();
+        await this.store.recordLaunchEvent(
+          assignment.id,
+          "failed",
+          event(assignment.id, "launch_failed", failedAt, { error: message }),
+        );
+        return;
+      }
+      this.injectCrash("after_adapter_launch");
+      const launchedAt = this.now().toISOString();
       await this.store.recordLaunchEvent(
         assignment.id,
-        "failed",
-        event(assignment.id, "launch_failed", failedAt, { error: message }),
+        "launched",
+        event(assignment.id, "execution_started", launchedAt, { runId: handle.runId }),
+        this.auditAssignmentInput(assignment, "allowed", "launch_started", grant.projectId),
       );
-      return;
-    }
-    this.injectCrash("after_adapter_launch");
-    const launchedAt = this.now().toISOString();
-    await this.store.recordLaunchEvent(
-      assignment.id,
-      "launched",
-      event(assignment.id, "execution_started", launchedAt, { runId: handle.runId }),
-      this.auditAssignmentInput(assignment, "allowed", "launch_started", grant.projectId),
-    );
-    this.injectCrash("after_launch_recorded");
+      this.injectCrash("after_launch_recorded");
+    });
   }
 
   private audit(

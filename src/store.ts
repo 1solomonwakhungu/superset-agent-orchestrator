@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
-import { open, readFile, rename, rm } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { dirname } from "node:path";
@@ -9,7 +9,10 @@ import { z } from "zod";
 import { auditField, RedactionPolicy, SecurityError, SECURITY_POLICY_VERSION } from "./security.js";
 import { assertPrivateStatePath } from "./state-path.js";
 
-export type WorkerStatus = "requested" | "running" | "succeeded" | "failed" | "unknown_outcome";
+export type WorkerStatus = "requested" | "running" | "canceling" | "succeeded" | "failed" | "canceled" | "unknown_outcome";
+export type TerminalWorkerStatus = Extract<WorkerStatus, "succeeded" | "failed" | "canceled" | "unknown_outcome">;
+/** Stop reasons the state machine allows for a canceled session. */
+export type CancellationReason = "user_requested" | "orchestrator_shutdown" | "superseded" | "policy_revoked";
 export type DiagnosticKind = "orphan" | "unknown_outcome" | "missing_result";
 export type LaunchStatus = "reserved" | "dispatching" | "unknown_outcome" | "bound";
 export type ResultCompleteness = "complete" | "empty" | "partial" | "missing" | "malformed";
@@ -49,6 +52,22 @@ export interface Worker {
   completedAt?: string;
   result?: unknown;
   position?: number;
+  runId?: string;
+  stopReason?: string;
+  stopDetail?: string;
+  cancelRequestedAt?: string;
+  preCancelStatus?: WorkerStatus;
+  deadlineAt?: string;
+  lifecycleReconcilePending?: boolean;
+  cancellationDeliveryPending?: boolean;
+  lateObservations?: LateObservation[];
+}
+
+/** Evidence that arrived after a worker was already terminal. It never changes state. */
+export interface LateObservation {
+  observedAt: string;
+  status: string;
+  retainedResult: boolean;
 }
 
 export interface BatchAssignment {
@@ -230,16 +249,45 @@ const batchSchema = z.object({
   createdAt: z.iso.datetime(), updatedAt: z.iso.datetime(), idempotencyKey: z.string().min(1).optional(),
   clientId: z.string().min(1).optional(), requestFingerprint: z.string().min(1).optional(),
 }).strict();
+const workerStatusSchema = z.enum([
+  "requested", "running", "canceling", "succeeded", "failed", "canceled", "unknown_outcome",
+]);
+/**
+ * Stop reasons the authoritative state machine allows per terminal status.
+ * See docs/session-state-machine.md; deadlines are a `failed`/`deadline_exceeded` outcome,
+ * not a separate terminal state.
+ */
+const STOP_REASONS_BY_STATUS = {
+  succeeded: new Set(["succeeded", "succeeded_before_cancellation"]),
+  failed: new Set([
+    "invalid_request", "policy_denied", "dependency_unavailable", "launch_error", "launch_timeout",
+    "execution_error", "worker_crash", "resource_exhausted", "deadline_exceeded", "artifact_error",
+  ]),
+  canceled: new Set(["user_requested", "orchestrator_shutdown", "superseded", "policy_revoked"]),
+} as const;
+const CANCELLATION_REASONS: ReadonlySet<string> = STOP_REASONS_BY_STATUS.canceled;
 const workerSchema = z.object({
   id: z.string().min(1), batchId: z.string().min(1), sessionId: z.string().min(1),
   pid: z.number().int().positive().optional(),
   processStartedAt: z.string().min(1).optional(),
-  status: z.enum(["requested", "running", "succeeded", "failed", "unknown_outcome"]),
+  status: workerStatusSchema,
   attribution: attributionSchema, startedAt: z.iso.datetime(), completedAt: z.iso.datetime().optional(),
-  result: z.unknown().optional(), position: z.number().int().nonnegative().optional(),
+  result: z.unknown().optional(), position: z.number().int().nonnegative().optional(), runId: z.string().min(1).optional(),
+  stopReason: z.string().min(1).optional(), stopDetail: z.string().min(1).optional(),
+  cancelRequestedAt: z.iso.datetime().optional(), preCancelStatus: workerStatusSchema.optional(),
+  deadlineAt: z.iso.datetime().optional(),
+  lifecycleReconcilePending: z.boolean().optional(),
+  cancellationDeliveryPending: z.boolean().optional(),
+  lateObservations: z.array(z.object({
+    observedAt: z.iso.datetime(), status: z.string().min(1), retainedResult: z.boolean(),
+  })).optional(),
 }).strict().superRefine((worker, context) => {
   if (worker.status === "running" && (worker.pid === undefined || worker.processStartedAt === undefined)) {
     context.addIssue({ code: "custom", message: "Running workers require a PID and process start token" });
+  }
+  const allowed = STOP_REASONS_BY_STATUS[worker.status as keyof typeof STOP_REASONS_BY_STATUS];
+  if (allowed !== undefined && worker.stopReason !== undefined && !allowed.has(worker.stopReason)) {
+    context.addIssue({ code: "custom", message: `${worker.status} cannot use stop reason ${JSON.stringify(worker.stopReason)}` });
   }
 });
 const diagnosticSchema = z.object({
@@ -354,14 +402,23 @@ export class DurableStore {
   private readonly workersById = new Map<string, Worker>();
   private readonly workerIdsByBatchId = new Map<string, string[]>();
   private readonly batchesByIdempotencyKey = new Map<string, string>();
+  private readonly redaction: RedactionPolicy;
+  private readonly dispatchLockStaleMs: number;
 
   constructor(
     private readonly path: string,
     private readonly isProcessAlive: (pid: number, processStartedAt?: string) => boolean = DurableStore.isProcessAlive.bind(DurableStore),
     private readonly observeQuery: (measurement: QueryMeasurement) => void = () => undefined,
     private readonly now: () => number = performance.now.bind(performance),
-    private readonly redaction = new RedactionPolicy(),
-  ) {}
+    redactionOrDispatchLockStaleMs: RedactionPolicy | number = new RedactionPolicy(),
+  ) {
+    this.redaction = redactionOrDispatchLockStaleMs instanceof RedactionPolicy
+      ? redactionOrDispatchLockStaleMs
+      : new RedactionPolicy();
+    this.dispatchLockStaleMs = typeof redactionOrDispatchLockStaleMs === "number"
+      ? redactionOrDispatchLockStaleMs
+      : 10_000;
+  }
 
   redactText(value: string): string {
     return this.redaction.text(value);
@@ -373,6 +430,24 @@ export class DurableStore {
 
   safeError(error: unknown): string {
     return this.redaction.error(error);
+  }
+
+  get statePath(): string { return this.path; }
+
+  async withLaunchDispatchLock<T>(assignmentId: string, operation: () => Promise<T>): Promise<T> {
+    await mkdir(dirname(this.path), { recursive: true });
+    const lockPath = `${this.path}.${assignmentId}.dispatch`;
+    const release = await lockfile.lock(lockPath, {
+      realpath: false,
+      stale: this.dispatchLockStaleMs,
+      update: Math.max(1_000, Math.floor(this.dispatchLockStaleMs / 5)),
+      retries: { retries: 50, minTimeout: 50, maxTimeout: 200 },
+    });
+    try {
+      return await operation();
+    } finally {
+      await release();
+    }
   }
 
   async createBatch(
@@ -438,10 +513,10 @@ export class DurableStore {
     return this.withFreshState(() => {
     const page = this.queryBatch("batch_status", batchId, options);
     const counts: Record<WorkerStatus, number> = {
-      requested: 0, running: 0, succeeded: 0, failed: 0, unknown_outcome: 0,
+      requested: 0, running: 0, canceling: 0, succeeded: 0, failed: 0, canceled: 0, unknown_outcome: 0,
     };
     for (const worker of this.workersForBatch(batchId)) counts[worker.status] += 1;
-    const settled = counts.succeeded + counts.failed + counts.unknown_outcome;
+    const settled = counts.succeeded + counts.failed + counts.canceled + counts.unknown_outcome;
     return {
       ...page,
       sessions: page.sessions.map(({ id, batchId: attributedBatchId, status, attribution, startedAt, completedAt }) => ({
@@ -478,6 +553,253 @@ export class DurableStore {
     });
   }
 
+  async worker(workerId: string): Promise<Worker | undefined> {
+    return this.withFreshState(() => {
+      const worker = this.workersById.get(workerId);
+      return worker === undefined ? undefined : structuredClone(worker);
+    });
+  }
+
+  async workersInBatch(batchId: string): Promise<Worker[]> {
+    return this.withFreshState(() => {
+      if (!this.batchesById.has(batchId)) throw new BatchQueryError("not_found", `Unknown batch ID: ${batchId}`);
+      return structuredClone(this.workersForBatch(batchId));
+    });
+  }
+
+  /**
+   * Binds a worker to exactly one execution identity. A rebind to a different run ID is refused so a
+   * single session can never be attributed to two executions. Process evidence promotes the worker to
+   * `running`; without it the status is left alone, because `running` requires a liveness token.
+   */
+  async bindWorkerRun(
+    workerId: string,
+    runId: string,
+    execution: { pid: number; processStartedAt: string } | undefined = undefined,
+  ): Promise<Worker> {
+    return this.updateWorker(workerId, (worker) => {
+      if (DurableStore.isTerminal(worker.status)) {
+        throw new BatchQueryError("invalid_request", "Cannot bind a terminal worker to a run");
+      }
+      if (worker.runId !== undefined && worker.runId !== runId) {
+        throw new BatchQueryError("invalid_request", "Worker is already bound to another run");
+      }
+      worker.runId = runId;
+      if (execution !== undefined && (worker.status === "requested" || worker.status === "running")) {
+        worker.status = "running";
+        worker.pid = execution.pid;
+        worker.processStartedAt = execution.processStartedAt;
+      }
+    });
+  }
+
+  /** Records the wall-clock instant after which a nonterminal worker must be expired. */
+  async setWorkerDeadline(workerId: string, deadline: Date): Promise<Worker> {
+    return this.updateWorker(workerId, (worker) => {
+      worker.deadlineAt = deadline.toISOString();
+    });
+  }
+
+  /**
+   * Durably records cancellation intent before any provider call. Repeated or concurrent requests are
+   * idempotent and preserve the first reason; only the caller that actually performed the transition
+   * receives `claimed: true`, so exactly one caller is responsible for issuing the provider stop.
+   */
+  async requestWorkerCancellation(
+    workerId: string,
+    reason: CancellationReason = "user_requested",
+    options: { detail?: string; at?: Date } = {},
+  ): Promise<{ worker: Worker; claimed: boolean; local: boolean }> {
+    if (!CANCELLATION_REASONS.has(reason)) {
+      throw new BatchQueryError("invalid_request", `Unsupported cancellation reason: ${reason}`);
+    }
+    const at = options.at ?? new Date();
+    let claimed = false;
+    let local = false;
+    const worker = await this.updateWorker(workerId, (candidate) => {
+      if (DurableStore.isTerminal(candidate.status) || candidate.status === "canceling") return;
+      claimed = true;
+      const launch = this.state.assignments.find(({ sessionId }) => sessionId === candidate.id);
+      if (candidate.runId === undefined && launch?.status !== "launching") {
+        local = true;
+        candidate.status = "canceled";
+        candidate.completedAt = at.toISOString();
+        candidate.stopReason = reason;
+        if (options.detail !== undefined) candidate.stopDetail = options.detail;
+        return;
+      }
+      candidate.preCancelStatus = candidate.status;
+      candidate.status = "canceling";
+      candidate.cancellationDeliveryPending = true;
+      candidate.cancelRequestedAt = at.toISOString();
+      candidate.stopReason = reason;
+      if (options.detail !== undefined) candidate.stopDetail = options.detail;
+    });
+    return { worker, claimed, local };
+  }
+
+  /** Returns bound cancellations that still need a provider terminal observation. */
+  async cancelingWorkers(): Promise<Worker[]> {
+    return this.withFreshState(() => structuredClone(this.state.workers
+      .filter((worker) => worker.status === "canceling" && worker.runId !== undefined)));
+  }
+
+  async markCancellationDelivered(workerId: string): Promise<Worker> {
+    return this.updateWorker(workerId, (worker) => {
+      delete worker.cancellationDeliveryPending;
+    });
+  }
+
+  /** Returns timed-out executions whose eventual provider result has not yet been observed. */
+  async workersPendingLifecycleReconciliation(): Promise<Worker[]> {
+    return this.withFreshState(() => structuredClone(this.state.workers
+      .filter((worker) => worker.lifecycleReconcilePending === true && worker.runId !== undefined)));
+  }
+
+  /**
+   * Withdraws unconfirmed cancellation intent, restoring the pre-cancel status. Used when a backend
+   * that advertised cancellation rejects the command as unsupported, so state stays honest.
+   */
+  async clearWorkerCancellation(workerId: string): Promise<Worker> {
+    return this.updateWorker(workerId, (worker) => {
+      if (worker.status !== "canceling") return;
+      worker.status = worker.preCancelStatus ?? "requested";
+      delete worker.preCancelStatus;
+      delete worker.cancelRequestedAt;
+      delete worker.cancellationDeliveryPending;
+      delete worker.stopReason;
+      delete worker.stopDetail;
+    });
+  }
+
+  /**
+   * Appends the one winning terminal outcome. Terminal state is monotonic: a later observation never
+   * changes status or stop reason, but its result is retained and audited as a late observation.
+   */
+  async recordWorkerTerminal(
+    workerId: string,
+    status: TerminalWorkerStatus,
+    options: { result?: unknown; stopReason?: string; at?: Date } = {},
+  ): Promise<Worker> {
+    validateStopReason(status, options.stopReason);
+    const at = options.at ?? new Date();
+    return this.updateWorker(workerId, (worker) => {
+      if (DurableStore.isTerminal(worker.status)) {
+        const retainedResult = options.result !== undefined && worker.result === undefined;
+        if (retainedResult) worker.result = options.result;
+        (worker.lateObservations ??= []).push({ observedAt: at.toISOString(), status, retainedResult });
+        delete worker.lifecycleReconcilePending;
+        return;
+      }
+      const cancellationRequested = worker.status === "canceling";
+      worker.status = status;
+      worker.completedAt = at.toISOString();
+      delete worker.lifecycleReconcilePending;
+      delete worker.cancellationDeliveryPending;
+      if (options.result !== undefined) worker.result = options.result;
+      delete worker.preCancelStatus;
+      const stopReason = options.stopReason
+        ?? (status === "succeeded" ? (cancellationRequested ? "succeeded_before_cancellation" : "succeeded") : undefined)
+        ?? (status === "canceled" ? (worker.stopReason ?? "user_requested") : undefined)
+        ?? (status === "failed" ? "execution_error" : undefined);
+      if (stopReason === undefined) delete worker.stopReason;
+      else worker.stopReason = stopReason;
+    });
+  }
+
+  /** Records a provider terminal observation only if cancellation is still pending. */
+  async settleWorkerCancellation(
+    workerId: string,
+    status: TerminalWorkerStatus,
+    options: { result?: unknown; stopReason?: string; at?: Date } = {},
+  ): Promise<{ worker: Worker; claimed: boolean }> {
+    validateStopReason(status, options.stopReason);
+    const at = options.at ?? new Date();
+    let claimed = false;
+    const worker = await this.updateWorker(workerId, (candidate) => {
+      if (DurableStore.isTerminal(candidate.status)) {
+        const retainedResult = options.result !== undefined && candidate.result === undefined;
+        if (retainedResult) candidate.result = options.result;
+        (candidate.lateObservations ??= []).push({ observedAt: at.toISOString(), status, retainedResult });
+        delete candidate.lifecycleReconcilePending;
+        delete candidate.cancellationDeliveryPending;
+        return;
+      }
+      if (candidate.status !== "canceling") return;
+      claimed = true;
+      candidate.status = status;
+      candidate.completedAt = at.toISOString();
+      delete candidate.lifecycleReconcilePending;
+      delete candidate.cancellationDeliveryPending;
+      if (options.result !== undefined) candidate.result = options.result;
+      delete candidate.preCancelStatus;
+      const stopReason = options.stopReason
+        ?? (status === "succeeded" ? "succeeded_before_cancellation" : undefined)
+        ?? (status === "canceled" ? (candidate.stopReason ?? "user_requested") : undefined)
+        ?? (status === "failed" ? "execution_error" : undefined);
+      if (stopReason === undefined) delete candidate.stopReason;
+      else candidate.stopReason = stopReason;
+    });
+    return { worker, claimed };
+  }
+
+  /**
+   * Expires one worker whose deadline passed. Per the state machine this is `failed`/`deadline_exceeded`.
+   * Only the caller that performed the transition receives `claimed: true`, so concurrent sweeps report
+   * each expiry exactly once.
+   */
+  async expireWorker(workerId: string, options: { deadline?: Date; at?: Date } = {}): Promise<{ worker: Worker; claimed: boolean }> {
+    const at = options.at ?? new Date();
+    let claimed = false;
+    const worker = await this.updateWorker(workerId, (candidate) => {
+      if (options.deadline !== undefined) candidate.deadlineAt = options.deadline.toISOString();
+      if (DurableStore.isTerminal(candidate.status)
+        || candidate.deadlineAt === undefined
+        || candidate.deadlineAt > at.toISOString()) return;
+      claimed = true;
+      candidate.status = "failed";
+      candidate.stopReason = "deadline_exceeded";
+      candidate.completedAt = at.toISOString();
+      if (candidate.runId !== undefined) candidate.lifecycleReconcilePending = true;
+      delete candidate.preCancelStatus;
+    });
+    return { worker, claimed };
+  }
+
+  /** Returns every nonterminal worker whose recorded deadline is at or before `now`, oldest deadline first. */
+  async overdueWorkers(now = new Date()): Promise<Worker[]> {
+    const cutoff = now.toISOString();
+    return this.withFreshState(() => structuredClone(this.state.workers
+      .filter((worker) => worker.deadlineAt !== undefined
+        && worker.deadlineAt <= cutoff
+        && !DurableStore.isTerminal(worker.status))
+      .sort((left, right) => left.deadlineAt!.localeCompare(right.deadlineAt!))));
+  }
+
+  async recordWorkerResult(
+    workerId: string,
+    status: Extract<WorkerStatus, "succeeded" | "failed">,
+    result: unknown,
+    completedAt = new Date(),
+  ): Promise<Worker> {
+    return this.withLock(async () => {
+      await this.load();
+      const worker = this.workersById.get(workerId);
+      if (worker === undefined) throw new Error(`Unknown worker: ${workerId}`);
+      if (worker.status === "succeeded" || worker.status === "failed") {
+        if (worker.status !== status || JSON.stringify(worker.result) !== JSON.stringify(result)) {
+          throw new Error(`Worker ${workerId} already has a different terminal result`);
+        }
+        return structuredClone(worker);
+      }
+      worker.status = status;
+      worker.result = structuredClone(result);
+      worker.completedAt = completedAt.toISOString();
+      await this.persist();
+      return structuredClone(worker);
+    });
+  }
+
   async reconcile(now = new Date()): Promise<ReconciliationSummary> {
     return this.withLock(async () => {
       await this.load();
@@ -504,6 +826,15 @@ export class DurableStore {
           worker.status = "unknown_outcome";
           worker.completedAt = detectedAt;
           diagnose("unknown_outcome", worker, "Worker process was absent during startup reconciliation");
+        }
+
+        // A canceling worker whose process is provably gone never reported its terminal outcome.
+        if (worker.status === "canceling" && worker.pid !== undefined
+          && !this.isProcessAlive(worker.pid, worker.processStartedAt)) {
+          worker.status = "unknown_outcome";
+          worker.completedAt = detectedAt;
+          delete worker.preCancelStatus;
+          diagnose("unknown_outcome", worker, "Canceling worker process was absent during reconciliation");
         }
 
         if ((worker.status === "succeeded" || worker.status === "failed") && worker.result === undefined) {
@@ -610,13 +941,28 @@ export class DurableStore {
     batch: Batch;
     event: LaunchAuditEvent;
     securityAudit: SecurityAuditInput;
+    worker: Worker;
   }): Promise<{ assignment: Assignment; created: boolean }> {
     return this.withLock(async () => {
       await this.load();
+      const worker = {
+        ...input.worker,
+        attribution: {
+          agent: this.redactText(input.worker.attribution.agent),
+          task: this.redactText(input.worker.attribution.task),
+        },
+      };
       assignmentSchema.parse(input.assignment);
       sessionSchema.parse(input.session);
       batchSchema.parse(input.batch);
       auditEventSchema.parse(input.event);
+      workerSchema.parse(worker);
+      if (input.event.assignmentId !== input.assignment.id) {
+        throw new Error("Launch acceptance event assignment does not match its target");
+      }
+      if (input.event.type !== "launch_accepted") {
+        throw new Error("Launch acceptance event must have type launch_accepted");
+      }
       const existing = this.state.assignments.find(({ idempotencyKey }) => idempotencyKey === input.assignment.idempotencyKey);
       if (existing !== undefined) {
         if (existing.requestFingerprint !== input.assignment.requestFingerprint) {
@@ -629,8 +975,10 @@ export class DurableStore {
         this.state.sessions.push(input.session);
         this.state.batches.push(input.batch);
         this.state.assignments.push(input.assignment);
+        this.state.workers.push(worker);
         this.state.auditEvents.push(input.event);
         this.appendSecurityAuditToState(input.securityAudit, new Date(input.event.occurredAt));
+        this.rebuildIndexes();
         await this.persist();
       } catch (error) {
         await this.load().catch(() => {
@@ -701,19 +1049,46 @@ export class DurableStore {
     status: Extract<AssignmentLaunchStatus, "launching" | "launched" | "failed">,
     event: LaunchAuditEvent,
     securityAudit?: SecurityAuditInput,
-  ): Promise<Assignment> {
+  ): Promise<{ assignment: Assignment; transitioned: boolean }> {
     return this.withLock(async () => {
       await this.load();
+      auditEventSchema.parse(event);
       const assignment = this.state.assignments.find(({ id }) => id === assignmentId);
       if (assignment === undefined) throw new Error(`Unknown assignment: ${assignmentId}`);
-      if (assignment.status === "launched" || assignment.status === "failed") return structuredClone(assignment);
+      if (event.assignmentId !== assignmentId) throw new Error("Launch event assignment does not match its target");
+      const expectedType: Record<typeof status, LaunchAuditType> = {
+        launching: "launch_reserved",
+        launched: "execution_started",
+        failed: "launch_failed",
+      };
+      if (event.type !== expectedType[status]) throw new Error("Launch event type does not match its transition");
+      const existingEvent = this.state.auditEvents.find(({ id }) => id === event.id);
+      if (existingEvent !== undefined && (existingEvent.assignmentId !== event.assignmentId
+        || existingEvent.type !== event.type
+        || existingEvent.occurredAt !== event.occurredAt
+        || existingEvent.runId !== event.runId
+        || existingEvent.error !== event.error)) {
+        throw new Error(`Launch audit event ID ${JSON.stringify(event.id)} conflicts with existing evidence`);
+      }
+      const allowed = assignment.status === "accepted" && status === "launching"
+        || assignment.status === "launching" && (status === "launched" || status === "failed");
+      if (!allowed) return { assignment: structuredClone(assignment), transitioned: false };
       const previousState = structuredClone(this.state);
       try {
         assignment.status = status;
-        assignment.updatedAt = event.occurredAt;
+        assignment.updatedAt = event.occurredAt < assignment.updatedAt ? assignment.updatedAt : event.occurredAt;
         if (event.runId !== undefined) assignment.runId = event.runId;
-        if (event.error !== undefined) assignment.error = event.error;
-        if (!this.state.auditEvents.some(({ id }) => id === event.id)) this.state.auditEvents.push(event);
+        if (event.runId !== undefined) {
+          const worker = this.state.workers.find(({ id }) => id === assignment.sessionId);
+          if (worker === undefined) throw new Error(`Missing lifecycle worker for assignment: ${assignmentId}`);
+          if (worker.runId !== undefined && worker.runId !== event.runId) throw new Error("Worker is already bound to another run");
+          worker.runId = event.runId;
+        }
+        if (event.error !== undefined) assignment.error = this.redaction.text(event.error);
+        if (existingEvent === undefined) this.state.auditEvents.push({
+          ...event,
+          ...(event.error === undefined ? {} : { error: this.redaction.text(event.error) }),
+        });
         if (securityAudit !== undefined) this.appendSecurityAuditToState(securityAudit, new Date(event.occurredAt));
         await this.persist();
       } catch (error) {
@@ -721,7 +1096,7 @@ export class DurableStore {
         this.rebuildIndexes();
         throw error;
       }
-      return structuredClone(assignment);
+      return { assignment: structuredClone(assignment), transitioned: true };
     });
   }
 
@@ -771,6 +1146,10 @@ export class DurableStore {
       const identities = ["batchId", "sessionId", "workspaceId", "workspacePath", "attemptId", "attempt", "runId"] as const;
       for (const identity of identities) {
         if (assignment[identity] !== input[identity]) throw new Error(`Result ${identity} does not match its assignment`);
+      }
+      if (assignment.attribution.agent !== input.attribution.agent
+        || assignment.attribution.task !== input.attribution.task) {
+        throw new Error("Result attribution does not match its assignment");
       }
       if (assignment.status !== "launched") throw new Error("Results require a launched assignment");
       const results = this.state.capturedResults ??= [];
@@ -911,6 +1290,8 @@ export class DurableStore {
 
   private async persist(): Promise<void> {
     await assertPrivateStatePath(this.path);
+    stateSchema.parse(this.state);
+    await mkdir(dirname(this.path), { recursive: true });
     const temporaryPath = `${this.path}.${process.pid}.${randomUUID()}.tmp`;
     const file = await open(temporaryPath, "wx", 0o600);
     try {
@@ -955,6 +1336,21 @@ export class DurableStore {
     });
   }
 
+  private async updateWorker(workerId: string, update: (worker: Worker) => void): Promise<Worker> {
+    return this.withLock(async () => {
+      await this.load();
+      const worker = this.workersById.get(workerId);
+      if (worker === undefined) throw new BatchQueryError("not_found", `Unknown session ID: ${workerId}`);
+      update(worker);
+      await this.persist();
+      return structuredClone(worker);
+    });
+  }
+
+  static isTerminal(status: WorkerStatus): status is TerminalWorkerStatus {
+    return status === "succeeded" || status === "failed" || status === "canceled" || status === "unknown_outcome";
+  }
+
   static processStartedAt(pid: number): string | undefined {
     try {
       if (process.platform === "linux") {
@@ -979,5 +1375,11 @@ export class DurableStore {
     } catch (error) {
       return (error as NodeJS.ErrnoException).code === "EPERM";
     }
+  }
+}
+
+function validateStopReason(status: TerminalWorkerStatus, reason: string | undefined): void {
+  if (reason !== undefined && status !== "unknown_outcome" && !STOP_REASONS_BY_STATUS[status].has(reason)) {
+    throw new BatchQueryError("invalid_request", `${status} cannot use stop reason ${JSON.stringify(reason)}`);
   }
 }
