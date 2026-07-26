@@ -5,6 +5,8 @@ export interface LaunchRequest {
   idempotencyKey: string;
   prompt: string;
   workspacePath: string;
+  environment: NodeJS.ProcessEnv;
+  revalidateWorkspace(): Promise<void>;
   resume?: ResumeMetadata;
 }
 
@@ -39,7 +41,7 @@ export interface AgentAdapter {
   readonly cancellation?: "supported" | "unsupported";
   /** Returns the one run previously accepted for this key, or undefined when absence is authoritative. */
   findByIdempotencyKey(idempotencyKey: string): Promise<RunHandle | undefined>;
-  /** Atomically returns the existing run for the key or creates exactly one run. */
+  /** Atomically returns the existing run or creates one after revalidation, using only the supplied environment. */
   launch(request: LaunchRequest): Promise<RunHandle>;
   status(handle: RunHandle, signal?: AbortSignal): Promise<RunState>;
   result(handle: RunHandle, signal?: AbortSignal): Promise<RunResult | undefined>;
