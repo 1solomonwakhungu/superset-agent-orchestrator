@@ -851,6 +851,226 @@ test("unavailable late result remains pending and a later result is retained", a
   assert.equal(worker?.lifecycleReconcilePending, undefined);
 }));
 
+test("an unavailable cancellation result remains restart-reconcilable", async () => harness(async (store, path) => {
+  const created = await store.createBatch("cancel-result-retry", "client", [{ agent: "codex", task: "work" }]);
+  const id = created.sessions[0]!.id;
+  await store.bindWorkerRun(id, "run-1");
+  const first = new LifecycleService(store, stub({
+    cancellation: "supported",
+    cancel: async () => ({ status: "accepted" as const }),
+    status: async ({ runId }) => ({ runId, status: "cancelled" as const, updatedAt: "2026-07-26T00:00:02.000Z" }),
+    result: async () => { throw new Error("not ready"); },
+  }));
+
+  assert.equal(accepted(await first.cancelSession(id)).status, "canceled");
+  assert.equal((await store.worker(id))?.lifecycleReconcilePending, true);
+  const restarted = new DurableStore(path);
+  await new LifecycleService(restarted, stub({
+    cancellation: "supported",
+    status: async ({ runId }) => ({ runId, status: "cancelled" as const, updatedAt: "2026-07-26T00:00:03.000Z" }),
+    result: async () => ({ status: "cancelled" as const, output: "eventual partial result" }),
+  })).reconcileTimedOutResults();
+
+  const worker = await restarted.worker(id);
+  assert.equal((worker?.result as AgentResultClaim).output, "eventual partial result");
+  assert.equal(worker?.lifecycleReconcilePending, undefined);
+}));
+
+test("identical unavailable result observations do not grow durable history", async () => harness(async (store) => {
+  const created = await store.createBatch("bounded-result-history", "client", [{ agent: "codex", task: "work" }]);
+  const id = created.sessions[0]!.id;
+  await store.bindWorkerRun(id, "run-1");
+  await store.setWorkerDeadline(id, new Date("2026-07-26T00:00:00.000Z"));
+  const service = new LifecycleService(store, stub({
+    cancellation: "supported",
+    cancel: async () => ({ status: "accepted" as const }),
+    status: async ({ runId }) => ({ runId, status: "succeeded" as const, updatedAt: "2026-07-26T00:00:02.000Z" }),
+    result: async () => { throw new Error("still unavailable"); },
+  }));
+
+  await service.enforceDeadlines(new Date("2026-07-26T00:00:01.000Z"));
+  for (let attempt = 0; attempt < 10; attempt += 1) await service.reconcileTimedOutResults();
+  const worker = await store.worker(id);
+  assert.equal(worker?.lifecycleReconcilePending, true);
+  assert.equal(worker?.lateObservations?.length, 1);
+}));
+
+test("a transient terminal status and result mismatch is reconciled later", async () => harness(async (store) => {
+  const created = await store.createBatch("result-replica-lag", "client", [{ agent: "codex", task: "work" }]);
+  const id = created.sessions[0]!.id;
+  await store.bindWorkerRun(id, "run-1");
+  await store.setWorkerDeadline(id, new Date("2026-07-26T00:00:00.000Z"));
+  let resultCalls = 0;
+  const service = new LifecycleService(store, stub({
+    cancellation: "supported",
+    cancel: async () => ({ status: "accepted" as const }),
+    status: async ({ runId }) => ({ runId, status: "succeeded" as const, updatedAt: "2026-07-26T00:00:02.000Z" }),
+    result: async () => resultCalls++ === 0
+      ? { status: "failed" as const, error: "stale replica", retryable: false }
+      : { status: "succeeded" as const, output: "consistent result" },
+  }));
+
+  await service.enforceDeadlines(new Date("2026-07-26T00:00:01.000Z"));
+  assert.equal((await store.worker(id))?.lifecycleReconcilePending, true);
+  await service.reconcileTimedOutResults();
+  const worker = await store.worker(id);
+  assert.equal((worker?.result as AgentResultClaim).output, "consistent result");
+  assert.equal(worker?.lifecycleReconcilePending, undefined);
+}));
+
+test("a deadline racing an in-flight cancellation delivers one provider stop", async () => harness(async (store) => {
+  const created = await store.createBatch("cancel-deadline-race", "client", [{ agent: "codex", task: "work" }]);
+  const id = created.sessions[0]!.id;
+  await store.bindWorkerRun(id, "run-1");
+  await store.setWorkerDeadline(id, new Date("2026-07-26T00:00:00.000Z"));
+  let cancelCalls = 0;
+  let releaseCancel: (() => void) | undefined;
+  let cancellationStarted: (() => void) | undefined;
+  const started = new Promise<void>((resolve) => { cancellationStarted = resolve; });
+  const blocked = new Promise<void>((resolve) => { releaseCancel = resolve; });
+  const service = new LifecycleService(store, stub({
+    cancellation: "supported",
+    cancel: async () => {
+      cancelCalls += 1;
+      cancellationStarted?.();
+      await blocked;
+      return { status: "accepted" as const };
+    },
+    status: async ({ runId }) => ({ runId, status: "running" as const, updatedAt: "2026-07-26T00:00:01.000Z" }),
+  }));
+
+  const cancellation = service.cancelSession(id);
+  await started;
+  await service.enforceDeadlines(new Date("2026-07-26T00:00:01.000Z"));
+  releaseCancel?.();
+  await cancellation;
+  const worker = await store.worker(id);
+  assert.equal(cancelCalls, 1);
+  assert.equal(worker?.providerStopPending, undefined);
+  assert.equal(worker?.providerStopClaimed, undefined);
+}));
+
+test("an unsupported cancellation racing a deadline releases the delivery claim", async () => harness(async (store) => {
+  const created = await store.createBatch("unsupported-deadline-race", "client", [{ agent: "codex", task: "work" }]);
+  const id = created.sessions[0]!.id;
+  await store.bindWorkerRun(id, "run-1");
+  await store.setWorkerDeadline(id, new Date("2026-07-26T00:00:00.000Z"));
+  let releaseCancel: (() => void) | undefined;
+  let cancellationStarted: (() => void) | undefined;
+  const started = new Promise<void>((resolve) => { cancellationStarted = resolve; });
+  const blocked = new Promise<void>((resolve) => { releaseCancel = resolve; });
+  const service = new LifecycleService(store, stub({
+    cancellation: "supported",
+    cancel: async () => {
+      cancellationStarted?.();
+      await blocked;
+      return { status: "unsupported" as const };
+    },
+    status: async ({ runId }) => ({ runId, status: "running" as const, updatedAt: "2026-07-26T00:00:01.000Z" }),
+  }));
+
+  const cancellation = service.cancelSession(id);
+  await started;
+  await service.enforceDeadlines(new Date("2026-07-26T00:00:01.000Z"));
+  releaseCancel?.();
+  await cancellation;
+  const worker = await store.worker(id);
+  assert.equal(worker?.cancellationDeliveryClaimed, undefined);
+  assert.equal(worker?.providerStopPending, undefined);
+  assert.equal(worker?.providerStopUnsupported, true);
+}));
+
+test("restart transfers a deadline-raced cancellation claim to provider stop recovery", async () => harness(async (store, path) => {
+  const created = await store.createBatch("cancel-deadline-restart", "client", [{ agent: "codex", task: "work" }]);
+  const id = created.sessions[0]!.id;
+  await store.bindWorkerRun(id, "run-1");
+  await store.requestWorkerCancellation(id);
+  assert.equal(await store.claimCancellationDelivery(id), true);
+  await store.setWorkerDeadline(id, new Date("2026-07-26T00:00:00.000Z"));
+  await store.expireWorker(id, { at: new Date("2026-07-26T00:00:01.000Z") });
+
+  const restarted = new DurableStore(path);
+  await restarted.recoverLifecycleDeliveryClaims();
+  const worker = await restarted.worker(id);
+  assert.equal(worker?.cancellationDeliveryClaimed, undefined);
+  assert.equal(worker?.providerStopPending, true);
+}));
+
+test("a delivered cancellation satisfies later deadline stop cleanup", async () => harness(async (store) => {
+  const created = await store.createBatch("cancel-delivered-deadline", "client", [{ agent: "codex", task: "work" }]);
+  const id = created.sessions[0]!.id;
+  await store.bindWorkerRun(id, "run-1");
+  await store.requestWorkerCancellation(id);
+  assert.equal(await store.claimCancellationDelivery(id), true);
+  await store.markCancellationDelivered(id);
+  await store.setWorkerDeadline(id, new Date("2026-07-26T00:00:00.000Z"));
+
+  await new LifecycleService(store, stub({ cancellation: "supported" }))
+    .enforceDeadlines(new Date("2026-07-26T00:00:01.000Z"));
+  const worker = await store.worker(id);
+  assert.equal(worker?.providerStopPending, undefined);
+  assert.equal(worker?.providerStopClaimed, undefined);
+}));
+
+test("alternating reconciliation failures retain bounded audit history", async () => harness(async (store) => {
+  const created = await store.createBatch("bounded-alternating-history", "client", [{ agent: "codex", task: "work" }]);
+  const id = created.sessions[0]!.id;
+  await store.bindWorkerRun(id, "run-1");
+  await store.setWorkerDeadline(id, new Date("2026-07-26T00:00:00.000Z"));
+  let resultCalls = 0;
+  const service = new LifecycleService(store, stub({
+    cancellation: "supported",
+    cancel: async () => ({ status: "accepted" as const }),
+    status: async ({ runId }) => ({ runId, status: "succeeded" as const, updatedAt: "2026-07-26T00:00:02.000Z" }),
+    result: async () => { throw new Error(resultCalls++ % 2 === 0 ? "offline" : "overloaded"); },
+  }));
+
+  await service.enforceDeadlines(new Date("2026-07-26T00:00:01.000Z"));
+  for (let attempt = 0; attempt < 40; attempt += 1) await service.reconcileTimedOutResults();
+  assert.ok(((await store.worker(id))?.lateObservations?.length ?? 0) <= 32);
+}));
+
+test("a stale failed reconciliation cannot reopen a completed reconciliation", async () => harness(async (store) => {
+  const created = await store.createBatch("stale-reconciliation", "client", [{ agent: "codex", task: "work" }]);
+  const id = created.sessions[0]!.id;
+  await store.bindWorkerRun(id, "run-1");
+  await store.setWorkerDeadline(id, new Date("2026-07-26T00:00:00.000Z"));
+  await store.expireWorker(id, { at: new Date("2026-07-26T00:00:01.000Z") });
+  await store.settleWorkerCancellation(id, "succeeded", {
+    result: { status: "succeeded", completeness: "complete", output: "authoritative" },
+  });
+  await store.settleWorkerCancellation(id, "succeeded", {
+    result: { status: "malformed", completeness: "malformed", error: "stale failure" },
+    keepReconciliationPending: true,
+  });
+
+  const worker = await store.worker(id);
+  assert.equal(worker?.lifecycleReconcilePending, undefined);
+  assert.equal((worker?.result as AgentResultClaim).output, "authoritative");
+}));
+
+test("bounded deadline sweeps drain more than 250 overdue sessions", async () => harness(async (store) => {
+  const sessions = [];
+  for (let batch = 0; batch < 2; batch += 1) {
+    const created = await store.createBatch(`large-deadline-${batch}`, "client", Array.from(
+      { length: 130 },
+      (_, index) => ({ agent: "codex", task: `${batch}-${index}` }),
+    ));
+    sessions.push(...created.sessions);
+  }
+  const deadline = new Date("2026-07-26T00:00:00.000Z");
+  for (const { id } of sessions) await store.setWorkerDeadline(id, deadline);
+
+  const service = new LifecycleService(store, new FakeAgentAdapter([]));
+  const first = await service.enforceDeadlines(new Date("2026-07-26T00:00:01.000Z"));
+  assert.equal(await service.hasOverdueDeadlines(new Date("2026-07-26T00:00:01.000Z")), true);
+  const second = await service.enforceDeadlines(new Date("2026-07-26T00:00:01.000Z"));
+  assert.equal(first.length, 250);
+  assert.equal(second.length, 10);
+  assert.equal(await service.hasOverdueDeadlines(new Date("2026-07-26T00:00:01.000Z")), false);
+  assert.equal((await store.overdueWorkers(new Date("2026-07-26T00:00:01.000Z"))).length, 0);
+}));
+
 test("unknown outcomes do not satisfy all_terminal waits", async () => harness(async (store) => {
   const created = await store.createBatch("lost-wait", "client", [{ agent: "codex", task: "work" }]);
   await store.recordWorkerTerminal(created.sessions[0]!.id, "unknown_outcome");
