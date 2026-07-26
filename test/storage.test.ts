@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { Worker } from "node:worker_threads";
 import { CURRENT_SCHEMA_VERSION, OrchestratorStorage } from "../src/storage.js";
+import { terminateWorkers } from "./support/deterministic.js";
 
 async function temporaryDirectory(run: (directory: string) => void | Promise<void>): Promise<void> {
   const directory = await mkdtemp(join(tmpdir(), "orchestrator-storage-"));
@@ -395,11 +396,15 @@ test("concurrent static exports publish exactly one owner-only valid output", as
     await mkdir(outputDirectory, { mode: 0o700 });
     const first = concurrentExportWorker(path, output);
     const second = concurrentExportWorker(path, output);
-    await Promise.all([first.ready, second.ready]);
-    first.worker.postMessage("start");
-    second.worker.postMessage("start");
-    const results = await Promise.all([first.result, second.result]);
-    await Promise.all([first.worker.terminate(), second.worker.terminate()]);
+    let results: Array<{ ok: boolean; error?: string }>;
+    try {
+      await Promise.all([first.ready, second.ready]);
+      first.worker.postMessage("start");
+      second.worker.postMessage("start");
+      results = await Promise.all([first.result, second.result]);
+    } finally {
+      await terminateWorkers([first.worker, second.worker]);
+    }
     assert.equal(results.filter(({ ok }) => ok).length, 1);
     assert.equal(results.filter(({ ok }) => !ok).length, 1);
     assert.match(results.find(({ ok }) => !ok)?.error ?? "", /EEXIST|already exists/);
