@@ -161,7 +161,7 @@ test("retries transient background dispatch failure without another launch reque
     const launched = new Promise<void>((resolve) => { markLaunched = resolve; });
     store.recordLaunchEvent = async (...args) => {
       const assignment = await recordLaunchEvent(...args);
-      if (assignment.status === "launched") markLaunched?.();
+      if (assignment.assignment.status === "launched") markLaunched?.();
       return assignment;
     };
     const service = new LaunchService(store, adapter, () => new Date(), () => undefined, 5);
