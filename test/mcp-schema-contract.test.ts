@@ -115,8 +115,11 @@ test("every tool input rejects an unknown field and a foreign contract version",
     sessions_status: { session_ids: ["session-1"] },
     sessions_results: { session_ids: ["session-1"] },
     sessions_cancel: { session_ids: ["session-1"] },
+    batches_cancel: { batch_ids: ["batch-1"] },
     batches_get: { batch_id: "batch-1" },
     batches_wait: { batch_ids: ["batch-1"] },
+    sessions_set_deadline: { session_ids: ["session-1"], deadline_ms: 1_000 },
+    deadlines_enforce: {},
     batches_recover: { batch_id: "batch-1" },
   };
 
