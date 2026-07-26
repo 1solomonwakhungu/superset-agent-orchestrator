@@ -622,37 +622,41 @@ export class OrchestratorStorage {
    * caller's proof that the exact owner process is absent; the generation is
    * retired, never reassigned, so a later acquisition always fences the old owner.
    */
-  recoverExpiredWriterLease(leaseId: string, evidence: { ownerProcessAbsent: true; detail?: string },
+  recoverExpiredWriterLease(observed: WorkspaceLeaseStatus, evidence: { ownerProcessAbsent: true; detail?: string },
     actor: string, now = new Date()): void {
     this.transaction(() => {
       const timestamp = sqlTimestamp(now);
-      const lease = this.database.prepare(`SELECT workspace_id, generation, state, expires_at
-        FROM workspace_leases WHERE id = ?`).get(leaseId) as
-        { workspace_id: string; generation: number; state: LeaseState; expires_at: string } | undefined;
-      if (!lease || lease.state !== "active" || lease.expires_at > timestamp) {
+      if (observed.state !== "active" || observed.expiresAt > timestamp) {
         throw new LeaseRecoveryAmbiguousError("Recovery requires an expired active lease");
       }
       if (evidence.ownerProcessAbsent !== true) {
         throw new LeaseRecoveryAmbiguousError("Recovery requires verified owner-process absence");
       }
-      this.database.prepare(`UPDATE workspace_leases SET state = 'released', released_at = ?,
-        row_version = row_version + 1 WHERE id = ? AND state = 'active'`).run(timestamp, leaseId);
-      this.appendEvent({ aggregateType: "workspace_lease", aggregateId: leaseId,
-        eventType: "lease_recovered", actor, data: { workspaceId: lease.workspace_id,
-          generation: lease.generation, evidence: "owner_process_absent", detail: evidence.detail },
+      const result = this.database.prepare(`UPDATE workspace_leases SET state = 'released', released_at = ?,
+        row_version = row_version + 1 WHERE id = ? AND generation = ? AND state = 'active'
+        AND row_version = ? AND expires_at = ?`).run(timestamp, observed.leaseId, observed.generation,
+          observed.rowVersion, observed.expiresAt);
+      if (Number(result.changes) !== 1) {
+        throw new LeaseFencedError("Lease recovery rejected because the observed authority changed");
+      }
+      this.appendEvent({ aggregateType: "workspace_lease", aggregateId: observed.leaseId,
+        eventType: "lease_recovered", actor, data: { workspaceId: observed.workspaceId,
+          generation: observed.generation, evidence: "owner_process_absent", detail: evidence.detail },
         occurredAt: now });
     });
   }
 
   /** Freezes a lease whose evidence is inconclusive. Quarantine denies new writers. */
-  quarantineWriterLease(leaseId: string, reason: string, actor: string, now = new Date()): void {
+  quarantineWriterLease(observed: WorkspaceLeaseStatus, reason: string, actor: string, now = new Date()): void {
     this.transaction(() => {
       const row = this.database.prepare(`UPDATE workspace_leases SET state = 'quarantined',
         quarantine_reason = ?, row_version = row_version + 1
-        WHERE id = ? AND state IN ('active', 'releasing') RETURNING workspace_id, generation`)
-        .get(reason, leaseId) as { workspace_id: string; generation: number } | undefined;
-      if (!row) throw new LeaseStateCorruptError("Only an active or releasing lease can be quarantined");
-      this.appendEvent({ aggregateType: "workspace_lease", aggregateId: leaseId,
+        WHERE id = ? AND generation = ? AND state = ? AND row_version = ?
+        RETURNING workspace_id, generation`)
+        .get(reason, observed.leaseId, observed.generation, observed.state, observed.rowVersion) as
+        { workspace_id: string; generation: number } | undefined;
+      if (!row) throw new LeaseFencedError("Lease quarantine rejected because the observed authority changed");
+      this.appendEvent({ aggregateType: "workspace_lease", aggregateId: observed.leaseId,
         eventType: "lease_quarantined", actor,
         data: { workspaceId: row.workspace_id, generation: row.generation, reason }, occurredAt: now });
     });
@@ -663,18 +667,20 @@ export class OrchestratorStorage {
    * acquisition of a higher generation can proceed. It never assigns an active
    * lease, reuses a generation, or launches a process.
    */
-  repairQuarantinedWriterLease(leaseId: string, evidence: { ownerProcessAbsent: true; detail?: string },
+  repairQuarantinedWriterLease(observed: WorkspaceLeaseStatus,
+    evidence: { ownerProcessAbsent: true; detail?: string },
     actor: string, now = new Date()): void {
     this.transaction(() => {
       if (evidence.ownerProcessAbsent !== true) {
         throw new LeaseRecoveryAmbiguousError("Repair requires verified owner-process absence");
       }
       const row = this.database.prepare(`UPDATE workspace_leases SET state = 'released', released_at = ?,
-        row_version = row_version + 1 WHERE id = ? AND state = 'quarantined'
-        RETURNING workspace_id, generation, quarantine_reason`).get(sqlTimestamp(now), leaseId) as
+        row_version = row_version + 1 WHERE id = ? AND generation = ? AND state = 'quarantined'
+        AND row_version = ? RETURNING workspace_id, generation, quarantine_reason`)
+        .get(sqlTimestamp(now), observed.leaseId, observed.generation, observed.rowVersion) as
         { workspace_id: string; generation: number; quarantine_reason: string | null } | undefined;
-      if (!row) throw new LeaseStateCorruptError("Only a quarantined lease can be repaired");
-      this.appendEvent({ aggregateType: "workspace_lease", aggregateId: leaseId,
+      if (!row) throw new LeaseFencedError("Lease repair rejected because the observed authority changed");
+      this.appendEvent({ aggregateType: "workspace_lease", aggregateId: observed.leaseId,
         eventType: "lease_repaired", actor, data: { workspaceId: row.workspace_id,
           generation: row.generation, quarantineReason: row.quarantine_reason, detail: evidence.detail },
         occurredAt: now });
