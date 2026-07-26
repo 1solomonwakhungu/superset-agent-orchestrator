@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/1solomonwakhungu/superset-agent-orchestrator/minicpm5/report.schema.json",
+  "title": "MiniCPM5 deterministic baseline report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "float_precision", "provenance", "results", "result_fingerprint"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "float_precision": { "type": "integer", "minimum": 0, "maximum": 15 },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["contract_id", "checkpoint_sha", "tokenizer_hash", "template_hash", "environment_fingerprint", "environment_lock", "hardware_class", "hardware_manifest", "corpus_hash", "dataset_revisions", "harness_commit", "command_arguments", "cache_state", "raw_trace_hashes", "direct_io", "decode_config"],
+      "properties": {
+        "contract_id": { "const": "disklm-eval-v1" },
+        "checkpoint_sha": { "type": "string", "minLength": 1 },
+        "tokenizer_hash": { "type": "string", "minLength": 1 },
+        "template_hash": { "type": "string", "minLength": 1 },
+        "environment_fingerprint": { "type": "string", "minLength": 1 },
+        "environment_lock": { "type": "string", "minLength": 1 },
+        "hardware_class": { "type": "string", "minLength": 1 },
+        "hardware_manifest": { "type": "object", "minProperties": 1 },
+        "corpus_hash": { "type": "string", "minLength": 1 },
+        "dataset_revisions": { "type": "object" },
+        "harness_commit": { "type": "string", "minLength": 1 },
+        "command_arguments": { "type": "array" },
+        "cache_state": { "type": "string", "minLength": 1 },
+        "raw_trace_hashes": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "direct_io": { "type": "boolean" },
+        "decode_config": { "type": "object" }
+      }
+    },
+    "results": { "type": "object" },
+    "result_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

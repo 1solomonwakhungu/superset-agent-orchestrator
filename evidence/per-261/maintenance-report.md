@@ -13,8 +13,9 @@ Date: 2026-07-26
 - 105 stale operating-system paths could not be removed because macOS returned
   `Permission denied` or `Operation not permitted`; they were left in place and
   no privilege escalation was attempted.
-- Four active socket paths disappeared between enumeration and removal and were
-  reported as skipped rather than removed.
+- Four socket candidates were skipped rather than removed; the cleanup output
+  does not distinguish an existing Unix socket from a path that disappeared
+  between enumeration and removal.
 
 ## Safety boundaries
 
