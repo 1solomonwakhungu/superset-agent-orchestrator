@@ -280,6 +280,8 @@ locally.
   workspace failures per assignment, and adds deterministic background shutdown.
 - Final verification after integrating current `origin/main`: `npm run verify`
   passed 135 tests with 1 opt-in smoke
-  skip; the 56-test security/launch/discovery focus passed 20 consecutive runs
-  (1,120/1,120); check, schema, routing contract, security Markdown lint, Python
+  skip; the final 60-test security/launch/discovery/platform focus passed 20
+  consecutive runs (1,200/1,200); the repository quality gate passed formatting,
+  lint, typecheck, build, tests, coverage, Python 3.11 tests, and schema diff; routing
+  contract, security Markdown lint, Python
   bytecode compilation, and `git diff --check` passed.

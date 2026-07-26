@@ -145,7 +145,9 @@ export class LaunchService {
         retryableFailure = error;
       }
     }
-    if (retryableFailure !== undefined) throw retryableFailure;
+    if (retryableFailure !== undefined) {
+      throw retryableFailure instanceof Error ? retryableFailure : new Error("Retryable dispatch failure");
+    }
   }
 
   private scheduleDispatch(delayMs: number): void {
@@ -198,7 +200,7 @@ export class LaunchService {
         prompt: assignment.prompt,
         workspacePath: assertDataOperand(grant.canonicalPath, "workspace path"),
         environment: childEnvironment(),
-        revalidateWorkspace: grant.revalidate,
+        revalidateWorkspace: () => grant.revalidate(),
       });
     } catch (error) {
       if (error instanceof InjectedCrash) throw error;
