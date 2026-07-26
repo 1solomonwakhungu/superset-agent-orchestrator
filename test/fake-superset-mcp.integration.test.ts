@@ -138,15 +138,17 @@ test("production MCP server exposes every provider error once without retries", 
     await rm(directory, { recursive: true, force: true });
   }
 
+  const disabledDirectory = await mkdtemp(join(tmpdir(), "disabled-provider-"));
   const disabled = await connect({
-    SUPERSET_ORCHESTRATOR_STATE: join(tmpdir(), `disabled-provider-${Date.now()}.json`),
-    SUPERSET_ORCHESTRATOR_PROVIDER_TEST_WORKSPACE_ROOT: join(tmpdir(), "missing-provider-root"),
+    SUPERSET_ORCHESTRATOR_STATE: join(disabledDirectory, "state.json"),
+    SUPERSET_ORCHESTRATOR_PROVIDER_TEST_WORKSPACE_ROOT: join(disabledDirectory, "missing-provider-root"),
   });
   try {
     const unavailable = await call(disabled.client, "provider_batches_launch", launchArguments(1));
     assert.equal(unavailable.error?.code, "PROVIDER_UNAVAILABLE");
   } finally {
     await disabled.transport.close();
+    await rm(disabledDirectory, { recursive: true, force: true });
   }
 });
 
