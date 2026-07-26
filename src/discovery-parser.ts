@@ -1,14 +1,15 @@
 import { z } from "zod";
 
-const nonEmptyString = z.string().min(1);
-const nullableString = z.string().nullable();
+const boundedString = z.string().max(4_096).refine((value) => !value.includes("\0"), "NUL bytes are not allowed");
+const nonEmptyString = boundedString.min(1);
+const nullableString = boundedString.nullable();
 
 export const supersetVersionSchema = z.string().regex(
   /^(?:superset v?)?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/,
   "expected a semantic Superset version",
 );
 
-export const localHostSchema = z.object({
+export const localHostSchema = z.strictObject({
   running: z.boolean(),
   healthy: z.boolean(),
   pid: z.number().int().positive(),
@@ -20,7 +21,7 @@ export const localHostSchema = z.object({
   uptimeSec: z.number().nonnegative(),
 });
 
-export const projectSchema = z.object({
+export const projectSchema = z.strictObject({
   id: nonEmptyString,
   name: nonEmptyString,
   slug: nonEmptyString,
@@ -30,7 +31,7 @@ export const projectSchema = z.object({
   path: nullableString,
 });
 
-export const workspaceSchema = z.object({
+export const workspaceSchema = z.strictObject({
   id: nonEmptyString,
   organizationId: nonEmptyString,
   projectId: nonEmptyString,
@@ -48,16 +49,16 @@ export const workspaceSchema = z.object({
   hostName: nonEmptyString,
 });
 
-export const agentPresetSchema = z.object({
+export const agentPresetSchema = z.strictObject({
   id: nonEmptyString,
   presetId: nonEmptyString,
   iconId: nullableString.optional(),
   label: nonEmptyString,
   command: nonEmptyString,
-  args: z.array(z.string()).optional(),
+  args: z.array(boundedString).max(100).optional(),
   promptTransport: z.enum(["argv", "stdin"]).optional(),
-  promptArgs: z.array(z.string()).optional(),
-  env: z.record(z.string(), z.string()).optional(),
+  promptArgs: z.array(boundedString).max(100).optional(),
+  env: z.record(z.string().max(256), boundedString).optional(),
   order: z.number().int().nonnegative().optional(),
 });
 
@@ -81,6 +82,6 @@ export function parseJson<T>(stdout: string, schema: z.ZodType<T>): T {
   return schema.parse(value);
 }
 
-export const projectListSchema = z.array(projectSchema);
-export const workspaceListSchema = z.array(workspaceSchema);
-export const agentPresetListSchema = z.array(agentPresetSchema);
+export const projectListSchema = z.array(projectSchema).max(10_000);
+export const workspaceListSchema = z.array(workspaceSchema).max(10_000);
+export const agentPresetListSchema = z.array(agentPresetSchema).max(1_000);
