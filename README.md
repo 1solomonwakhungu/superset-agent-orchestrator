@@ -152,6 +152,8 @@ Synthetic provider and durable-state compatibility cases live in
 `test/fixtures/compat/`, with provenance and sanitization metadata in that
 directory's manifest. Changing an expectation there is a contract change.
 
+Real Superset and Codex verification is opt-in because it launches an agent in an exact isolated worktree. See [the real-system harness guide](docs/real-superset-codex-e2e.md) for safety gates, commands, evidence, and currently unsupported lifecycle operations.
+
 ## Contributions
 
 Changes must use pull requests. See [CONTRIBUTING.md](CONTRIBUTING.md) for the
