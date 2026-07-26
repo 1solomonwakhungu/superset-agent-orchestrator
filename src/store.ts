@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import { dirname } from "node:path";
 import lockfile from "proper-lockfile";
 import { z } from "zod";
-import { auditField, SecurityError, SECURITY_POLICY_VERSION } from "./security.js";
+import { auditField, RedactionPolicy, SecurityError, SECURITY_POLICY_VERSION } from "./security.js";
 
 export type WorkerStatus = "requested" | "running" | "succeeded" | "failed" | "unknown_outcome";
 export type DiagnosticKind = "orphan" | "unknown_outcome" | "missing_result";
@@ -120,7 +120,7 @@ export interface CapturedResult {
   assignmentId: string;
   batchId: string;
   sessionId: string;
-  workspaceId: string;
+  workspaceId?: string;
   workspacePath: string;
   attemptId: string;
   attempt: number;
@@ -187,6 +187,7 @@ export interface LaunchIntent {
   sessionId: string;
   batchId: string;
   workerId: string;
+  workspaceId?: string;
   attribution: WorkerAttribution;
   status: LaunchStatus;
   createdAt: string;
@@ -282,7 +283,7 @@ const securityAuditEventSchema = z.object({
 });
 const launchIntentSchema = z.object({
   idempotencyKey: z.string().min(1), requestHash: z.string().regex(/^[a-f0-9]{64}$/),
-  sessionId: z.string().min(1), batchId: z.string().min(1), workerId: z.string().min(1),
+  sessionId: z.string().min(1), batchId: z.string().min(1), workerId: z.string().min(1), workspaceId: z.string().min(1).optional(),
   attribution: attributionSchema,
   status: z.enum(["reserved", "dispatching", "unknown_outcome", "bound"]),
   createdAt: z.iso.datetime(), updatedAt: z.iso.datetime(), runId: z.string().min(1).optional(),
@@ -358,7 +359,20 @@ export class DurableStore {
     private readonly isProcessAlive: (pid: number, processStartedAt?: string) => boolean = DurableStore.isProcessAlive.bind(DurableStore),
     private readonly observeQuery: (measurement: QueryMeasurement) => void = () => undefined,
     private readonly now: () => number = performance.now.bind(performance),
+    private readonly redaction = new RedactionPolicy(),
   ) {}
+
+  redactText(value: string): string {
+    return this.redaction.text(value);
+  }
+
+  redactValue(value: unknown): unknown {
+    return this.redaction.value(value);
+  }
+
+  safeError(error: unknown): string {
+    return this.redaction.error(error);
+  }
 
   async createBatch(
     name: string,
@@ -549,7 +563,12 @@ export class DurableStore {
     });
   }
 
-  async updateLaunch(idempotencyKey: string, status: LaunchStatus, options: { runId?: string; diagnostic?: string } = {}, now = new Date()): Promise<LaunchIntent> {
+  async updateLaunch(
+    idempotencyKey: string,
+    status: LaunchStatus,
+    options: { runId?: string; diagnostic?: string; securityAudit?: SecurityAuditInput } = {},
+    now = new Date(),
+  ): Promise<LaunchIntent> {
     return this.withLock(async () => {
       await this.load();
       const intent = this.state.launchIntents?.find((candidate) => candidate.idempotencyKey === idempotencyKey);
@@ -557,11 +576,21 @@ export class DurableStore {
       if (intent.status === "bound" && (status !== "bound" || options.runId !== undefined && options.runId !== intent.runId)) {
         throw new Error("A bound launch cannot be rebound or regressed");
       }
-      intent.status = status;
-      intent.updatedAt = now.toISOString();
-      if (options.runId !== undefined) intent.runId = options.runId;
-      if (options.diagnostic !== undefined) intent.diagnostic = options.diagnostic;
-      await this.persist();
+      const previousState = structuredClone(this.state);
+      try {
+        intent.status = status;
+        intent.updatedAt = now.toISOString();
+        if (options.runId !== undefined) intent.runId = options.runId;
+        if (options.diagnostic !== undefined) intent.diagnostic = this.redaction.text(options.diagnostic);
+        if (options.securityAudit !== undefined) this.appendSecurityAuditToState(options.securityAudit, now);
+        await this.persist();
+      } catch (error) {
+        await this.load().catch(() => {
+          this.state = previousState;
+          this.rebuildIndexes();
+        });
+        throw error;
+      }
       return structuredClone(intent);
     });
   }
@@ -703,15 +732,15 @@ export class DurableStore {
       id: randomUUID(),
       sequence: (previous?.sequence ?? 0) + 1,
       occurredAt: now.toISOString(),
-      requesterId: auditField(input.requesterId),
-      operation: auditField(input.operation),
+        requesterId: auditField(input.requesterId, this.redaction.canaries),
+        operation: auditField(input.operation, this.redaction.canaries),
       decision: input.decision,
-      reasonCode: auditField(input.reasonCode),
-      correlationId: auditField(input.correlationId),
+        reasonCode: auditField(input.reasonCode, this.redaction.canaries),
+        correlationId: auditField(input.correlationId, this.redaction.canaries),
       policyVersion: SECURITY_POLICY_VERSION,
-      ...(input.workspaceId === undefined ? {} : { workspaceId: auditField(input.workspaceId) }),
-      ...(input.projectId === undefined ? {} : { projectId: auditField(input.projectId) }),
-      ...(input.assignmentId === undefined ? {} : { assignmentId: auditField(input.assignmentId) }),
+        ...(input.workspaceId === undefined ? {} : { workspaceId: auditField(input.workspaceId, this.redaction.canaries) }),
+        ...(input.projectId === undefined ? {} : { projectId: auditField(input.projectId, this.redaction.canaries) }),
+        ...(input.assignmentId === undefined ? {} : { assignmentId: auditField(input.assignmentId, this.redaction.canaries) }),
       previousEventHash: previous?.eventHash ?? GENESIS_AUDIT_HASH,
     };
     const event: SecurityAuditEvent = { ...body, eventHash: securityAuditEventHash(body) };

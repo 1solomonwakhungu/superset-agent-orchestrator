@@ -4,27 +4,30 @@ import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { safeErrorMessage } from "./security.js";
+import { RedactionPolicy } from "./security.js";
 import { BatchQueryError, DurableStore } from "./store.js";
 import { assertRegisteredToolNames, assertSafeToolNames } from "./tool-security.js";
 
 const statePath = process.env.SUPERSET_ORCHESTRATOR_STATE
   ?? join(homedir(), ".local", "share", "superset-agent-orchestrator", "state.json");
+const redaction = new RedactionPolicy((process.env.SUPERSET_ORCHESTRATOR_REDACTION_CANARIES ?? "")
+  .split(",").map((value) => value.trim()).filter(Boolean));
 const store = new DurableStore(statePath, undefined, (measurement) => {
   console.error(`Batch query: ${JSON.stringify(measurement)}`);
-});
+}, undefined, redaction);
 
 function result(value: unknown) {
+  const safe = store.redactValue(value);
   return {
-    content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
-    structuredContent: value as Record<string, unknown>,
+    content: [{ type: "text" as const, text: JSON.stringify(safe, null, 2) }],
+    structuredContent: safe as Record<string, unknown>,
   };
 }
 
 function batchError(error: unknown) {
   const typed = error instanceof BatchQueryError;
   const value = {
-    error: { code: typed ? error.code : "internal_error", message: safeErrorMessage(error) },
+    error: { code: typed ? error.code : "internal_error", message: store.safeError(error) },
   };
   return { ...result(value), isError: true };
 }
@@ -48,7 +51,7 @@ async function main(): Promise<void> {
   console.error(`Startup reconciliation complete: ${JSON.stringify(reconciliation)}`);
   const reconciliationTimer = setInterval(() => {
     store.reconcile().catch((error: unknown) => {
-      console.error("Background reconciliation failed:", error);
+      console.error("Background reconciliation failed:", store.safeError(error));
     });
   }, Number(process.env.SUPERSET_ORCHESTRATOR_RECONCILE_MS ?? 30_000));
   reconciliationTimer.unref();
@@ -113,7 +116,7 @@ async function main(): Promise<void> {
       const recovered = store.reopenBatch(name);
       return recovered
         ? result(recovered)
-        : { content: [{ type: "text", text: `No durable batch named ${JSON.stringify(name)}` }], isError: true };
+        : { ...result({ error: { code: "not_found", message: `No durable batch named ${JSON.stringify(name)}` } }), isError: true };
     },
   );
   server.registerTool(
@@ -132,6 +135,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.stack : error);
+  console.error(store.safeError(error));
   process.exitCode = 1;
 });

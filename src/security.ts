@@ -1,4 +1,5 @@
-import { realpath, stat } from "node:fs/promises";
+import { access, constants } from "node:fs";
+import { lstat, realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative } from "node:path";
 import type { Project, Workspace } from "./discovery-parser.js";
 
@@ -36,9 +37,37 @@ export function redactText(value: string, canaries: readonly string[] = []): str
   let redacted = value;
   for (const [pattern, replacement] of SECRET_PATTERNS) redacted = redacted.replace(pattern, replacement);
   for (const canary of canaries) {
-    if (canary.length > 0) redacted = redacted.split(canary).join("[REDACTED:canary]");
+    if (canary.length > 0) {
+      const variants = new Set([
+        canary,
+        encodeURIComponent(canary),
+        Buffer.from(canary).toString("base64"),
+        Buffer.from(canary).toString("base64url"),
+      ]);
+      for (const variant of variants) redacted = redacted.split(variant).join("[REDACTED:canary]");
+    }
   }
   return redacted;
+}
+
+export class RedactionPolicy {
+  readonly canaries: readonly string[];
+
+  constructor(canaries: readonly string[] = []) {
+    this.canaries = Object.freeze([...new Set(canaries.filter((value) => value.length > 0))]);
+  }
+
+  text(value: string): string {
+    return redactText(value, this.canaries);
+  }
+
+  value(value: unknown): unknown {
+    return redactValue(value, this.canaries);
+  }
+
+  error(error: unknown): string {
+    return safeErrorMessage(error, this.canaries);
+  }
 }
 
 export function redactValue(value: unknown, canaries: readonly string[] = []): unknown {
@@ -75,11 +104,12 @@ const CONTROL_CHARACTERS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f
 // eslint-disable-next-line no-control-regex -- ANSI escape starts with ESC by definition
 const ANSI_ESCAPE = /\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b[@-Z\\-_]/g;
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
-const AUDIT_FIELD_MAX_CHARACTERS = 256;
+export const AUDIT_FIELD_MAX_CHARACTERS = 256;
+const TRUNCATION_MARKER = "[TRUNCATED]";
 
 /** Normalizes an untrusted value into a bounded, single-line, redacted audit field. */
 export function auditField(value: string, canaries: readonly string[] = []): string {
-  const normalized = redactText(value, canaries)
+  const normalized = redactText(wellFormed(value), canaries)
     .replace(ANSI_ESCAPE, "")
     // eslint-disable-next-line no-control-regex -- audit records normalize all controls
     .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
@@ -88,11 +118,25 @@ export function auditField(value: string, canaries: readonly string[] = []): str
   if (normalized.length === 0) return "[NORMALIZED:empty]";
   return normalized.length <= AUDIT_FIELD_MAX_CHARACTERS
     ? normalized
-    : `${normalized.slice(0, AUDIT_FIELD_MAX_CHARACTERS)}[TRUNCATED]`;
+    : `${truncateWellFormed(normalized, AUDIT_FIELD_MAX_CHARACTERS - TRUNCATION_MARKER.length)}${TRUNCATION_MARKER}`;
+}
+
+function truncateWellFormed(value: string, length: number): string {
+  const truncated = value.slice(0, length);
+  const final = truncated.charCodeAt(truncated.length - 1);
+  return final >= 0xd800 && final <= 0xdbff ? truncated.slice(0, -1) : truncated;
+}
+
+function wellFormed(value: string): string {
+  return value.replace(LONE_SURROGATE, "�");
 }
 
 export const MAX_PROMPT_BYTES = 128 * 1024;
 export const MAX_RESULT_BYTES = 4 * 1024 * 1024;
+export const MAX_IDEMPOTENCY_KEY_BYTES = 256;
+export const MAX_IDENTITY_BYTES = 256;
+export const MAX_ATTRIBUTION_BYTES = 1024;
+export const MAX_RESUME_TOKEN_BYTES = 4096;
 
 /**
  * Validates untrusted text before it is persisted or handed to a child process.
@@ -180,6 +224,14 @@ export function assertDataOperand(value: string, name: string): string {
   return value;
 }
 
+export function assertIdentifier(value: string, name: string, maxBytes = MAX_IDENTITY_BYTES): string {
+  const validated = assertBoundedText(value, name, maxBytes);
+  if (/\s/.test(validated)) {
+    throw new SecurityError("INVALID_ARGUMENT", `${name} must not contain whitespace`);
+  }
+  return validated;
+}
+
 const CHILD_ENVIRONMENT_ALLOWLIST = [
   "PATH", "HOME", "USERPROFILE", "TMPDIR", "TMP", "TEMP", "SystemRoot", "ComSpec",
   "LANG", "LC_ALL", "LC_CTYPE", "TERM", "COLORTERM", "NO_COLOR", "FORCE_COLOR",
@@ -215,6 +267,7 @@ export interface WorkspaceGrant {
   workspaceId: string;
   projectId: string;
   canonicalPath: string;
+  ownerId?: string | null;
   revalidate(): Promise<void>;
 }
 
@@ -228,6 +281,44 @@ export type WorkspaceInventoryProvider = () => Promise<WorkspaceInventory>;
 interface FileIdentity {
   device: bigint;
   inode: bigint;
+}
+
+export interface ExecutablePin {
+  path: string;
+  identity: FileIdentity;
+  owner?: bigint;
+}
+
+export async function pinExecutable(executable: string): Promise<ExecutablePin> {
+  const configured = assertPinnedExecutable(executable);
+  try {
+    if ((await lstat(configured)).isSymbolicLink()) throw new Error("symlink executable is not trusted");
+    const canonical = assertPinnedExecutable(await realpath(configured));
+    const metadata = await stat(canonical, { bigint: true });
+    if (!metadata.isFile()) throw new Error("not a regular file");
+    if (process.platform !== "win32") {
+      await new Promise<void>((resolve, reject) => access(canonical, constants.X_OK, (error) => error ? reject(error) : resolve()));
+      if ((metadata.mode & 0o022n) !== 0n) throw new Error("group or other writable");
+      if (typeof process.getuid === "function" && metadata.uid !== BigInt(process.getuid()) && metadata.uid !== 0n) {
+        throw new Error("not owned by the current user or root");
+      }
+    }
+    return {
+      path: canonical,
+      identity: { device: metadata.dev, inode: metadata.ino },
+      ...(process.platform === "win32" ? {} : { owner: metadata.uid }),
+    };
+  } catch (error) {
+    throw new SecurityError("POLICY_DENIED", "Executable provenance is not trusted", false, { cause: error });
+  }
+}
+
+export async function revalidateExecutable(pin: ExecutablePin): Promise<void> {
+  const current = await pinExecutable(pin.path);
+  if (current.path !== pin.path || current.identity.device !== pin.identity.device
+    || current.identity.inode !== pin.identity.inode || current.owner !== pin.owner) {
+    throw new SecurityError("INTEGRITY_FAILURE", "Executable identity changed before spawn");
+  }
 }
 
 function opaqueWorkspaceId(value: string): void {
@@ -295,9 +386,32 @@ export class RegisteredWorkspaceAuthorizer implements WorkspaceAuthorizer {
       workspaceId,
       projectId: project.id,
       canonicalPath: workspaceDirectory.path,
+      ownerId: workspace.createdByUserId,
       revalidate: async () => {
-        const current = await canonicalDirectory(workspace.worktreePath, "Registered workspace path is unavailable");
-        if (!contained(projectDirectory.path, current.path)
+        const fresh = await this.inventory();
+        const currentWorkspaces = fresh.workspaces.filter(({ id }) => id === workspaceId);
+        const currentProjects = fresh.projects.filter(({ id }) => id === project.id);
+        if (fresh.hostId !== inventory.hostId || fresh.organizationId !== inventory.organizationId
+          || currentWorkspaces.length !== 1 || currentProjects.length !== 1) {
+          throw new SecurityError("INTEGRITY_FAILURE", "Workspace registration changed before launch");
+        }
+        const currentWorkspace = currentWorkspaces[0]!;
+        const currentProject = currentProjects[0]!;
+        if (currentWorkspace.hostId !== inventory.hostId
+          || currentWorkspace.organizationId !== inventory.organizationId
+          || currentWorkspace.projectId !== project.id
+          || currentWorkspace.createdByUserId !== workspace.createdByUserId
+          || currentWorkspace.worktreePath !== workspace.worktreePath
+          || currentProject.path !== project.path
+          || !currentWorkspace.worktreeExists) {
+          throw new SecurityError("INTEGRITY_FAILURE", "Workspace registration changed before launch");
+        }
+        const currentProjectDirectory = await canonicalDirectory(currentProject.path!, "Registered project path is unavailable");
+        const current = await canonicalDirectory(currentWorkspace.worktreePath, "Registered workspace path is unavailable");
+        if (!contained(currentProjectDirectory.path, current.path)
+          || currentProjectDirectory.path !== projectDirectory.path
+          || currentProjectDirectory.identity.device !== projectDirectory.identity.device
+          || currentProjectDirectory.identity.inode !== projectDirectory.identity.inode
           || current.path !== workspaceDirectory.path
           || current.identity.device !== workspaceDirectory.identity.device
           || current.identity.inode !== workspaceDirectory.identity.inode) {
