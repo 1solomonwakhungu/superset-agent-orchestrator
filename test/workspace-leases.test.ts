@@ -158,7 +158,7 @@ test("expiry alone never releases a lease and recovery needs owner-process proof
 
     const recovered = storage.database.prepare(
       "SELECT data_json FROM events WHERE event_type = 'lease_recovered'").get() as { data_json: string };
-    assert.equal(JSON.parse(recovered.data_json).evidence, "owner_process_absent");
+    assert.equal((JSON.parse(recovered.data_json) as { evidence: string }).evidence, "owner_process_absent");
     assert.throws(() => storage.recoverExpiredWriterLease(lease.leaseId, { ownerProcessAbsent: true },
       "operator", after(3_000)), LeaseRecoveryAmbiguousError);
   });
