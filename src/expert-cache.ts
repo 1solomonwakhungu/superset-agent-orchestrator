@@ -90,24 +90,25 @@ export class ExpertCache {
   access(candidate: ExpertAccess): boolean {
     const access = validateAccess(candidate);
     this.#clock += 1;
-    const history = this.#history.get(access.id);
-    if (history && history.sizeBytes !== access.sizeBytes) {
-      throw new Error(`size changed for expert ${access.id}`);
-    }
-    const historicalFrequency = (history?.frequency ?? 0) + 1;
-    this.#remember(access.id, { frequency: historicalFrequency, sizeBytes: access.sizeBytes });
     const resident = this.#entries.get(access.id);
     if (resident) {
       if (resident.sizeBytes !== access.sizeBytes) {
         throw new Error(`size changed for resident expert ${access.id}`);
       }
-      resident.frequency = historicalFrequency;
+      resident.frequency += 1;
       resident.lastAccess = this.#clock;
       resident.fetchCost = access.fetchCost;
       resident.priority = this.#priority(resident);
       this.#hits += 1;
       return true;
     }
+
+    const history = this.#history.get(access.id);
+    if (history && history.sizeBytes !== access.sizeBytes) {
+      throw new Error(`size changed for expert ${access.id}`);
+    }
+    const historicalFrequency = (history?.frequency ?? 0) + 1;
+    this.#remember(access.id, { frequency: historicalFrequency, sizeBytes: access.sizeBytes });
 
     this.#misses += 1;
     const entry = this.#makeEntry(access, false, historicalFrequency);
@@ -130,6 +131,8 @@ export class ExpertCache {
     }
 
     for (const victim of victims) this.#evict(victim);
+    entry.priority = this.#priority(entry);
+    this.#history.delete(entry.id);
     this.#entries.set(entry.id, entry);
     this.#residentBytes += entry.sizeBytes;
     this.#admissions += 1;
@@ -178,7 +181,8 @@ export class ExpertCache {
   #selectVictims(requiredBytes: number): Entry[] {
     const candidates = [...this.#entries.values()]
       .filter((entry) => !entry.pinned)
-      .sort((left, right) => this.#priority(left) - this.#priority(right) || left.id.localeCompare(right.id));
+      .sort((left, right) => this.#evictionPriority(left) - this.#evictionPriority(right)
+        || left.id.localeCompare(right.id));
     const victims: Entry[] = [];
     let available = this.#capacityBytes - this.#residentBytes;
     for (const candidate of candidates) {
@@ -193,8 +197,13 @@ export class ExpertCache {
   #evict(entry: Entry): void {
     this.#entries.delete(entry.id);
     this.#residentBytes -= entry.sizeBytes;
-    this.#inflation = this.#priority(entry);
+    this.#inflation = this.#evictionPriority(entry);
+    this.#remember(entry.id, { frequency: entry.frequency, sizeBytes: entry.sizeBytes });
     this.#evictions += 1;
+  }
+
+  #evictionPriority(entry: Entry): number {
+    return this.#policy === "hybrid" ? this.#priority(entry) : entry.priority;
   }
 
   #remember(id: string, history: HistoryEntry): void {

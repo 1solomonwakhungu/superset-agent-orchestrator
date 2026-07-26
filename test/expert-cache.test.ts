@@ -113,3 +113,23 @@ test("unique scans keep cache bookkeeping bounded in observable memory", () => {
   assert.equal(cache.snapshot().residentBytes, 128);
   assert.equal(cache.snapshot().residentIds.length, 1);
 });
+
+test("scan history cannot reset a resident expert frequency", () => {
+  const cache = new ExpertCache({ capacityBytes: 128, policy: "lfu", staticExperts: [
+    { id: "reserved", sizeBytes: 108 },
+  ] });
+  cache.access({ id: "hot", sizeBytes: 10 });
+  for (let index = 0; index < 10; index += 1) cache.access({ id: "hot", sizeBytes: 10 });
+  cache.access({ id: "cold", sizeBytes: 10 });
+  cache.access({ id: "scan-a", sizeBytes: 20 });
+  cache.access({ id: "scan-b", sizeBytes: 20 });
+  cache.access({ id: "candidate", sizeBytes: 10, fetchCost: 2 });
+  cache.access({ id: "candidate", sizeBytes: 10, fetchCost: 2 });
+  assert.equal(cache.has("hot"), true);
+});
+
+test("GDSF inflation ages old entries across repeated evictions", () => {
+  const cache = new ExpertCache({ capacityBytes: 20, policy: "gdsf", admissionControl: false });
+  for (const id of ["a", "z", "c", "d"]) cache.access({ id, sizeBytes: 10 });
+  assert.deepEqual(cache.snapshot().residentIds, ["c", "d"]);
+});
