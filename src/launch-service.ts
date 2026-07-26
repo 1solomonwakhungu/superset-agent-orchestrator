@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
-import type { AgentAdapter } from "./agent-adapter.js";
+import type { AgentAdapter, RunHandle } from "./agent-adapter.js";
 import {
   DurableStore,
   type Assignment,
   type Batch,
   type LaunchAuditEvent,
   type Session,
+  type Worker,
   type WorkerAttribution,
 } from "./store.js";
 
@@ -110,14 +111,14 @@ export class LaunchService {
         acceptedAt, updatedAt: acceptedAt,
       };
     });
-    const workers = assignments.map((assignment, index) => ({
+    const workers = assignments.map((assignment, position): Worker => ({
       id: assignment.sessionId,
       batchId,
       sessionId: assignment.sessionId,
-      status: "requested" as const,
+      status: "requested",
       attribution: assignment.attribution,
       startedAt: acceptedAt,
-      position: index,
+      position,
     }));
     const stored = await this.store.acceptLaunchBatch({
       assignments, sessions, batch, workers,
@@ -240,18 +241,27 @@ export class LaunchService {
       }
       this.injectCrash("after_launch_started");
       this.injectCrash("before_adapter_launch");
-      let handle = assignment.status === "launching"
-        ? await this.adapter.findByIdempotencyKey(assignment.idempotencyKey)
-        : undefined;
+      let handle: RunHandle | undefined;
       try {
+        handle = assignment.status === "launching"
+          ? validRunHandle(await this.adapter.findByIdempotencyKey(assignment.idempotencyKey))
+          : undefined;
         handle ??= await this.adapter.launch({
           idempotencyKey: assignment.idempotencyKey,
           prompt: assignment.prompt,
           workspacePath: assignment.workspacePath,
         });
+        handle = validRunHandle(handle);
       } catch (error) {
         if (error instanceof InjectedCrash) throw error;
-        const recovered = await this.adapter.findByIdempotencyKey(assignment.idempotencyKey);
+        let recovered: RunHandle | undefined;
+        try {
+          recovered = validRunHandle(await this.adapter.findByIdempotencyKey(assignment.idempotencyKey));
+        } catch (lookupError) {
+          if (!(lookupError instanceof MalformedRunHandleError)) throw lookupError;
+          await this.recordLaunchFailure(assignment, "Provider returned a malformed run handle");
+          return;
+        }
         if (recovered !== undefined) {
           const launchedAt = this.now().toISOString();
           await this.store.recordLaunchEvent(
@@ -261,14 +271,17 @@ export class LaunchService {
           );
           return;
         }
+        if (error instanceof MalformedRunHandleError) {
+          await this.recordLaunchFailure(assignment, error.message);
+          return;
+        }
         if (!hasErrorCode(error, "LAUNCH_REJECTED")) throw error;
         const message = error instanceof Error ? error.message : String(error);
-        const failedAt = this.now().toISOString();
-        await this.store.recordLaunchEvent(
-          assignment.id,
-          "failed",
-          event(assignment.id, "launch_failed", failedAt, { error: message, errorCode: "LAUNCH_REJECTED" }),
-        );
+        await this.recordLaunchFailure(assignment, message, error.code);
+        return;
+      }
+      if (handle === undefined) {
+        await this.recordLaunchFailure(assignment, "Provider returned a malformed run handle");
         return;
       }
       this.injectCrash("after_adapter_launch");
@@ -281,6 +294,17 @@ export class LaunchService {
       this.injectCrash("after_launch_recorded");
     });
   }
+
+  private async recordLaunchFailure(assignment: Assignment, error: string, errorCode?: string): Promise<void> {
+    await this.store.recordLaunchEvent(
+      assignment.id,
+      "failed",
+      event(assignment.id, "launch_failed", this.now().toISOString(), {
+        error,
+        ...(errorCode === undefined ? {} : { errorCode }),
+      }),
+    );
+  }
 }
 
 function hasErrorCode(error: unknown, code: string): error is Error & { code: string } {
@@ -288,6 +312,7 @@ function hasErrorCode(error: unknown, code: string): error is Error & { code: st
 }
 
 export class InjectedCrash extends Error {}
+class MalformedRunHandleError extends Error {}
 
 function stableId(kind: string, key: string): string {
   return `${kind}_${createHash("sha256").update(`${kind}\0${key}`).digest("hex").slice(0, 24)}`;
@@ -327,4 +352,13 @@ function acceptance(assignment: Assignment): LaunchAcceptance {
     status: assignment.status,
     acceptedAt: assignment.acceptedAt,
   };
+}
+
+function validRunHandle(value: unknown): RunHandle | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "object" || value === null || typeof (value as { runId?: unknown }).runId !== "string"
+    || (value as { runId: string }).runId.length === 0) {
+    throw new MalformedRunHandleError("Provider returned a malformed run handle");
+  }
+  return { runId: (value as { runId: string }).runId };
 }

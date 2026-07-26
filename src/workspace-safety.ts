@@ -186,7 +186,7 @@ export class WorkspaceSafetyTool {
     try {
       const ownerProcess = this.ownerProcessState(lease);
       if (ownerProcess !== "absent") {
-        this.storage.quarantineWriterLease(lease.leaseId,
+        this.storage.quarantineWriterLease(lease,
           ownerProcess === "alive" ? "owner process is still alive" : "owner process identity is unverifiable",
           actor, now);
         this.heldLocks.set(lease.leaseId, releaseLock);
@@ -194,7 +194,7 @@ export class WorkspaceSafetyTool {
           ? "Owner process is still alive, so the live writer is preserved"
           : "Owner process identity is unverifiable");
       }
-      this.storage.recoverExpiredWriterLease(lease.leaseId,
+      this.storage.recoverExpiredWriterLease(lease,
         { ownerProcessAbsent: true, detail: "owner pid and start token authoritatively absent while lock held" },
         actor, now);
       releaseLock();
@@ -227,7 +227,7 @@ export class WorkspaceSafetyTool {
       if (this.ownerProcessState(lease) !== "absent") {
         throw new LeaseRecoveryAmbiguousError("Repair refused without verified owner-process absence");
       }
-      this.storage.repairQuarantinedWriterLease(leaseId,
+      this.storage.repairQuarantinedWriterLease(lease,
         { ownerProcessAbsent: true, detail: "local host, pid, start token, and exclusive lock verified" },
         actor, now);
       if (heldRelease) this.dropLock(leaseId);
