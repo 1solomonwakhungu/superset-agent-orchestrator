@@ -87,6 +87,20 @@ test("fake Superset timeout and malformed output fail deterministically without 
   }
 });
 
+test("caller cancellation kills a hung fake Superset process that ignores termination", async () => {
+  await withHarness({ hangCommands: ["status"], ignoreTermination: true, defaultScript: successScript() }, async ({ adapter }) => {
+    const handle = await adapter.launch(adapterRequest("abort", "abort", "/tmp/abort"));
+    const controller = new AbortController();
+    const reason = new Error("lifecycle deadline exceeded");
+    const startedAt = Date.now();
+    const status = adapter.status(handle, controller.signal);
+    setTimeout(() => controller.abort(reason), 50).unref();
+
+    await assert.rejects(status, (error: unknown) => error === reason);
+    assert.ok(Date.now() - startedAt < 2_000, "provider process survived cancellation escalation");
+  }, 10_000);
+});
+
 test("accepted launches recover after one-shot timeout and malformed responses without duplicate execution", async () => {
   for (const action of ["hang", "malformed"] as const) {
     await withHarness({
