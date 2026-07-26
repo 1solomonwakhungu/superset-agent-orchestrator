@@ -37,6 +37,7 @@ export interface LaunchAcceptance {
 export class LaunchService {
   private dispatchTimer: NodeJS.Timeout | undefined;
   private dispatching: Promise<void> | undefined;
+  private stopped = false;
 
   constructor(
     private readonly store: DurableStore,
@@ -47,6 +48,7 @@ export class LaunchService {
   ) {}
 
   async launch(request: AsynchronousLaunchRequest): Promise<LaunchAcceptance> {
+    if (this.stopped) throw new Error("Launch service is stopped");
     const accepted = await this.accept(request);
     this.scheduleDispatch(0);
     return accepted;
@@ -100,8 +102,22 @@ export class LaunchService {
     for (const assignment of await this.store.pendingAssignments()) await this.dispatch(assignment);
   }
 
+  async stop(): Promise<void> {
+    this.stopped = true;
+    if (this.dispatchTimer !== undefined) {
+      clearTimeout(this.dispatchTimer);
+      this.dispatchTimer = undefined;
+    }
+    try {
+      await this.dispatching;
+    } finally {
+      if (this.dispatchTimer !== undefined) clearTimeout(this.dispatchTimer);
+      this.dispatchTimer = undefined;
+    }
+  }
+
   private scheduleDispatch(delayMs: number): void {
-    if (this.dispatchTimer !== undefined || this.dispatching !== undefined) return;
+    if (this.stopped || this.dispatchTimer !== undefined || this.dispatching !== undefined) return;
     this.dispatchTimer = setTimeout(() => {
       this.dispatchTimer = undefined;
       this.dispatching = this.dispatchPending();
@@ -110,58 +126,66 @@ export class LaunchService {
           () => { this.dispatching = undefined; },
           () => {
             this.dispatching = undefined;
-            this.scheduleDispatch(this.retryDelayMs);
+            if (!this.stopped) this.scheduleDispatch(this.retryDelayMs);
           },
         );
     }, delayMs);
   }
 
   private async dispatch(assignment: Assignment): Promise<void> {
-    const startedAt = this.now().toISOString();
-    const reserved = await this.store.recordLaunchEvent(
-      assignment.id,
-      "launching",
-      event(assignment.id, "launch_reserved", startedAt),
-    );
-    if (reserved.status !== "launching") return;
-    this.injectCrash("after_launch_started");
-    this.injectCrash("before_adapter_launch");
-    let handle;
-    try {
-      handle = await this.adapter.launch({
-        idempotencyKey: assignment.idempotencyKey,
-        prompt: assignment.prompt,
-        workspacePath: assignment.workspacePath,
-      });
-    } catch (error) {
-      if (error instanceof InjectedCrash) throw error;
-      const recovered = await this.adapter.findByIdempotencyKey(assignment.idempotencyKey);
-      if (recovered !== undefined) {
-        const launchedAt = this.now().toISOString();
+    await this.store.withLaunchDispatchLock(assignment.id, async () => {
+      assignment = await this.store.assignmentForResult(assignment.id);
+      if (assignment.status !== "accepted" && assignment.status !== "launching") return;
+      if (assignment.status === "accepted") {
+        const startedAt = this.now().toISOString();
+        const reserved = await this.store.recordLaunchEvent(
+          assignment.id,
+          "launching",
+          event(assignment.id, "launch_reserved", startedAt),
+        );
+        if (!reserved.transitioned) return;
+      }
+      this.injectCrash("after_launch_started");
+      this.injectCrash("before_adapter_launch");
+      let handle = assignment.status === "launching"
+        ? await this.adapter.findByIdempotencyKey(assignment.idempotencyKey)
+        : undefined;
+      try {
+        handle ??= await this.adapter.launch({
+          idempotencyKey: assignment.idempotencyKey,
+          prompt: assignment.prompt,
+          workspacePath: assignment.workspacePath,
+        });
+      } catch (error) {
+        if (error instanceof InjectedCrash) throw error;
+        const recovered = await this.adapter.findByIdempotencyKey(assignment.idempotencyKey);
+        if (recovered !== undefined) {
+          const launchedAt = this.now().toISOString();
+          await this.store.recordLaunchEvent(
+            assignment.id,
+            "launched",
+            event(assignment.id, "execution_started", launchedAt, { runId: recovered.runId }),
+          );
+          return;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        const failedAt = this.now().toISOString();
         await this.store.recordLaunchEvent(
           assignment.id,
-          "launched",
-          event(assignment.id, "execution_started", launchedAt, { runId: recovered.runId }),
+          "failed",
+          event(assignment.id, "launch_failed", failedAt, { error: message }),
         );
         return;
       }
-      const message = error instanceof Error ? error.message : String(error);
-      const failedAt = this.now().toISOString();
+      this.injectCrash("after_adapter_launch");
+      const launchedAt = this.now().toISOString();
       await this.store.recordLaunchEvent(
         assignment.id,
-        "failed",
-        event(assignment.id, "launch_failed", failedAt, { error: message }),
+        "launched",
+        event(assignment.id, "execution_started", launchedAt, { runId: handle.runId }),
       );
-      return;
-    }
-    this.injectCrash("after_adapter_launch");
-    const launchedAt = this.now().toISOString();
-    await this.store.recordLaunchEvent(
-      assignment.id,
-      "launched",
-      event(assignment.id, "execution_started", launchedAt, { runId: handle.runId }),
-    );
-    this.injectCrash("after_launch_recorded");
+      this.injectCrash("after_launch_recorded");
+    });
   }
 }
 
