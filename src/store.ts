@@ -1184,6 +1184,13 @@ export class DurableStore {
         }
         if (event.error !== undefined) assignment.error = this.redaction.text(event.error);
         if (event.errorCode !== undefined) assignment.errorCode = event.errorCode;
+        if (status === "failed") {
+          const worker = this.state.workers.find(({ id }) => id === assignment.sessionId);
+          if (worker === undefined) throw new Error(`Missing lifecycle worker for assignment: ${assignmentId}`);
+          worker.status = "failed";
+          worker.stopReason = "launch_error";
+          worker.completedAt = event.occurredAt;
+        }
         if (existingEvent === undefined) this.state.auditEvents.push({
           ...event,
           ...(event.error === undefined ? {} : { error: this.redaction.text(event.error) }),
@@ -1194,13 +1201,6 @@ export class DurableStore {
         this.state = previousState;
         this.rebuildIndexes();
         throw error;
-      }
-      if (status === "failed") {
-        const worker = this.state.workers.find(({ id }) => id === assignment.sessionId);
-        if (worker === undefined) throw new Error(`Missing lifecycle worker for assignment: ${assignmentId}`);
-        worker.status = "failed";
-        worker.stopReason = "launch_error";
-        worker.completedAt = event.occurredAt;
       }
       return { assignment: structuredClone(assignment), transitioned: true };
     });
