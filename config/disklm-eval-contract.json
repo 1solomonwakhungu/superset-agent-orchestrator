@@ -9,17 +9,34 @@
     "coldCacheRequired": true,
     "directIoRequiredWhereSupported": true
   },
+  "decode": { "temperature": 0, "topP": 1, "mode": "greedy" },
   "qualitySuites": [
     {
       "id": "wikitext-2-raw-v1-test",
       "metric": "word_perplexity",
+      "direction": "lower",
+      "maxRelativeRegression": 0.01,
       "fewshot": 0
     },
-    { "id": "lm-eval-arc-easy-v0", "metric": "acc_norm", "fewshot": 0 },
-    { "id": "lm-eval-hellaswag-v0", "metric": "acc_norm", "fewshot": 0 },
+    {
+      "id": "lm-eval-arc-easy-v0",
+      "metric": "acc_norm",
+      "direction": "higher",
+      "maxAbsoluteRegression": 0.01,
+      "fewshot": 0
+    },
+    {
+      "id": "lm-eval-hellaswag-v0",
+      "metric": "acc_norm",
+      "direction": "higher",
+      "maxAbsoluteRegression": 0.01,
+      "fewshot": 0
+    },
     {
       "id": "disklm-tool-call-json-schema-v1",
       "metric": "exact_schema_valid_rate",
+      "direction": "higher",
+      "maxAbsoluteRegression": 0.01,
       "fewshot": 0
     }
   ],
