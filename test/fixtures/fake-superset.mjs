@@ -78,6 +78,10 @@ function handle(command, payload, state) {
     }
     case "cancel": {
       const run = requireRun(state, payload.runId);
+      const status = run.cancelled ? "cancelled" : run.script.statuses[run.position];
+      if (status !== "queued" && status !== "running") {
+        throw new ProviderFailure(65, { code: "CANCEL_UNSUPPORTED", message: "A terminal run cannot be canceled" });
+      }
       run.cancelled = { status: "cancelled", ...(payload.reason ? { reason: payload.reason } : {}) };
       return { cancelled: true };
     }

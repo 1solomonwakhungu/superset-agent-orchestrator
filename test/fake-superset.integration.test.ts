@@ -104,13 +104,15 @@ test("fake Superset covers every process adapter typed error", async () => {
   }
 });
 
-test("provider requests use stdin, exclude ambient secrets, and redact diagnostics", async () => {
+test("provider requests use stdin, exclude ambient secrets and proxy credentials, and redact diagnostics", async () => {
   const secret = "provider-secret-canary";
+  const proxySecret = "http://user:password@proxy.invalid";
   process.env.PROVIDER_SECRET_CANARY = secret;
+  process.env.HTTPS_PROXY = proxySecret;
   try {
     await withHarness({
       launchError: secret,
-      captureEnvironment: ["PROVIDER_SECRET_CANARY"],
+      captureEnvironment: ["PROVIDER_SECRET_CANARY", "HTTPS_PROXY"],
       defaultScript: successScript(),
     }, async ({ adapter, calls }) => {
       const prompt = "p".repeat(200_000);
@@ -127,6 +129,7 @@ test("provider requests use stdin, exclude ambient secrets, and redact diagnosti
       assert.equal(call.payload.prompt.length, 200_000);
       assert.equal(call.argv.includes(prompt), false);
       assert.equal(call.environment.PROVIDER_SECRET_CANARY, undefined);
+      assert.equal(call.environment.HTTPS_PROXY, undefined);
     });
 
     await withHarness({
@@ -140,6 +143,7 @@ test("provider requests use stdin, exclude ambient secrets, and redact diagnosti
     });
   } finally {
     delete process.env.PROVIDER_SECRET_CANARY;
+    delete process.env.HTTPS_PROXY;
   }
 });
 

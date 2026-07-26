@@ -55,7 +55,13 @@ node --test test/configuration-contract.test.mjs
 - [Idempotency and reconciliation contract](docs/idempotency-and-reconciliation.md)
 - [Workspace lease and writer-safety policy](docs/workspace-lease-and-writer-safety.md)
 
-The MCP contract publishes typed TypeScript/Zod schemas and a client-neutral JSON Schema catalog. It defines asynchronous launch, stable IDs, batches of 100 sessions, pagination, bounded wait, cancellation, results, and restart recovery. The contract is normative; tools not listed under Recovery above are not yet registered runtime handlers.
+The MCP contract publishes typed TypeScript/Zod schemas and a client-neutral JSON
+Schema catalog. It defines asynchronous launch, stable IDs, batches of 100
+sessions, pagination, bounded wait, cancellation, results, and restart recovery.
+The contract is normative. The disabled-by-default `provider_*` tools are an
+internal integration-test surface, enabled only by
+`SUPERSET_ORCHESTRATOR_ENABLE_PROVIDER_TEST_TOOLS=1`, and are not part of that
+published contract.
 
 ## Agent adapter boundary
 
@@ -74,7 +80,10 @@ Run that suite independently with:
 npx tsx --test test/fake-superset.integration.test.ts
 ```
 
-Run `npm run verify` to type-check the complete implementation and execute all tests.
+Run `npm run verify` to type-check the complete implementation and execute all
+tests.
+The real Superset discovery smoke test is intentionally opt-in through
+`npm run test:real-superset`; the default suite is hermetic.
 
 ## Superset discovery
 

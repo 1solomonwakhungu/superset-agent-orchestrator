@@ -238,11 +238,17 @@ locally.
   use interprocess locking with atomic replacement.
 - Added regression coverage for the 200,000-character prompt boundary, ambient
   secret exclusion, diagnostic redaction, and 40 concurrent unique launches.
-- Verification: `npm run build` and `npm run check` passed; the full suite passed
-  98/99 tests with only the prohibited/unavailable real-Superset smoke test
-  failing; rerunning with that single test skipped passed 99/99. The configuration
-  contract passed 3/3, strict PER-323 routing and `git diff --check` passed, and
-  Markdown lint reported only pre-existing violations outside the PER-347 lines.
+- Integrated current `origin/main` and fixed provider recovery, client-scoped
+  idempotency, typed launch-error persistence, terminal cancellation checks,
+  transient result handling, and proxy-credential inheritance.
+- Made the real-Superset smoke test explicitly opt-in so default verification is
+  hermetic, and made `npm test` build the production server before MCP tests.
+- Verification: `npm run verify` passed 111 tests with one intentional real-system
+  skip; the two fake-provider suites passed 30/30 across three stress iterations;
+  configuration passed 3/3; schema generation, typecheck, strict PER-323 routing,
+  and `git diff --check` passed. Markdown lint retains only pre-existing findings.
+- Current-main unrelated blocker: the agency-monitor Python suite fails 1/3 at
+  `test_failure_is_deduplicated_and_recovery_is_recorded`; it was not modified.
 - Remaining risk: this wiring exposes the implemented provider lifecycle subset;
   discovery, bounded wait, lease admission, and the complete published versioned
   contract remain owned by their production implementation tasks.

@@ -14,7 +14,7 @@ test("production MCP server persists attributed completion, failure, cancellatio
     scripts: [
       { statuses: ["running", "succeeded"], result: { status: "succeeded", output: "exact answer" } },
       { statuses: ["failed"], result: { status: "failed", error: "agent failed", retryable: false } },
-      { statuses: ["running", "succeeded"], result: { status: "succeeded", output: "too late" } },
+      { statuses: ["running", "running", "succeeded"], result: { status: "succeeded", output: "too late" } },
     ],
   }, async (harness) => {
     const launched = await launch(harness.client, 3);
@@ -62,7 +62,7 @@ test("production MCP server deduplicates concurrent semantic batch replays", asy
 test("production MCP server exposes every provider error once without retries", async () => {
   const cases = [
     [{ launchError: "rejected", defaultScript: successScript() }, "launch", "LAUNCH_REJECTED"],
-    [{ cancelUnsupported: true, defaultScript: successScript() }, "cancel", "CANCEL_UNSUPPORTED"],
+    [{ cancelUnsupported: true, defaultScript: runningScript() }, "cancel", "CANCEL_UNSUPPORTED"],
     [{ malformedCommands: ["status"], defaultScript: successScript() }, "result", "PROVIDER_PROTOCOL_ERROR"],
     [{ hangCommands: ["status"], defaultScript: successScript() }, "result", "PROVIDER_UNAVAILABLE"],
   ] as const;
@@ -81,7 +81,10 @@ test("production MCP server exposes every provider error once without retries", 
 
   const directory = await mkdtemp(join(tmpdir(), "fake-superset-no-provider-"));
   const statePath = join(directory, "state.json");
-  const connection = await connect({ SUPERSET_ORCHESTRATOR_STATE: statePath });
+  const connection = await connect({
+    SUPERSET_ORCHESTRATOR_STATE: statePath,
+    SUPERSET_ORCHESTRATOR_ENABLE_PROVIDER_TEST_TOOLS: "1",
+  });
   try {
     const unavailable = await call(connection.client, "provider_batches_launch", launchArguments(1));
     assert.equal(unavailable.error.code, "PROVIDER_UNAVAILABLE");
@@ -112,9 +115,13 @@ function successScript() {
   return { statuses: ["succeeded"], result: { status: "succeeded", output: "ok" } };
 }
 
+function runningScript() {
+  return { statuses: ["running"], result: null };
+}
+
 function launchArguments(count: number) {
   return {
-    request_id: "launch", name: "integration", idempotency_key: "batch-key",
+    request_id: "launch", client_id: "integration-client", name: "integration", idempotency_key: "batch-key",
     assignments: Array.from({ length: count }, (_, index) => ({
       label: `task-${index}`, prompt: `prompt-${index}`, workspace_id: `workspace-${index}`,
       agent_preset_id: `agent-${index}`, idempotency_key: `key-${index}`,
@@ -165,6 +172,7 @@ async function withServer(
     ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
     SUPERSET_ORCHESTRATOR_STATE: statePath,
     SUPERSET_ORCHESTRATOR_RECONCILE_MS: "60000",
+    SUPERSET_ORCHESTRATOR_ENABLE_PROVIDER_TEST_TOOLS: "1",
     SUPERSET_ORCHESTRATOR_PROVIDER_EXECUTABLE: process.execPath,
     SUPERSET_ORCHESTRATOR_PROVIDER_ARGS: JSON.stringify([fake, scenarioPath, fakeStatePath]),
     SUPERSET_ORCHESTRATOR_PROVIDER_TIMEOUT_MS: String(timeoutMs),

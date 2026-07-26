@@ -27,6 +27,7 @@ export class ResultCaptureService {
     try {
       result = await this.adapter.result({ runId: assignment.runId });
     } catch (error) {
+      if (isTransientProviderError(error)) throw error;
       return this.ingest(assignmentId, deliveryId, {
         kind: "malformed",
         error: error instanceof Error ? error.message : String(error),
@@ -78,6 +79,11 @@ export class ResultCaptureService {
       capturedAt: this.now().toISOString(),
     });
   }
+}
+
+function isTransientProviderError(error: unknown): boolean {
+  if (error === null || typeof error !== "object" || !("code" in error)) return false;
+  return error.code === "PROVIDER_UNAVAILABLE";
 }
 
 function requireExactIdentities(assignment: {

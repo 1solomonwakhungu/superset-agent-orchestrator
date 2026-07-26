@@ -73,9 +73,10 @@ export class LaunchService {
       throw new Error("Batch assignment idempotency keys must be unique");
     }
     const acceptedAt = this.now().toISOString();
-    const batchId = stableId("batch", request.idempotencyKey);
+    const batchScope = scopedKey(request.clientId, request.idempotencyKey);
+    const batchId = stableId("batch", batchScope);
     const sessions = request.assignments.map((item) => ({
-      id: stableId("session", item.idempotencyKey), clientId: request.clientId,
+      id: stableId("session", scopedKey(request.clientId, item.idempotencyKey)), clientId: request.clientId,
       createdAt: acceptedAt, lastSeenAt: acceptedAt,
     }));
     const batch: Batch = {
@@ -87,11 +88,12 @@ export class LaunchService {
         ...item, clientId: request.clientId, batchName: request.batchName,
       };
       return {
-        id: stableId("assignment", item.idempotencyKey), idempotencyKey: item.idempotencyKey,
+        id: stableId("assignment", scopedKey(request.clientId, item.idempotencyKey)),
+        idempotencyKey: scopedKey(request.clientId, item.idempotencyKey),
         requestFingerprint: fingerprint(fullRequest), batchId, sessionId: sessions[index]!.id,
         status: "accepted", attribution: item.attribution, prompt: item.prompt,
         workspaceId: item.workspaceId, workspacePath: item.workspacePath,
-        attemptId: stableId("attempt", item.idempotencyKey), attempt: 1,
+        attemptId: stableId("attempt", scopedKey(request.clientId, item.idempotencyKey)), attempt: 1,
         acceptedAt, updatedAt: acceptedAt,
       };
     });
@@ -113,19 +115,20 @@ export class LaunchService {
       throw new Error("attribution requires non-empty agent and task values");
     }
     const acceptedAt = this.now().toISOString();
-    const assignmentId = stableId("assignment", request.idempotencyKey);
-    const attemptId = stableId("attempt", request.idempotencyKey);
+    const key = scopedKey(request.clientId, request.idempotencyKey);
+    const assignmentId = stableId("assignment", key);
+    const attemptId = stableId("attempt", key);
     const session: Session = {
-      id: stableId("session", request.idempotencyKey), clientId: request.clientId,
+      id: stableId("session", key), clientId: request.clientId,
       createdAt: acceptedAt, lastSeenAt: acceptedAt,
     };
     const batch: Batch = {
-      id: stableId("batch", request.idempotencyKey), name: request.batchName, sessionId: session.id,
+      id: stableId("batch", key), name: request.batchName, sessionId: session.id,
       createdAt: acceptedAt, updatedAt: acceptedAt,
     };
     const assignment: Assignment = {
       id: assignmentId,
-      idempotencyKey: request.idempotencyKey,
+      idempotencyKey: key,
       requestFingerprint: fingerprint(request),
       batchId: batch.id,
       sessionId: session.id,
@@ -188,19 +191,21 @@ export class LaunchService {
     this.injectCrash("before_adapter_launch");
     let handle;
     try {
-      handle = await this.adapter.launch({
-        idempotencyKey: assignment.idempotencyKey,
-        prompt: assignment.prompt,
-        workspacePath: assignment.workspacePath,
-      });
+      handle = await this.adapter.findByIdempotencyKey(assignment.idempotencyKey);
+      handle ??= await this.adapter.launch({
+          idempotencyKey: assignment.idempotencyKey,
+          prompt: assignment.prompt,
+          workspacePath: assignment.workspacePath,
+        });
     } catch (error) {
       if (error instanceof InjectedCrash) throw error;
+      if (!hasErrorCode(error, "LAUNCH_REJECTED")) throw error;
       const message = error instanceof Error ? error.message : String(error);
       const failedAt = this.now().toISOString();
       await this.store.recordLaunchEvent(
         assignment.id,
         "failed",
-        event(assignment.id, "launch_failed", failedAt, { error: message }),
+        event(assignment.id, "launch_failed", failedAt, { error: message, errorCode: error.code }),
       );
       return;
     }
@@ -215,15 +220,24 @@ export class LaunchService {
   }
 }
 
+function hasErrorCode(error: unknown, code: string): error is Error & { code: string } {
+  return error instanceof Error && "code" in error && error.code === code;
+}
+
 export class InjectedCrash extends Error {}
 
 function stableId(kind: string, key: string): string {
   return `${kind}_${createHash("sha256").update(`${kind}\0${key}`).digest("hex").slice(0, 24)}`;
 }
 
+function scopedKey(clientId: string, key: string): string {
+  return `${clientId}\0${key}`;
+}
+
 function fingerprint(request: AsynchronousLaunchRequest): string {
   const canonical = JSON.stringify({
     idempotencyKey: request.idempotencyKey,
+    clientId: request.clientId,
     batchName: request.batchName,
     attribution: { agent: request.attribution.agent, task: request.attribution.task },
     prompt: request.prompt,
@@ -237,7 +251,7 @@ function event(
   assignmentId: string,
   type: LaunchAuditEvent["type"],
   occurredAt: string,
-  detail: Pick<LaunchAuditEvent, "runId" | "error"> = {},
+  detail: Partial<Pick<LaunchAuditEvent, "runId" | "error" | "errorCode">> = {},
 ): LaunchAuditEvent {
   return { id: `${assignmentId}:${type}`, assignmentId, type, occurredAt, ...detail };
 }
