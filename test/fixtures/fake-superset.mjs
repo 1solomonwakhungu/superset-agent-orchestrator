@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { Buffer } from "node:buffer";
 import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import lockfile from "proper-lockfile";
 
@@ -47,7 +48,7 @@ try {
 }
 
 if (fault?.action === "hang" || scenario.hangCommands?.includes(command)) {
-  await new Promise(() => setInterval(() => undefined, 60_000));
+  await new Promise(() => globalThis.setInterval(() => undefined, 60_000));
 }
 if (fault?.action === "malformed" || scenario.malformedCommands?.includes(command)) {
   if (scenario.malformedStderr) process.stderr.write(`${scenario.malformedStderr}\n`);

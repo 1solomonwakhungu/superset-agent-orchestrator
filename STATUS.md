@@ -1,5 +1,78 @@
 # Status
 
+## PER-344 concurrency limits and backpressure
+
+- Added configurable global, per-host, per-project, per-agent, and per-workspace
+  admission limits with a bounded FIFO queue and structured overload errors.
+- Added observable active/queued scope counts, abortable admission, guaranteed
+  release, and resource-pressure/rate-limit backoff hooks that cannot skip the
+  FIFO head.
+- Recovered running retries reacquire capacity, duplicate recovery shares one
+  permit, and terminal transitions while recovery waits cannot leak capacity.
+- Cancellation interrupts asynchronous pressure checks, including hooks that
+  never settle, without disturbing the next queued request.
+- Unknown launch outcomes retain capacity until reconciliation authoritatively
+  proves absence or transfers the permit to the accepted run; cancellation
+  acknowledgements retain capacity until a terminal state is observed.
+- Recovery now reserves capacity before status inspection, fails closed on
+  status errors or identity mismatches, and releases terminal runs safely.
+- Existing runs are accounted before backend lookup without deadlocking startup,
+  and pressure hooks are bounded.
+- Added deterministic tests proving retries and batches hold capacity,
+  cancellation frees capacity, every scope is enforced, and overload stays
+  bounded or fails structurally when waiting is disabled.
+- Verification after integrating current `main`: `npm ci` and
+  `npm audit --audit-level=high` passed (2 moderate transitive advisories); the
+  focused concurrency suite passed 25/25; `npm run check` passed formatting,
+  lint, typecheck, build, 157 tests (156 pass, 0 fail, 1 explicit live-discovery
+  skip), coverage, Python 3/3, schema no-diff, and provenance verification;
+  `git diff --check` passed.
+- Next: push pull request 23, verify exact-head checks, resolve review threads,
+  and merge with exact-head protection.
+
+## PER-362 MiniCPM5 reproducible environment
+
+- Added a uv 0.8.3 lock for Python 3.12 targeting Linux x86-64 and macOS arm64.
+- Pinned MiniCPM5-1B, container bases, Python dependencies, MLX wheels, and
+  recorded llama.cpp/MLX source revisions.
+- Added deterministic fingerprint tooling and Linux/macOS environment capture.
+- Verified two independent 29-package frozen installs, 4/4 Python tests, and an
+  unprivileged Linux/amd64 image build plus environment-capture smoke test.
+- No model fingerprint result is claimed: overnight workers are prohibited from
+  loading or querying the model.
+- Remaining: capture a native Linux x86-64 host and run same-host fingerprints
+  on both targets using an authorized executor.
+
+## PER-361 MiniCPM5 checkpoint provenance
+
+- Pinned the authoritative BF16 checkpoint and the published SFT, GGUF, and MLX
+  variant families to immutable Hugging Face revision hashes.
+- Recorded exact model-input and variant artifact sizes and SHA-256 values.
+- Added an Apache-2.0 license audit and offline manifest verification.
+- Next: run full verification, deliver through PR, and verify merged `main`.
+
+## PER-354 recurring system cleanup
+
+Completed PER-354 with a conservative macOS cleanup utility: dry-run default, explicit flags for disruptive operations, path-boundary and symlink checks, stale-file retention, protected Hermes queue handling, installer-DMG validation, disk reporting, and LM Studio size reporting. Execute mode counts removals and Downloads moves only after success; Downloads collisions, malformed host data, and external-command failures are handled without unsafe fallback or tracebacks.
+
+Verification completed:
+
+- `python3 -m unittest -v`: 16 tests passed
+- `ruff check cleanup.py test_cleanup.py`: passed
+- `mypy --strict cleanup.py test_cleanup.py`: passed with no issues in 2 files
+- `python3 -m py_compile cleanup.py test_cleanup.py`: passed
+- `./cleanup.py --help`: passed
+- `python3 -m zipapp ...` plus packaged `--help` smoke test: passed
+- `npm ci`: passed after integration with current `origin/main`
+- `npm audit --audit-level=high`: passed (2 moderate transitive advisories)
+- `npm run check`: passed after integration with current `origin/main`
+- `npm pack --dry-run`: passed
+- `git diff --check`: passed
+
+No host cleanup, Hermes access, or destructive operation was executed. The
+implementation is ready for review; invoke a dry-run from an appropriately
+authorized host before considering `--execute`.
+
 ## PER-352 cross-platform compatibility CI
 
 - Added exact-head macOS 14 and Ubuntu 24.04 CI lanes for Node.js 22 and 24 with
@@ -138,6 +211,15 @@ PER-341 startup reconciliation and batch recovery are complete.
 - GitHub reported the exact head clean and mergeable with no required checks.
 - Next: merge PR 7 and reconcile PER-341 in Linear.
 
+Historical PER-336 implementation status before PR 26 merged:
+
+- Added typed repositories for every durable SQLite entity.
+- Added transactional repository operations and atomic logical export.
+- Added read-only full integrity diagnostics and executable export/integrity commands.
+- Added repository, rollback, corruption, export, and CLI verification coverage.
+- Current verification: `npm run verify` passed 94/94 tests.
+- Next: reconcile current main, commit, push, open and merge the verified PR, then verify main.
+
 PER-340 exact result capture and attribution are implemented locally.
 
 - Added fail-closed Codex response validation and exact empty/partial handling.
@@ -263,16 +345,19 @@ locally.
   transient result handling, and proxy-credential inheritance.
 - Made the real-Superset smoke test explicitly opt-in so default verification is
   hermetic, and made `npm test` build the production server before MCP tests.
-- Verification: `npm run verify` passed 111 tests with one intentional real-system
-  skip; the two fake-provider suites passed 30/30 across three stress iterations;
-  configuration passed 3/3; schema generation, typecheck, strict PER-323 routing,
-  and `git diff --check` passed. Markdown lint retains only pre-existing findings.
-- Current-main unrelated blocker: the agency-monitor Python suite fails 1/3 at
-  `test_failure_is_deduplicated_and_recovery_is_recorded`; it was not modified.
+- Verification after integrating current `main`: `npm ci` and
+  `npm audit --audit-level=high` passed (2 moderate transitive advisories); the
+  focused fake-provider and launch suite passed 19/19; `npm run check` passed
+  formatting, lint, typecheck, build, 168 tests (167 pass, 0 fail, 1 explicit
+  live-discovery skip), coverage, Python 3/3, schema no-diff, and provenance;
+  the configuration contract passed 3/3, strict PER-323 routing passed, and
+  `git diff --check` passed.
 - Remaining risk: this wiring exposes the implemented provider lifecycle subset;
   discovery, bounded wait, lease admission, and the complete published versioned
   contract remain owned by their production implementation tasks.
-- Next: commit, push, and report exact PR head checks.
+- Integrated prerequisite PR 23 at `0f1138a3a4c2e7fb3f6410f8e5b6760d7ce73ef7`.
+- Next: run focused and full verification, push the exact PR head, and merge only
+  after exact-head checks succeed.
 
 ## PER-347 companion fake-provider recovery hardening
 
@@ -285,4 +370,93 @@ locally.
 - Verification: `npm run verify` passed 119 tests with one intentional real-system
   skip; the focused suite passed 8/8 and both new race/recovery tests passed in
   three additional stress iterations; `git diff --check` passed.
+- After integrating the advanced PER-347 base, `npm run verify` passed formatting,
+  lint, typecheck, build, 170 tests (169 pass and 1 intentional live skip),
+  coverage, Python 3/3, schema no-diff, and provenance verification.
 - Next: deliver and merge the companion PR into the PER-347 branch.
+
+Historical PER-336 local verification before PR 26 merged:
+
+- Reconciled the feature branch with `origin/main` at `90cef0d` via a clean merge
+  commit. No conflicts, no force push, no history rewrite, no data deleted.
+- Durable schema is at version 2 with `batches`, `assignments`, `sessions`,
+  `results`, `events`, `workspace_leases`, `idempotency_records`, and the
+  `schema_migrations` ledger, all `STRICT`.
+- Migrations apply each forward step and its ledger row inside one
+  `BEGIN IMMEDIATE` transaction. An unknown future schema fails closed.
+  `rollback(target, backupPath)` requires and integrity-verifies a distinct
+  backup before stepping down.
+- Typed transactional repositories cover every durable entity, roll entities and
+  events back together, and fail closed on malformed persisted JSON.
+- `exportJson` writes a versioned logical export atomically. `checkIntegrity`
+  opens the registry read-only and verifies SQLite integrity, foreign keys,
+  contiguous migration ledger, and required tables, triggers, and indexes.
+- Corruption diagnostics fail closed at startup and in the CLI without
+  replacing, truncating, or salvaging the original bytes.
+- Verification after clean install: `npm ci` exit 0 (2 moderate audit findings,
+  pre-existing), `npm run build` exit 0, `npm run check` exit 0, `npm test`
+  106/106 passing, storage/migration/corruption suites 12/12 passing.
+- Next: PR review and merge. Linear is owned by the parent factory.
+
+Historical PER-336 discovery verification before PR 26 merged:
+
+- Root cause: `test/superset-discovery.smoke.test.ts` unconditionally shelled out
+  to the optional `superset` executable, so the suite failed with
+  `SupersetDiscoveryError UNAVAILABLE` on any machine without it.
+- `test/fixtures/superset-discovery-recorded.json` holds real CLI payloads
+  captured by `npm run discovery:record`. The recorder reuses the adapter's own
+  `runProcess`, which spools stdout to a temp file. This matters because the
+  Superset CLI truncates large payloads when its stdout is a pipe.
+- The recorded contract test always runs and replays the fixture through the
+  real adapter and schemas, so schema coverage no longer depends on the
+  executable. The live test runs only when the executable resolves on the search
+  path.
+- Availability is decided by resolving the executable, not by interpreting an
+  adapter error. A present but broken Superset still fails.
+- `SUPERSET_ORCHESTRATOR_REQUIRE_LIVE_DISCOVERY=1` turns an absent executable
+  from a skip into a failure.
+- Guard cases proved by running them: absent plus require flag fails
+  (`... is set but no Superset executable was found on PATH`); present but
+  malformed fails (`MALFORMED_RESPONSE`); present but unhealthy host fails
+  (`UNAVAILABLE`).
+- Verification after `rm -rf node_modules dist` and `npm ci` (exit 0):
+  `npm run build` exit 0, `npm run check` exit 0, `npm test` 107/107 passing
+  with Superset present, and 106 passing plus 1 truthfully skipped with Superset
+  absent from PATH. Focused persistence and migration
+  (`storage`, `repositories`, `server-restart`) 11/11 passing. Corruption
+  fail-closed (`storage-cli`) 2/2 passing.
+- Next: PR review and merge. Linear is owned by the parent factory.
+
+Historical PER-336 merge-readiness review before PR 26 merged:
+
+- Expired unreleased writer leases remain durable and continue fencing later writers until evidence-based reconciliation releases them.
+- Startup validates exact schema definitions and foreign keys before repositories are exposed, and validates an existing prior schema before applying migrations.
+- Each migration rechecks the ledger while holding `BEGIN IMMEDIATE`; migration SQL and its ledger row remain atomic.
+- CLI export uses one read-only validated snapshot and never migrates or otherwise modifies the source registry.
+- Integrity diagnostics reject altered tables, indexes, and triggers by exact canonical definition rather than object name alone.
+- Discovery fixture recording now pseudonymizes commands and arguments and replaces environment values.
+- Verification: clean `npm ci` passed with 2 pre-existing moderate audit findings; build and typecheck passed; 110 tests ran with 109 passing, 0 failing, and 1 optional live-discovery skip; schema generation, compatibility probe, PER-323 routing verification, and `git diff --check` passed.
+- Next: commit, push, and verify PR 26 exact-head checks and merge state. Do not merge; independent verifier owns merge.
+
+Historical PER-336 quality-gate reconciliation before PR 26 merged:
+
+- Preserved the storage CLI, discovery recorder, compatibility report, platform declaration, and all format, type-aware lint, typecheck, build, coverage, Python, and schema gates while resolving generated lock metadata.
+- Existing prior schemas now undergo exact schema and foreign-key validation before migration; rejected registries remain at their original ledger version.
+- Verified backups now pass full page, foreign-key, ledger, and canonical-schema checks before rollback starts.
+- Invalid negative, non-finite, or infinite retention durations fail before the registry opens.
+- Recorded discovery remains deterministic while live discovery requires explicit smoke opt-in or the required-live setting.
+- Verification: clean `npm ci` passed with 2 pre-existing moderate advisories; focused persistence tests passed 18/18; `npm run check` passed formatting, ESLint, typecheck, build, 119 tests (118 pass, 0 fail, 1 optional live skip), coverage, Python 3/3, and schema no-diff; `git diff --check` passed.
+- Next: commit and push the current-main integration, verify exact-head Quality and Compatibility checks and review threads, then leave PR 26 unmerged for independent verification.
+
+PER-336 security hotfix is complete locally after insecure PR 26 merged as `8989716`.
+
+- Work continues on new branch `1solomonwakhungu/per-336-storage-permissions-hotfix`, rooted at exact merged main `8989716`; the obsolete PR 26 branch is not reused.
+- Missing dedicated registry, backup, and export directories are created as `0700`. Preexisting directories must already be owner-only and are never chmodded; permissive cwd, `/tmp`, and other shared parents fail closed unchanged.
+- Newly created registry, sidecar, backup, and export files are `0600`; preexisting registry and sidecar files must already be singly linked owner-only regular files. No-follow descriptor checks reject symlinks, dangling links, multiply linked files, existing output destinations, live/sidecar destinations, and hard-link aliases of the database or sidecars without chmodding them.
+- Read-only diagnostics validate permissions without mutating them. Invalid retention configuration touches no filesystem path. Backup/export diagnostics include foreign-key details.
+- Discovery recording now has a bounded exact-version parser and a closed recursive field classifier. Unknown fields fail even when null or empty containers; identifying values, process/endpoint metadata, timestamps, commands, arguments, preset labels/IDs, and environment names/values are deterministic pseudonyms. The checked fixture passes a complete privacy scan.
+- Docs now describe explicit live-discovery opt-in, full backup validation, dedicated private CLI paths, permission refusal semantics, and the same-user residual threat boundary.
+- Verification: clean `npm ci` passed with 2 pre-existing moderate advisories; `npm run check` passed format, ESLint, typecheck, build, 130 tests (129 pass, 0 fail, 1 optional live skip), coverage, Python 3/3, and schema no-diff. The focused security/persistence suite passed 30 runnable tests plus 1 optional skip in three consecutive runs; `git diff --check` passed.
+- Follow-up PR 38 was opened at `2ae84ac`, then verifier review required committed no-overwrite concurrency coverage. New deterministic worker-barrier tests prove two simultaneous exports produce exactly one valid `0600` output and one refusal, while preexisting backup/export files and hard-link sources retain exact bytes and modes. The storage-focused 20/20 suite passed five consecutive runs.
+- Exact-head review then found missing ownership checks. Preexisting directories, registries, and sidecars now fail closed unless their UID matches the effective process UID where the platform exposes ownership; generated artifacts are explicitly ownership-tested.
+- Next: push the coverage follow-up to PR 38 and leave it unmerged for independent verification.
