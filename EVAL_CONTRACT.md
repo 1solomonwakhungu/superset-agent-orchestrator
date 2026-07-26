@@ -95,7 +95,8 @@ checkpoint/tokenizer/template hashes, dataset revisions, command arguments,
 cache state, raw trace hashes, and whether direct I/O was active. A benchmark
 must fail closed if its imported contract ID is not `disklm-eval-v1`. Benchmark
 code must import the JSON through `scripts/disklm-contract.mjs`; CI rejects
-benchmark files that redefine the page size, seeds, suite IDs, or contract ID.
+DiskLM benchmark files (identified by `disklm` and `bench`/`benchmark` in their
+path) that redefine the page size, seeds, suite IDs, or contract ID.
 
 ## Amendments
 

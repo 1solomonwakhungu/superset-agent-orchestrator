@@ -154,6 +154,7 @@ const discoverBenchmarks = async (directory, prefix = "") => {
         )),
       );
     } else if (
+      /disklm/i.test(relative) &&
       /bench(mark)?/i.test(entry.name) &&
       /\.(?:[cm]?[jt]s|py)$/.test(entry.name)
     ) {
