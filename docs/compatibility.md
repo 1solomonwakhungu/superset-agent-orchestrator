@@ -31,12 +31,18 @@ workspace list/get behavior and fail-closed missing-workspace behavior. Public
 Superset evidence supports configured-agent discovery and launch metadata only.
 Launch success is not completion or result evidence.
 
-Node.js 22, npm 10, MCP SDK `1.29.0`, and stdio on macOS are the release baseline
-by accepted contract. The combination remains `contract-supported` until the
-packaged stdio smoke contract in
-[`ADR 0001`](adr/0001-mcp-sdk-and-local-transport.md) passes. Linux and Node.js
-24 are intended test lanes but remain `unknown` without recorded CI evidence.
-Windows is unclaimed.
+Node.js 22 and 24 with npm 10 and MCP SDK `1.29.0` are tested on the exact
+`macos-14` and `ubuntu-24.04` runner images by
+[`Compatibility`](../.github/workflows/compatibility.yml). Each exact-head run
+executes the build and complete test suite, records the detected OS, architecture,
+Node, and npm versions, and generates a report only when all four lanes pass.
+The workflow report is the real-results compatibility document; a failed or
+missing lane cannot generate it. Superset Desktop-specific claims remain separate
+because generic runners do not provide a configured local Desktop host.
+
+Windows is explicitly unsupported. Package installation and server startup reject
+it until native path, process, signal, discovery, filesystem, and stdio lanes are
+validated.
 
 MCP SDK v2 prereleases, Streamable HTTP, and legacy HTTP+SSE are unsupported for
 the MVP. Superset session listing, status, exact result, stop reason,
