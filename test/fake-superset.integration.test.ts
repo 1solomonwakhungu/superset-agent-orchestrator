@@ -20,7 +20,7 @@ test("fake Superset proves completion, failure, cancellation, restart recovery, 
     ],
   }, async ({ adapter, statePath, calls }) => {
     const store = new DurableStore(statePath);
-    const launches = new LaunchService(store, adapter, now);
+    const launches = new LaunchService(store, adapter, authorizer, now);
     const accepted: LaunchAcceptance[] = [];
     for (const [index, task] of ["complete", "fail", "cancel"].entries()) {
       accepted.push(await launches.accept(request(index, task)));
@@ -70,7 +70,7 @@ test("fake Superset timeout and malformed output fail deterministically without 
     [{ malformedCommands: ["status"], defaultScript: successScript() }, "PROVIDER_PROTOCOL_ERROR"],
   ] as const) {
     await withHarness(scenario, async ({ adapter, calls }) => {
-      const handle = await adapter.launch({ idempotencyKey: "one", prompt: "one", workspacePath: "/tmp/one" });
+      const handle = await adapter.launch(directLaunch("one", "one", "/tmp/one"));
       await assert.rejects(async () => adapter.status(handle), (error: unknown) => {
         assert.equal(error instanceof SupersetProcessError && error.code, expectedCode);
         return true;
@@ -87,13 +87,13 @@ test("accepted launches recover after one-shot timeout and malformed responses w
       defaultScript: successScript(),
     }, async ({ adapter, statePath, fakeState, calls }) => {
       const store = new DurableStore(statePath);
-      const accepted = await new LaunchService(store, adapter, now).accept(request(0, action));
+      const accepted = await new LaunchService(store, adapter, authorizer, now).accept(request(0, action));
 
-      await new LaunchService(store, adapter, now).dispatchPending();
+      await new LaunchService(store, adapter, authorizer, now).dispatchPending();
       assert.equal(Object.keys((await fakeState()).runs).length, 1);
 
       const restartedStore = new DurableStore(statePath);
-      await new LaunchService(restartedStore, adapter.restart(), now).dispatchPending();
+      await new LaunchService(restartedStore, adapter.restart(), authorizer, now).dispatchPending();
       const assignment = await restartedStore.assignmentForResult(accepted.assignmentId);
       assert.equal(assignment.status, "launched");
       assert.equal(assignment.runId, "fake-001");
@@ -116,10 +116,10 @@ test("fake Superset covers every process adapter typed error", async () => {
   for (const [scenario, operation, code] of cases) {
     await withHarness(scenario, async ({ adapter, calls }) => {
       await assert.rejects(async () => {
-        if (operation === "launch") await adapter.launch({ idempotencyKey: "one", prompt: "one", workspacePath: "/tmp/one" });
+        if (operation === "launch") await adapter.launch(directLaunch("one", "one", "/tmp/one"));
         if (operation === "find") await adapter.findByIdempotencyKey("one");
         if (operation === "cancel") {
-          const handle = await adapter.launch({ idempotencyKey: "one", prompt: "one", workspacePath: "/tmp/one" });
+          const handle = await adapter.launch(directLaunch("one", "one", "/tmp/one"));
           await adapter.cancel(handle);
         }
       }, (error: unknown) => {
@@ -144,7 +144,7 @@ test("provider requests use stdin, exclude ambient secrets and proxy credentials
     }, async ({ adapter, calls }) => {
       const prompt = "p".repeat(200_000);
       await assert.rejects(
-        adapter.launch({ idempotencyKey: "large", prompt, workspacePath: "/tmp/large" }),
+        adapter.launch(directLaunch("large", prompt, "/tmp/large")),
         (error: unknown) => {
           assert.equal(error instanceof SupersetProcessError && error.code, "LAUNCH_REJECTED");
           assert.equal(error instanceof Error && error.message.includes(secret), false);
@@ -176,11 +176,8 @@ test("provider requests use stdin, exclude ambient secrets and proxy credentials
 
 test("fake Superset serializes concurrent provider state transactions", async () => {
   await withHarness({ defaultScript: successScript() }, async ({ adapter, calls }) => {
-    const handles = await Promise.all(Array.from({ length: 40 }, (_, index) => adapter.launch({
-      idempotencyKey: `concurrent-${index}`,
-      prompt: `prompt-${index}`,
-      workspacePath: `/tmp/${index}`,
-    })));
+    const handles = await Promise.all(Array.from({ length: 40 }, (_, index) =>
+      adapter.launch(directLaunch(`concurrent-${index}`, `prompt-${index}`, `/tmp/${index}`))));
     assert.equal(new Set(handles.map(({ runId }) => runId)).size, 40);
     assert.equal((await calls()).filter(({ command }) => command === "launch").length, 40);
   });
@@ -188,11 +185,8 @@ test("fake Superset serializes concurrent provider state transactions", async ()
 
 test("fake Superset deduplicates concurrent launches with the same provider key", async () => {
   await withHarness({ defaultScript: successScript() }, async ({ adapter, fakeState, calls }) => {
-    const handles = await Promise.all(Array.from({ length: 40 }, () => adapter.launch({
-      idempotencyKey: "same-key",
-      prompt: "same prompt",
-      workspacePath: "/tmp/same",
-    })));
+    const handles = await Promise.all(Array.from({ length: 40 }, () =>
+      adapter.launch(directLaunch("same-key", "same prompt", "/tmp/same"))));
     assert.deepEqual(new Set(handles.map(({ runId }) => runId)), new Set(["fake-001"]));
     assert.equal(Object.keys((await fakeState()).runs).length, 1);
     assert.equal((await calls()).filter(({ command }) => command === "launch").length, 40);
@@ -203,7 +197,7 @@ test("fake Superset deduplicates concurrent launches with the same provider key"
 test("fake Superset completes and attributes a deterministic 100-session batch", async () => {
   await withHarness({ defaultScript: successScript() }, async ({ adapter, statePath, calls }) => {
     const store = new DurableStore(statePath);
-    const launches = new LaunchService(store, adapter, now);
+    const launches = new LaunchService(store, adapter, authorizer, now);
     const accepted = await launches.acceptBatch({
       idempotencyKey: "batch-100", clientId: "integration", batchName: "fake-superset",
       assignments: Array.from({ length: 100 }, (_, index) => {
@@ -243,6 +237,10 @@ function request(index: number, task: string) {
 
 function successScript() {
   return { statuses: ["succeeded"], result: { status: "succeeded", output: "ok" } };
+}
+
+function directLaunch(idempotencyKey: string, prompt: string, workspacePath: string) {
+  return { idempotencyKey, prompt, workspacePath, environment: {}, revalidateWorkspace: async () => undefined };
 }
 
 async function withHarness(
@@ -294,3 +292,11 @@ async function withHarness(
     await rm(directory, { recursive: true, force: true });
   }
 }
+const authorizer = {
+  authorize: async (workspaceId: string) => ({
+    workspaceId,
+    projectId: "fake-project",
+    canonicalPath: `/workspaces/${workspaceId.replace("workspace-", "")}`,
+    revalidate: async () => undefined,
+  }),
+};

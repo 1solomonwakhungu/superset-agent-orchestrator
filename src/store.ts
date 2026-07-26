@@ -6,6 +6,8 @@ import { execFileSync } from "node:child_process";
 import { dirname } from "node:path";
 import lockfile from "proper-lockfile";
 import { z } from "zod";
+import { auditField, RedactionPolicy, SecurityError, SECURITY_POLICY_VERSION } from "./security.js";
+import { assertPrivateStatePath } from "./state-path.js";
 
 export type WorkerStatus = "requested" | "running" | "canceling" | "succeeded" | "failed" | "canceled" | "unknown_outcome";
 export type TerminalWorkerStatus = Extract<WorkerStatus, "succeeded" | "failed" | "canceled" | "unknown_outcome">;
@@ -139,7 +141,7 @@ export interface CapturedResult {
   assignmentId: string;
   batchId: string;
   sessionId: string;
-  workspaceId: string;
+  workspaceId?: string;
   workspacePath: string;
   attemptId: string;
   attempt: number;
@@ -162,12 +164,52 @@ export interface LaunchAuditEvent {
   errorCode?: string;
 }
 
+export interface SecurityAuditEvent {
+  id: string;
+  sequence: number;
+  occurredAt: string;
+  requesterId: string;
+  operation: string;
+  decision: "allowed" | "denied" | "failed";
+  reasonCode: string;
+  correlationId: string;
+  policyVersion: string;
+  workspaceId?: string;
+  projectId?: string;
+  assignmentId?: string;
+  previousEventHash: string;
+  eventHash: string;
+}
+
+export interface SecurityAuditChainVerification {
+  valid: boolean;
+  length: number;
+  brokenAtSequence?: number;
+}
+
+export type SecurityAuditInput = Omit<
+  SecurityAuditEvent,
+  "id" | "sequence" | "occurredAt" | "policyVersion" | "previousEventHash" | "eventHash"
+>;
+
+const GENESIS_AUDIT_HASH = "0".repeat(64);
+const SECURITY_AUDIT_HASH_FIELDS = [
+  "id", "sequence", "occurredAt", "requesterId", "operation", "decision", "reasonCode",
+  "correlationId", "policyVersion", "workspaceId", "projectId", "assignmentId", "previousEventHash",
+] as const;
+
+function securityAuditEventHash(event: Omit<SecurityAuditEvent, "eventHash">): string {
+  const canonical = JSON.stringify(SECURITY_AUDIT_HASH_FIELDS.map((field) => event[field] ?? null));
+  return createHash("sha256").update(canonical).digest("hex");
+}
+
 export interface LaunchIntent {
   idempotencyKey: string;
   requestHash: string;
   sessionId: string;
   batchId: string;
   workerId: string;
+  workspaceId?: string;
   attribution: WorkerAttribution;
   status: LaunchStatus;
   createdAt: string;
@@ -186,6 +228,8 @@ export interface DurableState {
   auditEvents: LaunchAuditEvent[];
   launchIntents: LaunchIntent[];
   capturedResults?: CapturedResult[];
+  securityAuditEvents?: SecurityAuditEvent[];
+  securityAuditHead?: { sequence: number; eventHash: string };
   reconciledAt?: string;
 }
 
@@ -198,15 +242,15 @@ export interface ReconciliationSummary {
   reconciledAt: string;
 }
 
-const attributionSchema = z.object({ agent: z.string().min(1), task: z.string().min(1) });
+const attributionSchema = z.object({ agent: z.string().min(1), task: z.string().min(1) }).strict();
 const sessionSchema = z.object({
   id: z.string().min(1), clientId: z.string().min(1), createdAt: z.iso.datetime(), lastSeenAt: z.iso.datetime(),
-});
+}).strict();
 const batchSchema = z.object({
   id: z.string().min(1), name: z.string().min(1), sessionId: z.string().min(1),
   createdAt: z.iso.datetime(), updatedAt: z.iso.datetime(), idempotencyKey: z.string().min(1).optional(),
   clientId: z.string().min(1).optional(), requestFingerprint: z.string().min(1).optional(),
-});
+}).strict();
 const workerStatusSchema = z.enum([
   "requested", "running", "canceling", "succeeded", "failed", "canceled", "unknown_outcome",
 ]);
@@ -239,7 +283,7 @@ const workerSchema = z.object({
   lateObservations: z.array(z.object({
     observedAt: z.iso.datetime(), status: z.string().min(1), retainedResult: z.boolean(),
   })).optional(),
-}).superRefine((worker, context) => {
+}).strict().superRefine((worker, context) => {
   if (worker.status === "running" && (worker.pid === undefined || worker.processStartedAt === undefined)) {
     context.addIssue({ code: "custom", message: "Running workers require a PID and process start token" });
   }
@@ -251,7 +295,7 @@ const workerSchema = z.object({
 const diagnosticSchema = z.object({
   id: z.string().min(1), kind: z.enum(["orphan", "unknown_outcome", "missing_result"]),
   workerId: z.string().min(1), message: z.string().min(1), detectedAt: z.iso.datetime(),
-});
+}).strict();
 const assignmentSchema = z.object({
   id: z.string().min(1), idempotencyKey: z.string().min(1), requestFingerprint: z.string().min(1),
   batchId: z.string().min(1), sessionId: z.string().min(1),
@@ -260,35 +304,44 @@ const assignmentSchema = z.object({
   attemptId: z.string().min(1).optional(), attempt: z.number().int().positive().optional(), acceptedAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(), runId: z.string().min(1).optional(), error: z.string().min(1).optional(),
   errorCode: z.string().min(1).optional(),
-});
+}).strict();
 const resultClaimSchema = z.object({
   status: z.enum(["succeeded", "failed", "cancelled", "stopped_without_result", "malformed"]),
   completeness: z.enum(["complete", "empty", "partial", "missing", "malformed"]),
   output: z.string().optional(), error: z.string().min(1).optional(), retryable: z.boolean().optional(),
   stopReason: z.string().min(1).optional(),
-  resume: z.object({ adapter: z.string().min(1), token: z.string().min(1) }).optional(),
-});
+  resume: z.object({ adapter: z.string().min(1), token: z.string().min(1) }).strict().optional(),
+}).strict();
 const capturedResultSchema = z.object({
   deliveryId: z.string().min(1), deliveryFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   assignmentId: z.string().min(1), batchId: z.string().min(1), sessionId: z.string().min(1),
   workspaceId: z.string().min(1), workspacePath: z.string().min(1), attemptId: z.string().min(1),
   attempt: z.number().int().positive(), runId: z.string().min(1), attribution: attributionSchema,
   claim: resultClaimSchema, verifiedArtifacts: z.tuple([]), capturedAt: z.iso.datetime(),
-});
+}).strict();
 const auditEventSchema = z.object({
   id: z.string().min(1), assignmentId: z.string().min(1),
   type: z.enum(["launch_accepted", "launch_reserved", "execution_started", "launch_failed"]),
   occurredAt: z.iso.datetime(), runId: z.string().min(1).optional(), error: z.string().min(1).optional(),
   errorCode: z.string().min(1).optional(),
-});
+}).strict();
+const securityAuditEventSchema = z.object({
+  id: z.string().min(1), sequence: z.number().int().positive(), occurredAt: z.iso.datetime(),
+  requesterId: z.string().min(1),
+  operation: z.string().min(1), decision: z.enum(["allowed", "denied", "failed"]),
+  reasonCode: z.string().min(1), correlationId: z.string().min(1), policyVersion: z.string().min(1),
+  workspaceId: z.string().min(1).optional(), projectId: z.string().min(1).optional(),
+  assignmentId: z.string().min(1).optional(),
+  previousEventHash: z.string().regex(/^[a-f0-9]{64}$/), eventHash: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict();
 const launchIntentSchema = z.object({
   idempotencyKey: z.string().min(1), requestHash: z.string().regex(/^[a-f0-9]{64}$/),
-  sessionId: z.string().min(1), batchId: z.string().min(1), workerId: z.string().min(1),
+  sessionId: z.string().min(1), batchId: z.string().min(1), workerId: z.string().min(1), workspaceId: z.string().min(1).optional(),
   attribution: attributionSchema,
   status: z.enum(["reserved", "dispatching", "unknown_outcome", "bound"]),
   createdAt: z.iso.datetime(), updatedAt: z.iso.datetime(), runId: z.string().min(1).optional(),
   diagnostic: z.string().min(1).optional(),
-}).superRefine((intent, context) => {
+}).strict().superRefine((intent, context) => {
   if (intent.status === "bound" && intent.runId === undefined) {
     context.addIssue({ code: "custom", message: "Bound launch intents require a run ID" });
   }
@@ -298,8 +351,12 @@ const stateSchema = z.object({
   workers: z.array(workerSchema), diagnostics: z.array(diagnosticSchema),
   assignments: z.array(assignmentSchema).default([]), auditEvents: z.array(auditEventSchema).default([]),
   launchIntents: z.array(launchIntentSchema).default([]), capturedResults: z.array(capturedResultSchema).default([]),
+  securityAuditEvents: z.array(securityAuditEventSchema).default([]),
+  securityAuditHead: z.object({
+    sequence: z.number().int().nonnegative(), eventHash: z.string().regex(/^[a-f0-9]{64}$/),
+  }).strict().optional(),
   reconciledAt: z.iso.datetime().optional(),
-}).superRefine((state, context) => {
+}).strict().superRefine((state, context) => {
   for (const [kind, records] of [["session", state.sessions], ["batch", state.batches], ["worker", state.workers],
     ["assignment", state.assignments], ["audit event", state.auditEvents]] as const) {
     const ids = new Set<string>();
@@ -320,6 +377,12 @@ const stateSchema = z.object({
     if (attempts.has(result.attemptId)) context.addIssue({ code: "custom", message: `Duplicate result attempt ID: ${result.attemptId}` });
     deliveries.add(result.deliveryId);
     attempts.add(result.attemptId);
+  }
+  for (const assignment of state.assignments.filter(({ workspaceId }) => workspaceId !== undefined)) {
+    if (!state.securityAuditEvents.some((event) => event.assignmentId === assignment.id
+      && event.reasonCode === "launch_accepted" && event.decision === "allowed")) {
+      context.addIssue({ code: "custom", message: `Security-controlled assignment ${assignment.id} requires an acceptance audit event` });
+    }
   }
   const sessions = new Set(state.sessions.map(({ id }) => id));
   const batches = new Map(state.batches.map((batch) => [batch.id, batch]));
@@ -357,6 +420,8 @@ const EMPTY_STATE: DurableState = {
   auditEvents: [],
   launchIntents: [],
   capturedResults: [],
+  securityAuditEvents: [],
+  securityAuditHead: { sequence: 0, eventHash: GENESIS_AUDIT_HASH },
 };
 
 export class DurableStore {
@@ -371,8 +436,21 @@ export class DurableStore {
     private readonly isProcessAlive: (pid: number, processStartedAt?: string) => boolean = DurableStore.isProcessAlive.bind(DurableStore),
     private readonly observeQuery: (measurement: QueryMeasurement) => void = () => undefined,
     private readonly now: () => number = performance.now.bind(performance),
+    private readonly redaction = new RedactionPolicy(),
     private readonly dispatchLockStaleMs = 10_000,
   ) {}
+
+  redactText(value: string): string {
+    return this.redaction.text(value);
+  }
+
+  redactValue(value: unknown): unknown {
+    return this.redaction.value(value);
+  }
+
+  safeError(error: unknown): string {
+    return this.redaction.error(error);
+  }
 
   get statePath(): string { return this.path; }
 
@@ -437,8 +515,10 @@ export class DurableStore {
         this.rebuildIndexes();
         await this.persist();
       } catch (error) {
-        this.state = previousState;
-        this.rebuildIndexes();
+        await this.load().catch(() => {
+          this.state = previousState;
+          this.rebuildIndexes();
+        });
         throw error;
       }
       return { batch: structuredClone(batch), sessions: structuredClone(workers), duplicate: false };
@@ -726,7 +806,7 @@ export class DurableStore {
       await this.load();
       const worker = this.workersById.get(workerId);
       if (worker === undefined) throw new Error(`Unknown worker: ${workerId}`);
-      if (worker.status === "succeeded" || worker.status === "failed") {
+      if (DurableStore.isTerminal(worker.status)) {
         if (worker.status !== status || JSON.stringify(worker.result) !== JSON.stringify(result)) {
           throw new Error(`Worker ${workerId} already has a different terminal result`);
         }
@@ -835,7 +915,12 @@ export class DurableStore {
     });
   }
 
-  async updateLaunch(idempotencyKey: string, status: LaunchStatus, options: { runId?: string; diagnostic?: string } = {}, now = new Date()): Promise<LaunchIntent> {
+  async updateLaunch(
+    idempotencyKey: string,
+    status: LaunchStatus,
+    options: { runId?: string; diagnostic?: string; securityAudit?: SecurityAuditInput } = {},
+    now = new Date(),
+  ): Promise<LaunchIntent> {
     return this.withLock(async () => {
       await this.load();
       const intent = this.state.launchIntents?.find((candidate) => candidate.idempotencyKey === idempotencyKey);
@@ -843,11 +928,21 @@ export class DurableStore {
       if (intent.status === "bound" && (status !== "bound" || options.runId !== undefined && options.runId !== intent.runId)) {
         throw new Error("A bound launch cannot be rebound or regressed");
       }
-      intent.status = status;
-      intent.updatedAt = now.toISOString();
-      if (options.runId !== undefined) intent.runId = options.runId;
-      if (options.diagnostic !== undefined) intent.diagnostic = options.diagnostic;
-      await this.persist();
+      const previousState = structuredClone(this.state);
+      try {
+        intent.status = status;
+        intent.updatedAt = now.toISOString();
+        if (options.runId !== undefined) intent.runId = options.runId;
+        if (options.diagnostic !== undefined) intent.diagnostic = this.redaction.text(options.diagnostic);
+        if (options.securityAudit !== undefined) this.appendSecurityAuditToState(options.securityAudit, now);
+        await this.persist();
+      } catch (error) {
+        await this.load().catch(() => {
+          this.state = previousState;
+          this.rebuildIndexes();
+        });
+        throw error;
+      }
       return structuredClone(intent);
     });
   }
@@ -865,6 +960,7 @@ export class DurableStore {
     session: Session;
     batch: Batch;
     event: LaunchAuditEvent;
+    securityAudit: SecurityAuditInput;
     worker: Worker;
   }): Promise<{ assignment: Assignment; created: boolean }> {
     return this.withLock(async () => {
@@ -887,13 +983,23 @@ export class DurableStore {
         }
         return { assignment: structuredClone(existing), created: false };
       }
-      this.state.sessions.push(input.session);
-      this.state.batches.push(input.batch);
-      this.state.assignments.push(input.assignment);
-      this.state.workers.push(input.worker);
-      this.state.auditEvents.push(input.event);
-      this.rebuildIndexes();
-      await this.persist();
+      const previousState = structuredClone(this.state);
+      try {
+        this.state.sessions.push(input.session);
+        this.state.batches.push(input.batch);
+        this.state.assignments.push(input.assignment);
+        this.state.workers.push(input.worker);
+        this.state.auditEvents.push(input.event);
+        this.rebuildIndexes();
+        this.appendSecurityAuditToState(input.securityAudit, new Date(input.event.occurredAt));
+        await this.persist();
+      } catch (error) {
+        await this.load().catch(() => {
+          this.state = previousState;
+          this.rebuildIndexes();
+        });
+        throw error;
+      }
       return { assignment: structuredClone(input.assignment), created: true };
     });
   }
@@ -904,6 +1010,7 @@ export class DurableStore {
     batch: Batch;
     workers: Worker[];
     events: LaunchAuditEvent[];
+    securityAudits: SecurityAuditInput[];
   }): Promise<{ assignments: Assignment[]; created: boolean }> {
     return this.withLock(async () => {
       await this.load();
@@ -912,6 +1019,9 @@ export class DurableStore {
       input.workers.forEach((worker) => workerSchema.parse(worker));
       batchSchema.parse(input.batch);
       input.events.forEach((auditEvent) => auditEventSchema.parse(auditEvent));
+      if (input.securityAudits.length !== input.assignments.length) {
+        throw new Error("Launch batch security audits must match assignments in order");
+      }
       if (input.workers.length !== input.assignments.length
         || input.workers.some((worker, index) => worker.sessionId !== input.assignments[index]?.sessionId)) {
         throw new Error("Launch batch workers must match assignments in order");
@@ -940,9 +1050,59 @@ export class DurableStore {
       this.state.workers.push(...input.workers);
       this.state.auditEvents.push(...input.events);
       this.rebuildIndexes();
+      input.securityAudits.forEach((audit, index) => {
+        this.appendSecurityAuditToState(audit, new Date(input.events[index]!.occurredAt));
+      });
       await this.persist();
       return { assignments: structuredClone(input.assignments), created: true };
     });
+  }
+
+  /**
+   * Appends a normalized, redacted, tamper-evident security decision. Every field
+   * that can carry untrusted text is bounded and stripped of control characters so
+   * that no payload can forge or truncate a later record, and each event is chained
+   * to its predecessor's hash. Persistence failure propagates so the caller fails
+   * closed rather than proceeding without an audit record.
+   */
+  async appendSecurityAudit(input: SecurityAuditInput, now = new Date()): Promise<SecurityAuditEvent> {
+    return this.withLock(async () => {
+      await this.load();
+      const event = this.appendSecurityAuditToState(input, now);
+      await this.persist();
+      return structuredClone(event);
+    });
+  }
+
+  securityAuditEvents(): SecurityAuditEvent[] {
+    return structuredClone(this.state.securityAuditEvents ?? []);
+  }
+
+  /** Detects any edit, deletion, or reordering of the persisted audit sequence. */
+  verifySecurityAuditChain(): SecurityAuditChainVerification {
+    const events = this.state.securityAuditEvents ?? [];
+    let previousHash = GENESIS_AUDIT_HASH;
+    for (const [index, event] of events.entries()) {
+      const { eventHash, ...body } = event;
+      if (event.sequence !== index + 1 || event.previousEventHash !== previousHash
+        || securityAuditEventHash(body) !== eventHash) {
+        return { valid: false, length: events.length, brokenAtSequence: index + 1 };
+      }
+      previousHash = eventHash;
+    }
+    const head = this.state.securityAuditHead;
+    if ((events.length > 0 && head === undefined)
+      || (head !== undefined && (head.sequence !== events.length || head.eventHash !== previousHash))) {
+      return { valid: false, length: events.length, brokenAtSequence: events.length + 1 };
+    }
+    return { valid: true, length: events.length };
+  }
+
+  private assertSecurityAuditChain(): void {
+    const verification = this.verifySecurityAuditChain();
+    if (!verification.valid) {
+      throw new SecurityError("INTEGRITY_FAILURE", `Security audit integrity failure at sequence ${verification.brokenAtSequence}`);
+    }
   }
 
   async pendingAssignments(): Promise<Assignment[]> {
@@ -956,6 +1116,7 @@ export class DurableStore {
     assignmentId: string,
     status: Extract<AssignmentLaunchStatus, "launching" | "launched" | "failed">,
     event: LaunchAuditEvent,
+    securityAudit?: SecurityAuditInput,
   ): Promise<{ assignment: Assignment; transitioned: boolean }> {
     return this.withLock(async () => {
       await this.load();
@@ -977,7 +1138,7 @@ export class DurableStore {
         || existingEvent.error !== event.error)) {
         throw new Error(`Launch audit event ID ${JSON.stringify(event.id)} conflicts with existing evidence`);
       }
-      const allowed = assignment.status === "accepted" && status === "launching"
+      const allowed = assignment.status === "accepted" && (status === "launching" || status === "failed")
         || assignment.status === "launching" && (status === "launched" || status === "failed");
       if (!allowed) return { assignment: structuredClone(assignment), transitioned: false };
       assignment.status = status;
@@ -999,9 +1160,36 @@ export class DurableStore {
         worker.completedAt = event.occurredAt;
       }
       if (existingEvent === undefined) this.state.auditEvents.push(event);
+      if (securityAudit !== undefined) this.appendSecurityAuditToState(securityAudit, new Date(event.occurredAt));
       await this.persist();
       return { assignment: structuredClone(assignment), transitioned: true };
     });
+  }
+
+  private appendSecurityAuditToState(input: SecurityAuditInput, now: Date): SecurityAuditEvent {
+    const audit = this.state.securityAuditEvents ??= [];
+    this.assertSecurityAuditChain();
+    const previous = audit.at(-1);
+    const body = {
+      id: randomUUID(),
+      sequence: (previous?.sequence ?? 0) + 1,
+      occurredAt: now.toISOString(),
+        requesterId: auditField(input.requesterId, this.redaction.canaries),
+        operation: auditField(input.operation, this.redaction.canaries),
+      decision: input.decision,
+        reasonCode: auditField(input.reasonCode, this.redaction.canaries),
+        correlationId: auditField(input.correlationId, this.redaction.canaries),
+      policyVersion: SECURITY_POLICY_VERSION,
+        ...(input.workspaceId === undefined ? {} : { workspaceId: auditField(input.workspaceId, this.redaction.canaries) }),
+        ...(input.projectId === undefined ? {} : { projectId: auditField(input.projectId, this.redaction.canaries) }),
+        ...(input.assignmentId === undefined ? {} : { assignmentId: auditField(input.assignmentId, this.redaction.canaries) }),
+      previousEventHash: previous?.eventHash ?? GENESIS_AUDIT_HASH,
+    };
+    const event: SecurityAuditEvent = { ...body, eventHash: securityAuditEventHash(body) };
+    securityAuditEventSchema.parse(event);
+    audit.push(event);
+    this.state.securityAuditHead = { sequence: event.sequence, eventHash: event.eventHash };
+    return event;
   }
 
   async assignmentForResult(assignmentId: string): Promise<Assignment> {
@@ -1080,10 +1268,13 @@ export class DurableStore {
   }
 
   private async load(): Promise<void> {
+    await assertPrivateStatePath(this.path);
     try {
       const parsed: unknown = JSON.parse(await readFile(this.path, "utf8"));
       this.state = stateSchema.parse(parsed) as DurableState;
+      this.assertSecurityAuditChain();
     } catch (error) {
+      if (error instanceof SecurityError) throw error;
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         throw new Error(`Cannot load orchestrator state at ${this.path}: ${(error as Error).message}`, { cause: error });
       }
@@ -1192,8 +1383,8 @@ export class DurableStore {
   }
 
   private async persist(): Promise<void> {
+    await assertPrivateStatePath(this.path);
     stateSchema.parse(this.state);
-    await mkdir(dirname(this.path), { recursive: true });
     const temporaryPath = `${this.path}.${process.pid}.${randomUUID()}.tmp`;
     const file = await open(temporaryPath, "wx", 0o600);
     try {
@@ -1217,7 +1408,7 @@ export class DurableStore {
   }
 
   private async withLock<T>(operation: () => Promise<T>): Promise<T> {
-    await mkdir(dirname(this.path), { recursive: true });
+    await assertPrivateStatePath(this.path);
     const release = await lockfile.lock(this.path, {
       realpath: false,
       stale: 10_000,
