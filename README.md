@@ -151,6 +151,8 @@ tests.
 The real Superset discovery smoke test is intentionally opt-in through
 `npm run test:real-superset`; the default suite is hermetic.
 
+Real Superset and Codex verification is opt-in because it launches an agent in an exact isolated worktree. See [the real-system harness guide](docs/real-superset-codex-e2e.md) for safety gates, commands, evidence, and currently unsupported lifecycle operations.
+
 ## Contributions
 
 Changes must use pull requests. See [CONTRIBUTING.md](CONTRIBUTING.md) for the
