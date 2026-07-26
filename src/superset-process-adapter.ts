@@ -69,12 +69,12 @@ export class SupersetProcessAdapter implements AgentAdapter {
     return this.invoke("launch", request, handleSchema);
   }
 
-  async status(handle: RunHandle): Promise<RunState> {
-    return this.invoke("status", handle, stateSchema);
+  async status(handle: RunHandle, signal?: AbortSignal): Promise<RunState> {
+    return this.invoke("status", handle, stateSchema, signal);
   }
 
-  async result(handle: RunHandle): Promise<RunResult | undefined> {
-    const value = await this.invoke("result", handle, resultSchema.nullable());
+  async result(handle: RunHandle, signal?: AbortSignal): Promise<RunResult | undefined> {
+    const value = await this.invoke("result", handle, resultSchema.nullable(), signal);
     if (value === null) return undefined;
     if (value.resume !== undefined) return value as RunResult;
     const withoutUndefinedResume = { ...value };
@@ -82,9 +82,9 @@ export class SupersetProcessAdapter implements AgentAdapter {
     return withoutUndefinedResume as RunResult;
   }
 
-  async cancel(handle: RunHandle, reason?: string): Promise<CancellationOutcome> {
+  async cancel(handle: RunHandle, reason?: string, signal?: AbortSignal): Promise<CancellationOutcome> {
     try {
-      await this.invoke("cancel", { ...handle, ...(reason === undefined ? {} : { reason }) }, z.object({ cancelled: z.literal(true) }).strict());
+      await this.invoke("cancel", { ...handle, ...(reason === undefined ? {} : { reason }) }, z.object({ cancelled: z.literal(true) }).strict(), signal);
       return { status: "accepted" };
     } catch (error) {
       if (error instanceof SupersetProcessError && error.code === "CANCEL_UNSUPPORTED") {
@@ -99,7 +99,7 @@ export class SupersetProcessAdapter implements AgentAdapter {
     return value ?? undefined;
   }
 
-  private async invoke<T>(command: string, payload: unknown, schema: z.ZodType<T>): Promise<T> {
+  private async invoke<T>(command: string, payload: unknown, schema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
     const input = JSON.stringify(payload);
     const stdout = await new Promise<string>((resolve, reject) => {
       const child = execFile(
@@ -110,6 +110,7 @@ export class SupersetProcessAdapter implements AgentAdapter {
           encoding: "utf8",
           timeout: this.options.timeoutMs ?? 30_000,
           maxBuffer: 4 * 1024 * 1024,
+          ...(signal === undefined ? {} : { signal }),
         },
         (error, stdout, stderr) => {
           if (error !== null) {

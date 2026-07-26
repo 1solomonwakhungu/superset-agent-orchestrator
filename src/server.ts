@@ -110,7 +110,7 @@ async function main(): Promise<void> {
     undefined,
     undefined,
     undefined,
-    providerTimeoutMs,
+    provider === undefined ? undefined : providerTimeoutMs,
   );
   let lifecycleSweep: Promise<void> | undefined;
   const deadlineTimer = setInterval(() => {
@@ -272,6 +272,14 @@ async function main(): Promise<void> {
           continue;
         }
         try {
+          const state = await provider.status({ runId: assignment.runId });
+          if (state.status !== "queued" && state.status !== "running") {
+            items.push({
+              session_id: sessionId,
+              error: contractError("INVALID_TRANSITION", "A terminal session cannot be canceled"),
+            });
+            continue;
+          }
           const cancellation = await lifecycle.cancelSession(sessionId, "user_requested", reason);
           if ("error" in cancellation) {
             items.push({
