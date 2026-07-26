@@ -33,6 +33,8 @@ def source() -> dict:
             "template_hash": "template-a",
             "environment_fingerprint": "environment-a",
             "environment_lock": "uv-lock-a",
+            "hardware_class": "apple-m2",
+            "hardware_manifest": {"capture": "env/captures/run-a.md"},
             "corpus_hash": "corpus-a",
             "dataset_revisions": {"reasoning": "revision-a"},
             "harness_commit": "commit-a",
@@ -157,10 +159,10 @@ def test_decode_floats_remain_exact_and_precision_is_fingerprinted(source) -> No
 
 def test_markdown_renders_optional_fingerprinted_provenance(source) -> None:
     script = load_script("report_result.py")
-    source["provenance"]["hardware_class"] = "apple-m2"
+    source["provenance"]["storage_class"] = "nvme"
     report, _ = script.build_report(source, 8)
-    assert '"hardware_class"' in script.render_markdown(report)
-    assert "apple-m2" in script.render_markdown(report)
+    assert '"storage_class"' in script.render_markdown(report)
+    assert "nvme" in script.render_markdown(report)
 
 
 def test_markdown_safely_renders_provenance_delimiters(source) -> None:

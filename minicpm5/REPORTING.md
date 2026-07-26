@@ -12,6 +12,8 @@ harness implementation. The input contract is:
     "template_hash": "chat template hash",
     "environment_fingerprint": "hash of the captured runtime environment",
     "environment_lock": "environment lock hash",
+    "hardware_class": "apple-m2",
+    "hardware_manifest": { "capture": "env/captures/run.md" },
     "corpus_hash": "hash of the evaluation corpus manifest",
     "dataset_revisions": { "reasoning": "pinned revision" },
     "harness_commit": "Git commit that produced the input",
