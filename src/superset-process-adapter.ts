@@ -45,6 +45,7 @@ const processErrorSchema = z.object({
   code: z.enum(["PROVIDER_UNAVAILABLE", "LAUNCH_REJECTED", "CANCEL_UNSUPPORTED"]),
   message: z.string().min(1),
 }).strict();
+const abortGraceMs = 250;
 
 export interface SupersetProcessAdapterOptions {
   executable: string;
@@ -104,8 +105,11 @@ export class SupersetProcessAdapter implements AgentAdapter {
   }
 
   private async invoke<T>(command: string, payload: unknown, schema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
+    if (signal?.aborted) throw abortReason(signal);
     const input = JSON.stringify(payload);
     const stdout = await new Promise<string>((resolve, reject) => {
+      let aborted = false;
+      let abortEscalation: NodeJS.Timeout | undefined;
       const child = execFile(
         this.options.executable,
         [...(this.options.args ?? []), command],
@@ -114,14 +118,15 @@ export class SupersetProcessAdapter implements AgentAdapter {
           encoding: "utf8",
           timeout: this.options.timeoutMs ?? 30_000,
           maxBuffer: 1024 * 1024,
-          signal,
         },
         (error, stdout, stderr) => {
+          signal?.removeEventListener("abort", abort);
+          if (abortEscalation !== undefined) clearTimeout(abortEscalation);
+          if (aborted) {
+            reject(abortReason(signal));
+            return;
+          }
           if (error !== null) {
-            if (signal?.aborted) {
-              reject(signal.reason instanceof Error ? signal.reason : new Error("Provider operation aborted"));
-              return;
-            }
             const processError = error as NodeJS.ErrnoException & { killed?: boolean; signal?: NodeJS.Signals };
             const declared = parseProcessError(stderr);
             const code: SupersetProcessErrorCode = declared?.code
@@ -134,6 +139,13 @@ export class SupersetProcessAdapter implements AgentAdapter {
           resolve(stdout);
         },
       );
+      const abort = () => {
+        aborted = true;
+        child.kill("SIGTERM");
+        abortEscalation = setTimeout(() => child.kill("SIGKILL"), abortGraceMs);
+        abortEscalation.unref();
+      };
+      signal?.addEventListener("abort", abort, { once: true });
       child.stdin?.on("error", () => undefined);
       child.stdin?.end(input);
     });
@@ -148,6 +160,10 @@ export class SupersetProcessAdapter implements AgentAdapter {
       );
     }
   }
+}
+
+function abortReason(signal: AbortSignal | undefined): Error {
+  return signal?.reason instanceof Error ? signal.reason : new Error("Provider operation aborted");
 }
 
 function parseProcessError(stderr: string): z.infer<typeof processErrorSchema> | undefined {

@@ -8,6 +8,7 @@ const [scenarioPath, statePath, command] = process.argv.slice(2);
 if (!command || !scenarioPath || !statePath) process.exit(64);
 
 const scenario = JSON.parse(await readFile(scenarioPath, "utf8"));
+if (scenario.ignoreSigtermCommands?.includes(command)) process.on("SIGTERM", () => undefined);
 const discoveryResponse = handleDiscovery(process.argv.slice(4));
 if (discoveryResponse !== undefined) {
   process.stdout.write(`${typeof discoveryResponse === "string" ? discoveryResponse : JSON.stringify(discoveryResponse)}\n`);
