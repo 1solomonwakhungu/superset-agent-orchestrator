@@ -94,6 +94,15 @@ test("production MCP server deduplicates concurrent semantic batch replays", asy
   });
 });
 
+test("provider test tools reject workspaces outside the configured root", async () => {
+  await withServer({ defaultScript: successScript() }, async (harness) => {
+    const request = launchArguments(1);
+    request.assignments[0]!.workspace_id = "../scenario.json";
+    const response = await call(harness.client, "provider_batches_launch", request);
+    assert.equal(response.error?.code, "POLICY_DENIED");
+  });
+});
+
 test("production MCP server exposes every provider error once without retries", async () => {
   const cases = [
     [{ launchError: "rejected", defaultScript: successScript() }, "launch", "LAUNCH_REJECTED"],
@@ -139,6 +148,19 @@ test("production MCP server exposes every provider error once without retries", 
   } finally {
     await connection.transport.close();
     await rm(directory, { recursive: true, force: true });
+  }
+
+  const disabledDirectory = await mkdtemp(join(tmpdir(), "disabled-provider-"));
+  const disabled = await connect({
+    SUPERSET_ORCHESTRATOR_STATE: join(disabledDirectory, "state.json"),
+    SUPERSET_ORCHESTRATOR_PROVIDER_TEST_WORKSPACE_ROOT: join(disabledDirectory, "missing-provider-root"),
+  });
+  try {
+    const unavailable = await call(disabled.client, "provider_batches_launch", launchArguments(1));
+    assert.equal(unavailable.error?.code, "PROVIDER_UNAVAILABLE");
+  } finally {
+    await disabled.transport.close();
+    await rm(disabledDirectory, { recursive: true, force: true });
   }
 });
 
