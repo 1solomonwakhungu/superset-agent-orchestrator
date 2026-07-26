@@ -479,10 +479,17 @@ export class LifecycleService {
   private async releaseProviderClaimAfterFailure(error: unknown, release: () => Promise<unknown>): Promise<void> {
     if (error instanceof ProviderOperationTimeoutError && !error.operationSettled()) {
       // An adapter may ignore abort. Keep ownership until its destructive stop request truly settles.
-      void error.settled.then(release).catch(() => undefined);
+      void error.settled.then(() => this.releaseProviderClaimEventually(release));
       return;
     }
     await release();
+  }
+
+  private releaseProviderClaimEventually(release: () => Promise<unknown>): void {
+    void release().catch(() => {
+      const retry = setTimeout(() => this.releaseProviderClaimEventually(release), DEFAULT_POLL_INTERVAL_MS);
+      retry.unref();
+    });
   }
 
   private async acquireProviderSlot(signal: AbortSignal): Promise<void> {
