@@ -4,9 +4,10 @@
   "title": "MiniCPM5 deterministic baseline report",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "provenance", "results", "result_fingerprint"],
+  "required": ["schema_version", "float_precision", "provenance", "results", "result_fingerprint"],
   "properties": {
     "schema_version": { "const": 1 },
+    "float_precision": { "type": "integer", "minimum": 0, "maximum": 15 },
     "provenance": {
       "type": "object",
       "additionalProperties": true,

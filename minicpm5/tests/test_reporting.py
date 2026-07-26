@@ -46,7 +46,10 @@ def test_report_is_canonical_and_repeatable(source) -> None:
 
     assert first == second
     assert first_fingerprint == second_fingerprint
-    payload = {key: first[key] for key in ("schema_version", "provenance", "results")}
+    payload = {
+        key: first[key]
+        for key in ("schema_version", "float_precision", "provenance", "results")
+    }
     assert first_fingerprint == hashlib.sha256(script.canonical_json(payload).encode()).hexdigest()
     assert first["results"]["accuracy"] == 0.12345679
 
@@ -116,3 +119,36 @@ def test_missing_provenance_is_rejected(source) -> None:
     del source["provenance"]["checkpoint_sha"]
     with pytest.raises(ValueError, match="checkpoint_sha"):
         script.build_report(source, 8)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("checkpoint_sha", ""), ("corpus_hash", None), ("decode_config", "greedy")],
+)
+def test_malformed_provenance_is_rejected(source, field, value) -> None:
+    script = load_script("report_result.py")
+    source["provenance"][field] = value
+    with pytest.raises(ValueError, match=field):
+        script.build_report(source, 8)
+
+
+def test_decode_floats_remain_exact_and_precision_is_fingerprinted(source) -> None:
+    script = load_script("report_result.py")
+    source["provenance"]["decode_config"]["temperature"] = 0.12345678941
+    first, first_hash = script.build_report(source, 8)
+    changed = copy.deepcopy(source)
+    changed["provenance"]["decode_config"]["temperature"] = 0.12345678949
+    _, changed_hash = script.build_report(changed, 8)
+    _, precision_hash = script.build_report(source, 9)
+
+    assert first["provenance"]["decode_config"]["temperature"] == 0.12345678941
+    assert first_hash != changed_hash
+    assert first_hash != precision_hash
+
+
+def test_markdown_renders_optional_fingerprinted_provenance(source) -> None:
+    script = load_script("report_result.py")
+    source["provenance"]["hardware_class"] = "apple-m2"
+    report, _ = script.build_report(source, 8)
+    assert "Hardware Class" in script.render_markdown(report)
+    assert "apple-m2" in script.render_markdown(report)

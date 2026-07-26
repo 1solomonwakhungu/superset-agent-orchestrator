@@ -45,10 +45,20 @@ def build_report(source: dict[str, Any], precision: int) -> tuple[dict[str, Any]
     missing = [key for key in REQUIRED_PROVENANCE if key not in source["provenance"]]
     if missing:
         raise ValueError(f"missing provenance fields: {', '.join(missing)}")
+    invalid_strings = [
+        key
+        for key in REQUIRED_PROVENANCE[:-1]
+        if not isinstance(source["provenance"][key], str) or not source["provenance"][key]
+    ]
+    if invalid_strings:
+        raise ValueError(f"provenance fields must be non-empty strings: {', '.join(invalid_strings)}")
+    if not isinstance(source["provenance"]["decode_config"], dict):
+        raise ValueError("decode_config must be an object")
 
     payload = {
         "schema_version": SCHEMA_VERSION,
-        "provenance": normalize(source["provenance"], precision),
+        "float_precision": precision,
+        "provenance": source["provenance"],
         "results": normalize(source["results"], precision),
     }
     fingerprint = hashlib.sha256(canonical_json(payload).encode()).hexdigest()
@@ -59,7 +69,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     provenance = report["provenance"]
     rows = "\n".join(
         f"| {key.replace('_', ' ').title()} | `{canonical_json(provenance[key])}` |"
-        for key in REQUIRED_PROVENANCE
+        for key in sorted(provenance)
     )
     return (
         "# Baseline Result\n\n"
