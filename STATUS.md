@@ -288,17 +288,42 @@ No host cleanup, Hermes access, or destructive operation was executed. The
 
 ## PER-333 workspace lease and writer safety
 
-- Defined exclusive cross-process writer admission using a durable generation and
-  continuously held OS lock over stable canonical worktree identity.
-- Defined acquisition, heartbeat, two-phase release, fencing, crash recovery,
-  quarantine, evidence-based operator repair, and typed fail-closed refusals.
-- Allowed shared read-only work only behind verified mechanical write prevention;
-  unsupported agent launches remain disabled rather than relying on prompts.
-- Prohibited every warning, force, expiry, configuration, request, and state-edit
-  override and added contract tests for the critical safety invariants.
-- Verification: focused policy tests passed 7/7; `npm run verify` passed 81/81;
-  Markdown lint, strict local-routing verification, and `git diff --check` passed.
-- Next: deliver through the PER-333 pull request and verify fetched `main`.
+## PER-349 real Superset and Codex end-to-end tests
+
+- Added an opt-in real-system harness with explicit workspace identity, linked
+  Git worktree, clean-checkout, Codex preset, and launch authorization gates.
+- Relay-outage discovery and launch use dead proxies with loopback retained in
+  `NO_PROXY`; command evidence includes versions, timings, resources, hashes,
+  selected non-secret observations, failures, and workspace/session attribution.
+- Result, cancellation, and backend recovery remain fail-closed and explicitly
+  unsupported on Superset CLI 1.16.1. A real run cannot claim the exact sentinel
+  passed without a supported result API.
+- Executable fake-Superset tests prove preflight, launch/receipt attribution,
+  unsupported lifecycle reporting, sentinel redaction, workspace isolation, and
+  opt-in refusal.
+- Verification: build and typecheck passed; all 105 deterministic tests passed;
+  focused harness tests passed 5/5; `git diff --check` passed. The one excluded
+  smoke test requires the unavailable live Superset executable.
+- Real preflight passed again at 2026-07-25T20:06:57Z against Superset CLI
+  1.16.1 and Node 22.23.1 with zero failures, unchanged HEAD/status, and the
+  current isolated workspace resolved by exact canonical path.
+- Authorized relay-outage launch passed in 86.97 ms and returned session
+  `4236efff-a9c8-4941-9eb8-00a657ead0ec`; target HEAD/status remained unchanged.
+- Real classification is `blocked`, not passed: exact sentinel retrieval and
+  backend restart recovery are unsupported, while cancellation passed through
+  the explicitly allowed unsupported-cancel outcome.
+- PR review fixes require the capability-vetted CLI version, keep reports
+  outside the target worktree, and avoid claiming isolation after an
+  asynchronous launch receipt without a supported completion API.
+- Companion safety slice now requires separate preflight/launch opt-ins,
+  validates exact live tools without model startup, bounds output and time,
+  kills timed-out process groups, redacts diagnostics, records deterministic
+  command attribution, and tests cleanup guarantees.
+- Companion verification: build and focused real-E2E harness tests pass 7/7;
+  the full suite passes 107/108 with only the pre-existing opt-in live Superset
+  smoke test unavailable in the isolated clone.
+- Next: integrate current main, run all safe gates, and merge PR 31 with
+  exact-head protection.
 
 ## PER-327 compatibility evidence matrix
 
