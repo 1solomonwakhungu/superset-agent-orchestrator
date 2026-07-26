@@ -246,6 +246,19 @@ test("report verifier rejects forged throughput and admission arithmetic", async
     (load.admission as { withheld: number }).withheld = 29;
     await writeFile(`${loadOutput}.json`, `${JSON.stringify(load)}\n`, "utf8");
     await assert.rejects(verifyReport(loadOutput), /Admission and backpressure arithmetic is inconsistent/);
+
+    const stageOutput = join(directory, "stage-arithmetic");
+    const stage = await runRealLoad({
+      execute: true, workspaceIds: Array.from({ length: 30 }, (_, index) => `workspace-${index}`),
+      agent: "fake", prompt: "safe test", output: stageOutput, launchTimeoutMs: 10,
+      maxRssBytes: 10_000, maxCpuMs: 10_000, maxDescriptors: 100, measurements: measurements(),
+      launch: async (workspaceId) => ({ sessionId: `session-${workspaceId}`, kind: "terminal" }),
+    });
+    const stages = (stage.admission as { stages: Array<{ stage: number; admitted: number }> }).stages;
+    stages[0]!.admitted -= 1;
+    stages[1]!.admitted += 1;
+    await writeFile(`${stageOutput}.json`, `${JSON.stringify(stage)}\n`, "utf8");
+    await assert.rejects(verifyReport(stageOutput), /Admission and backpressure arithmetic is inconsistent/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
