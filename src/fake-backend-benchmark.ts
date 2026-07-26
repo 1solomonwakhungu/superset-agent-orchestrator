@@ -161,12 +161,13 @@ export async function runFakeBenchmark(options: { sessions: number; output: stri
 }
 
 function fakeMarkdown(report: Record<string, unknown>): string {
-  const launch = report.launch as Record<string, unknown>;
-  const correctness = report.correctness as Record<string, unknown>;
-  const restart = report.restartRecovery as Record<string, unknown>;
-  const resources = report.resources as Record<string, unknown>;
-  const lifecycle = report.lifecycle as Record<string, unknown>;
-  return `# PER-351 Fake Backend Benchmark\n\n- Schema: \`${report.schema}\`\n- Sessions: 100\n- Accepted: ${launch.accepted}\n- Completed: ${lifecycle.completed}\n- Attributed results: ${lifecycle.attributedResults}\n- Failures: ${launch.failures}\n- Exact attribution mismatches: ${correctness.exactAttributionMismatches}\n- Restart recovered sessions: ${restart.recoveredSessions}\n- Restart passed: ${restart.passed}\n- CPU user/system ms: ${resources.cpuUserMs}/${resources.cpuSystemMs}\n- Observed RSS bytes: ${resources.rssBytes}\n- Descriptor delta: ${resources.descriptorDelta ?? "unsupported"}\n\nThe JSON companion contains launch percentiles, full-lifecycle duration, and indexed-query examined, returned, and latency measurements.\n`;
+  const schema = String(report.schema);
+  const launch = report.launch as { accepted: number; failures: number };
+  const correctness = report.correctness as { exactAttributionMismatches: number };
+  const restart = report.restartRecovery as { recoveredSessions: number; passed: boolean };
+  const resources = report.resources as { cpuUserMs: number; cpuSystemMs: number; rssBytes: number; descriptorDelta: number | null };
+  const lifecycle = report.lifecycle as { completed: number; attributedResults: number };
+  return `# PER-351 Fake Backend Benchmark\n\n- Schema: \`${schema}\`\n- Sessions: 100\n- Accepted: ${launch.accepted}\n- Completed: ${lifecycle.completed}\n- Attributed results: ${lifecycle.attributedResults}\n- Failures: ${launch.failures}\n- Exact attribution mismatches: ${correctness.exactAttributionMismatches}\n- Restart recovered sessions: ${restart.recoveredSessions}\n- Restart passed: ${restart.passed}\n- CPU user/system ms: ${resources.cpuUserMs}/${resources.cpuSystemMs}\n- Observed RSS bytes: ${resources.rssBytes}\n- Descriptor delta: ${resources.descriptorDelta ?? "unsupported"}\n\nThe JSON companion contains launch percentiles, full-lifecycle duration, and indexed-query examined, returned, and latency measurements.\n`;
 }
 
 async function main(): Promise<void> {

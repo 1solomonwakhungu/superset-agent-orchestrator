@@ -100,6 +100,48 @@ test("report verifier rejects inconsistent and incomplete load evidence", async 
   }
 });
 
+test("report verifier enforces latency ceilings and unique session IDs", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "per-351-test-"));
+  try {
+    const fakeOutput = join(directory, "fake");
+    const fake = await runFakeBenchmark({ sessions: 100, output: fakeOutput });
+    (fake.responsiveness as { launchP95Ms: number }).launchP95Ms = 1_001;
+    await writeFile(`${fakeOutput}.json`, `${JSON.stringify(fake)}\n`, "utf8");
+    await assert.rejects(verifyReport(fakeOutput), /fixed 1000ms ceiling/);
+
+    const realOutput = join(directory, "real");
+    const real = await runRealLoad({
+      execute: true, workspaceIds: Array.from({ length: 30 }, (_, index) => `workspace-${index}`),
+      agent: "codex", prompt: "safe test", output: realOutput, launchTimeoutMs: 1_000,
+      maxRssBytes: 1_000_000_000, maxCpuMs: 10_000, maxDescriptors: 10_000,
+      launch: async () => ({ sessionId: "duplicate", kind: "terminal" }),
+    });
+    await assert.rejects(verifyReport(realOutput), /unique workspace, task, and session attribution/);
+    assert.equal((real.launch as { accepted: number }).accepted, 30);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("paid runner validates every workspace against a local snapshot before launch", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "per-351-test-"));
+  const workspaceIds = Array.from({ length: 30 }, (_, index) => `workspace-${index}`);
+  let listed = 0;
+  try {
+    await assert.rejects(runRealLoad({
+      execute: true, workspaceIds, agent: "codex", prompt: "safe test", output: join(directory, "local"), launchTimeoutMs: 1_000,
+      maxRssBytes: 1_000_000_000, maxCpuMs: 10_000, maxDescriptors: 10_000,
+      listLocalWorkspaces: async () => {
+        listed += 1;
+        return workspaceIds.slice(0, 29).map((id) => ({ id }));
+      },
+    }), /workspace-29/);
+    assert.equal(listed, 1);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("real runner rejects shared writers and aborts before crossing a ceiling", async () => {
   const directory = await mkdtemp(join(tmpdir(), "per-351-test-"));
   try {
