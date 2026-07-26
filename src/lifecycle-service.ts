@@ -19,7 +19,7 @@ export const MAX_LIFECYCLE_WAIT_MS = 30_000;
 const DEFAULT_POLL_INTERVAL_MS = 25;
 export const PROVIDER_OPERATION_TIMEOUT_MS = 5_000;
 const PROVIDER_UNAVAILABLE_MESSAGE = "The backend lifecycle operation is temporarily unavailable";
-const MAX_PROVIDER_CONCURRENCY = 8;
+const MAX_PROVIDER_CONCURRENCY = 4;
 
 export type LifecycleErrorCode =
   | "SESSION_NOT_FOUND"
