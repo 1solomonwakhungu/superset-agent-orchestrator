@@ -92,10 +92,12 @@ export const runProcess: ProcessRunner = async (executable, args, timeoutMs) => 
   const program = pin.path;
   const argv = assertFixedArguments(args);
   return new Promise<ProcessResult>((resolve, reject) => {
+      const useProcessGroup = process.platform !== "win32";
       const child = spawn(program, argv, {
         shell: false,
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
+        detached: useProcessGroup,
         env: childEnvironment(),
       });
       const stdout: Buffer[] = [];
@@ -110,6 +112,13 @@ export const runProcess: ProcessRunner = async (executable, args, timeoutMs) => 
         clearTimeout(timer);
         action();
       };
+      const terminate = () => {
+        try {
+          process.kill(useProcessGroup ? -child.pid! : child.pid!, "SIGKILL");
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+        }
+      };
       const append = (current: Buffer[], chunk: Buffer) => {
         outputBytes += chunk.byteLength;
         if (outputBytes > MAX_OUTPUT_BYTES) {
@@ -117,7 +126,7 @@ export const runProcess: ProcessRunner = async (executable, args, timeoutMs) => 
             "MALFORMED_RESPONSE",
             "Superset discovery output exceeded the supported limit",
           );
-          child.kill("SIGKILL");
+          terminate();
           return;
         }
         current.push(chunk);
@@ -139,7 +148,7 @@ export const runProcess: ProcessRunner = async (executable, args, timeoutMs) => 
           "TIMED_OUT",
           `Superset discovery exceeded ${timeoutMs} ms`,
         );
-        child.kill("SIGKILL");
+        terminate();
       }, timeoutMs);
       timer.unref();
     });
