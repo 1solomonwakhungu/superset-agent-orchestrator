@@ -269,3 +269,14 @@ PER-336 attempt 2 makes discovery verification deterministic without a Superset 
   (`storage`, `repositories`, `server-restart`) 11/11 passing. Corruption
   fail-closed (`storage-cli`) 2/2 passing.
 - Next: PR review and merge. Linear is owned by the parent factory.
+
+PER-336 merge-readiness review fixes are complete locally.
+
+- Expired unreleased writer leases remain durable and continue fencing later writers until evidence-based reconciliation releases them.
+- Startup validates exact schema definitions and foreign keys before repositories are exposed, and validates an existing prior schema before applying migrations.
+- Each migration rechecks the ledger while holding `BEGIN IMMEDIATE`; migration SQL and its ledger row remain atomic.
+- CLI export uses one read-only validated snapshot and never migrates or otherwise modifies the source registry.
+- Integrity diagnostics reject altered tables, indexes, and triggers by exact canonical definition rather than object name alone.
+- Discovery fixture recording now pseudonymizes commands and arguments and replaces environment values.
+- Verification: clean `npm ci` passed with 2 pre-existing moderate audit findings; build and typecheck passed; 110 tests ran with 109 passing, 0 failing, and 1 optional live-discovery skip; schema generation, compatibility probe, PER-323 routing verification, and `git diff --check` passed.
+- Next: commit, push, and verify PR 26 exact-head checks and merge state. Do not merge; independent verifier owns merge.
