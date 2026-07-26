@@ -7,10 +7,14 @@
 - Added an offline real-process regression proving descendants cannot survive a
   sibling command failure and perform delayed writes.
 - Verification passed: focused platform compatibility 6/6; typecheck; lint;
-  full `npm run check` with 384 tests, one explicit live-smoke skip, coverage,
-  Python, schema, provenance, and research gates; and 10/10 race runs.
-- Next: deliver the companion PR into PR #29's feature branch without marking
-  PER-346 Done.
+  full `npm run verify` with 384 tests, one explicit live-smoke skip, coverage,
+  Python, schema, provenance, research gates, and 10/10 race runs.
+- PR #76 merged into PR #29's stale feature branch as `813ae9ffc3783c8b1d7ab8a118b4fdf687b6c41b`.
+  Follow-up PR #78 delivered the change to `main` as `19b852dedc53f6b1c7349a1b7bf03d5aed6de84c`.
+- Resolved the follow-up review blocker by guarding cancellation until a spawned
+  process has a PID; all eight GitHub checks passed on the final head.
+- Linear issue PER-346 and canonical comment `351147a9-fe67-4f82-9a7d-e9a8d5b26795`
+  are no longer resolvable, so no duplicate synchronization comment was created.
 
 ## PER-346 final integration, 2026-07-26
 
