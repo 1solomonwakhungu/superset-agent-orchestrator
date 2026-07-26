@@ -98,6 +98,169 @@ test("cancellation racing adapter launch is delivered after the run is bound", a
   });
 });
 
+test("cancellation racing a rejected launch settles as failed launch_error", async () => {
+  await withStore(async (path) => {
+    let rejectLaunch: ((error: Error) => void) | undefined;
+    let markEntered: (() => void) | undefined;
+    const entered = new Promise<void>((resolve) => { markEntered = resolve; });
+    const adapter = {
+      cancellation: "supported" as const,
+      findByIdempotencyKey: async () => undefined,
+      launch: async () => new Promise<{ runId: string }>((_resolve, reject) => {
+        rejectLaunch = reject;
+        markEntered?.();
+      }),
+      status: async () => { throw new Error("not used"); },
+      result: async () => undefined,
+      cancel: async () => undefined,
+      resumeMetadata: async () => undefined,
+    };
+    const store = new DurableStore(path);
+    const accepted = await new LaunchService(store, adapter, authorizer).launch(request);
+    await entered;
+    await new LifecycleService(store, adapter).cancelSession(accepted.sessionId);
+    rejectLaunch?.(new Error("launch rejected"));
+
+    let worker = await store.worker(accepted.sessionId);
+    for (let attempt = 0; attempt < 100 && worker?.status !== "failed"; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      worker = await store.worker(accepted.sessionId);
+    }
+    assert.equal(worker?.status, "failed");
+    assert.equal(worker?.stopReason, "launch_error");
+    assert.equal(worker?.runId, undefined);
+    assert.equal(worker?.cancellationDeliveryPending, undefined);
+    assert.deepEqual(await new LifecycleService(new DurableStore(path), adapter).reconcileCancellations(), []);
+  });
+});
+
+test("malformed provider launch handle settles the lifecycle worker as launch_error", async () => {
+  await withStore(async (path) => {
+    const adapter = {
+      findByIdempotencyKey: async () => undefined,
+      launch: async () => ({} as { runId: string }),
+      status: async () => { throw new Error("not used"); },
+      result: async () => undefined,
+      cancel: async () => undefined,
+      resumeMetadata: async () => undefined,
+    };
+    const store = new DurableStore(path);
+    const accepted = await new LaunchService(store, adapter, authorizer).accept(request);
+    await new LaunchService(store, adapter, authorizer).dispatchPending();
+    assert.equal((await store.worker(accepted.sessionId))?.status, "failed");
+    assert.equal((await store.worker(accepted.sessionId))?.stopReason, "launch_error");
+  });
+});
+
+test("local cancellation prevents a dispatcher holding stale acceptance from launching", async () => {
+  await withStore(async (path) => {
+    const launches: unknown[] = [];
+    const adapter = {
+      cancellation: "supported" as const,
+      findByIdempotencyKey: async () => undefined,
+      launch: async (input: unknown) => { launches.push(input); return { runId: "must-not-launch" }; },
+      status: async () => { throw new Error("not used"); },
+      result: async () => undefined,
+      cancel: async () => undefined,
+      resumeMetadata: async () => undefined,
+    };
+    const store = new DurableStore(path);
+    const service = new LaunchService(store, adapter, authorizer);
+    const accepted = await service.accept(request);
+    const stale = await store.pendingAssignments();
+    await new LifecycleService(store, adapter).cancelSession(accepted.sessionId);
+    store.pendingAssignments = async () => stale;
+    await service.dispatchPending();
+    assert.deepEqual(launches, []);
+    assert.equal((await store.worker(accepted.sessionId))?.status, "canceled");
+    assert.equal(store.snapshot().assignments[0]?.status, "failed");
+    assert.equal(store.snapshot().auditEvents.at(-1)?.type, "launch_failed");
+    assert.equal(store.snapshot().auditEvents.at(-1)?.error, "Launch was canceled before provider dispatch");
+  });
+});
+
+test("deadline winning during launch stops and reconciles the late-bound run after restart", async () => {
+  await withStore(async (path) => {
+    let releaseLaunch: (() => void) | undefined;
+    let markEntered: (() => void) | undefined;
+    const entered = new Promise<void>((resolve) => { markEntered = resolve; });
+    const cancellations: string[] = [];
+    const adapter = {
+      cancellation: "supported" as const,
+      findByIdempotencyKey: async () => undefined,
+      launch: async () => new Promise<{ runId: string }>((resolve) => {
+        releaseLaunch = () => resolve({ runId: "late-deadline-run" });
+        markEntered?.();
+      }),
+      status: async ({ runId }: { runId: string }) => ({ runId, status: "cancelled" as const, updatedAt: new Date().toISOString() }),
+      result: async () => ({ status: "cancelled" as const }),
+      cancel: async ({ runId }: { runId: string }) => { cancellations.push(runId); },
+      resumeMetadata: async () => undefined,
+    };
+    const store = new DurableStore(path);
+    const accepted = await new LaunchService(store, adapter, authorizer).launch(request);
+    await entered;
+    const deadline = new Date("2026-07-26T00:00:00.000Z");
+    await store.setWorkerDeadline(accepted.sessionId, deadline);
+    await new LifecycleService(store, adapter).enforceDeadlines(new Date("2026-07-26T00:00:01.000Z"));
+    releaseLaunch?.();
+
+    let worker = await store.worker(accepted.sessionId);
+    for (let attempt = 0; attempt < 100 && worker?.runId === undefined; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      worker = await store.worker(accepted.sessionId);
+    }
+    assert.equal(worker?.status, "failed");
+    assert.equal(worker?.stopReason, "deadline_exceeded");
+    assert.equal(worker?.runId, "late-deadline-run");
+    assert.equal(worker?.providerStopPending, true);
+
+    await new LifecycleService(new DurableStore(path), adapter).reconcileTimedOutResults();
+    worker = await new DurableStore(path).worker(accepted.sessionId);
+    assert.deepEqual(cancellations, ["late-deadline-run"]);
+    assert.equal(worker?.status, "failed");
+    assert.equal(worker?.providerStopPending, undefined);
+    assert.equal(worker?.lifecycleReconcilePending, undefined);
+  });
+});
+
+test("deadline winning during a rejected launch preserves deadline truth and clears handoff flags", async () => {
+  await withStore(async (path) => {
+    let rejectLaunch: ((error: Error) => void) | undefined;
+    let markEntered: (() => void) | undefined;
+    const entered = new Promise<void>((resolve) => { markEntered = resolve; });
+    const adapter = {
+      cancellation: "supported" as const,
+      findByIdempotencyKey: async () => undefined,
+      launch: async () => new Promise<{ runId: string }>((_resolve, reject) => {
+        rejectLaunch = reject;
+        markEntered?.();
+      }),
+      status: async () => { throw new Error("not used"); },
+      result: async () => undefined,
+      cancel: async () => undefined,
+      resumeMetadata: async () => undefined,
+    };
+    const store = new DurableStore(path);
+    const accepted = await new LaunchService(store, adapter, authorizer).launch(request);
+    await entered;
+    await store.setWorkerDeadline(accepted.sessionId, new Date("2026-07-26T00:00:00.000Z"));
+    await new LifecycleService(store, adapter).enforceDeadlines(new Date("2026-07-26T00:00:01.000Z"));
+    rejectLaunch?.(new Error("launch rejected"));
+
+    let worker = await store.worker(accepted.sessionId);
+    for (let attempt = 0; attempt < 100 && store.snapshot().assignments[0]?.status !== "failed"; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      worker = await store.worker(accepted.sessionId);
+    }
+    assert.equal(worker?.status, "failed");
+    assert.equal(worker?.stopReason, "deadline_exceeded");
+    assert.equal(worker?.runId, undefined);
+    assert.equal(worker?.providerStopPending, undefined);
+    assert.equal(worker?.lifecycleReconcilePending, undefined);
+  });
+});
+
 test("asynchronous launch returns after acceptance without waiting for the adapter", async () => {
   await withStore(async (path) => {
     let releaseLaunch: (() => void) | undefined;

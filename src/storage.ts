@@ -205,7 +205,7 @@ function validateOwnership(stat: { uid: number }, path: string): void {
   }
 }
 
-function preparePrivateDirectory(path: string): void {
+export function preparePrivateDirectory(path: string): void {
   let created = false;
   try { mkdirSync(path, { recursive: false, mode: 0o700 }); created = true; }
   catch (error) {
@@ -229,7 +229,7 @@ function pathExists(path: string): boolean {
   }
 }
 
-function validateOwnerOnlyFile(path: string): void {
+export function validateOwnerOnlyFile(path: string): void {
   let descriptor: number;
   try { descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW); }
   catch (error) { throw new Error(`Storage path must be a regular non-symlink file: ${path}`, { cause: error }); }
@@ -242,7 +242,7 @@ function validateOwnerOnlyFile(path: string): void {
   } finally { closeSync(descriptor); }
 }
 
-function secureCreatedFile(path: string): void {
+export function secureCreatedFile(path: string): void {
   const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const stat = fstatSync(descriptor);
