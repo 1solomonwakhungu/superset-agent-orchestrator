@@ -5,7 +5,14 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { batchCancelResultSchema, cancelResultSchema, waitResultSchema } from "../src/tool-contract.js";
+import {
+  batchCancelResultSchema,
+  cancelResultSchema,
+  enforceDeadlinesResultSchema,
+  jsonSchemaCatalog,
+  setDeadlineResultSchema,
+  waitResultSchema,
+} from "../src/tool-contract.js";
 
 async function withServer(run: (client: Client) => Promise<void>): Promise<void> {
   const directory = await mkdtemp(join(tmpdir(), "orchestrator-lifecycle-mcp-"));
@@ -48,6 +55,7 @@ test("the MCP surface publishes the lifecycle tools", async () => withServer(asy
   const names = new Set(tools.map(({ name }) => name));
   for (const expected of ["sessions_cancel", "batches_cancel", "batches_wait", "sessions_set_deadline", "deadlines_enforce"]) {
     assert.equal(names.has(expected), true, `missing tool ${expected}`);
+    assert.ok(expected in (jsonSchemaCatalog() as { tools: Record<string, unknown> }).tools, `missing contract ${expected}`);
   }
 }));
 
@@ -104,18 +112,19 @@ test("a wait above the hard cap is rejected as an invalid argument", async () =>
 test("deadlines expire nonterminal sessions as failed/deadline_exceeded", async () => withServer(async (client) => {
   const created = await createBatch(client, "deadline", ["one"]);
   const sessionIds = created.sessions.map(({ sessionId }) => sessionId);
-  const scheduled = await call<{ items: Array<{ sessionId: string; deadlineAt: string }> }>(
-    client, "sessions_set_deadline", { sessionIds, deadlineMs: 1 },
-  );
-  assert.equal(scheduled.items[0]!.deadlineAt.length > 0, true);
+  const scheduled = setDeadlineResultSchema.parse(await call<unknown>(
+    client, "sessions_set_deadline", { contract_version: "1.0", session_ids: sessionIds, deadline_ms: 1 },
+  ));
+  assert.equal("deadline_at" in scheduled.data.items[0]! && scheduled.data.items[0].deadline_at.length > 0, true);
 
   await new Promise((settle) => setTimeout(settle, 25));
-  const expired = await call<{ expired: Array<{ sessionId: string; status: string }> }>(client, "deadlines_enforce", {});
-  assert.deepEqual(expired.expired.map(({ sessionId, status }) => ({ sessionId, status })), [
-    { sessionId: sessionIds[0]!, status: "failed" },
+  const expired = enforceDeadlinesResultSchema.parse(await call<unknown>(client, "deadlines_enforce", { contract_version: "1.0" }));
+  assert.deepEqual(expired.data.expired.map(({ session_id, state }) => ({ session_id, state })), [
+    { session_id: sessionIds[0]!, state: "failed" },
   ]);
 
   const page = await call<{ sessions: Array<{ status: string }> }>(client, "batches_get", { batchId: created.batch.id });
   assert.equal(page.sessions[0]!.status, "failed");
-  assert.deepEqual(await call<{ expired: unknown[] }>(client, "deadlines_enforce", {}), { expired: [] });
+  const repeated = enforceDeadlinesResultSchema.parse(await call<unknown>(client, "deadlines_enforce", { contract_version: "1.0" }));
+  assert.deepEqual(repeated.data.expired, []);
 }));

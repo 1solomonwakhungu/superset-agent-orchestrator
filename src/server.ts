@@ -7,7 +7,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { BatchQueryError, DurableStore } from "./store.js";
 import type { AgentAdapter } from "./agent-adapter.js";
-import { LifecycleService, MAX_LIFECYCLE_WAIT_MS } from "./lifecycle-service.js";
+import { LifecycleService } from "./lifecycle-service.js";
 import {
   batchCancelRequestSchema,
   batchCancelResultSchema,
@@ -15,6 +15,10 @@ import {
   cancelResultSchema,
   CONTRACT_VERSION,
   errorDefinitions,
+  enforceDeadlinesRequestSchema,
+  enforceDeadlinesResultSchema,
+  setDeadlineRequestSchema,
+  setDeadlineResultSchema,
   waitRequestSchema,
   waitResultSchema,
   type ErrorCode,
@@ -77,14 +81,12 @@ async function main(): Promise<void> {
   let lifecycleSweep: Promise<void> | undefined;
   const deadlineTimer = setInterval(() => {
     if (lifecycleSweep !== undefined) return;
-    lifecycleSweep = Promise.all([
-      lifecycle.enforceDeadlines(),
-      lifecycle.reconcileCancellations(),
-      lifecycle.reconcileTimedOutResults(),
-    ]).then(([expired]) => {
+    lifecycleSweep = lifecycle.enforceDeadlines().then(async (expired) => {
+      await lifecycle.reconcileCancellations();
+      await lifecycle.reconcileTimedOutResults();
       if (expired.length > 0) console.error(`Deadlines enforced: ${JSON.stringify(expired)}`);
     }).catch((error: unknown) => {
-      console.error(`Lifecycle enforcement failed: ${error instanceof Error ? error.message : error}`);
+      console.error("Lifecycle enforcement failed:", error);
     }).finally(() => {
       lifecycleSweep = undefined;
     });
@@ -208,36 +210,42 @@ async function main(): Promise<void> {
     "sessions_set_deadline",
     {
       description: "Set an absolute deadline after which nonterminal sessions are expired as failed/deadline_exceeded",
-      inputSchema: {
-        sessionIds: z.array(z.string().min(1)).min(1).max(100),
-        deadlineMs: z.number().int().positive(),
-      },
+      inputSchema: setDeadlineRequestSchema.shape,
     },
-    async ({ sessionIds, deadlineMs }) => {
+    async ({ session_ids: sessionIds, deadline_ms: deadlineMs }) => {
       const deadline = new Date(Date.now() + deadlineMs);
       const items = [];
       for (const id of [...new Set(sessionIds)]) {
         try {
           const worker = await store.setWorkerDeadline(id, deadline);
-          items.push({ sessionId: id, deadlineAt: worker.deadlineAt, status: worker.status });
+          items.push({ session_id: id, deadline_at: worker.deadlineAt, state: contractState(worker.status) });
         } catch (error) {
           items.push({
-            sessionId: id,
-            error: error instanceof BatchQueryError && error.code === "not_found" ? "SESSION_NOT_FOUND" : "internal_error",
-            message: error instanceof Error ? error.message : String(error),
+            session_id: id,
+            error: contractError(
+              error instanceof BatchQueryError && error.code === "not_found" ? "SESSION_NOT_FOUND" : "STATE_UNAVAILABLE",
+              error instanceof BatchQueryError && error.code === "not_found" ? error.message : "Unable to persist the session deadline",
+            ),
           });
         }
       }
-      return result({ items });
+      return result(setDeadlineResultSchema.parse(contractEnvelope({ items })));
     },
   );
   server.registerTool(
     "deadlines_enforce",
     {
       description: "Expire every nonterminal session whose deadline has passed and report the exact expirations",
-      inputSchema: {},
+      inputSchema: enforceDeadlinesRequestSchema.shape,
     },
-    async () => result({ expired: await lifecycle.enforceDeadlines() }),
+    async () => result(enforceDeadlinesResultSchema.parse(contractEnvelope({
+      expired: (await lifecycle.enforceDeadlines()).map((worker) => ({
+        session_id: worker.sessionId,
+        deadline_at: worker.deadlineAt,
+        state: "failed" as const,
+        ...(worker.providerStopError === undefined ? {} : { provider_stop_error: worker.providerStopError }),
+      })),
+    }))),
   );
   server.registerTool(
     "recent_sessions",

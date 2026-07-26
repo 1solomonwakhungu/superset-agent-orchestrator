@@ -341,6 +341,35 @@ export const waitResultSchema = z.object({
   const ids = data.items.map(({ batch_id }) => batch_id);
   if (new Set(ids).size !== ids.length) context.addIssue({ code: "custom", message: "item batch_ids must be unique" });
 });
+export const setDeadlineRequestSchema = versionedRequest.extend({
+  session_ids: uniqueIdentifiers,
+  deadline_ms: z.number().int().positive().max(2_147_483_647),
+}).strict();
+export const setDeadlineResultSchema = z.object({
+  ...envelopeFields,
+  data: z.object({
+    items: z.array(z.union([
+      z.object({
+        session_id: identifier,
+        deadline_at: timestamp,
+        state: sessionStateSchema,
+      }).strict(),
+      itemErrorSchema,
+    ])).min(1).max(MAX_BATCH_SIZE),
+  }).strict(),
+}).strict();
+export const enforceDeadlinesRequestSchema = versionedRequest.strict();
+export const enforceDeadlinesResultSchema = z.object({
+  ...envelopeFields,
+  data: z.object({
+    expired: z.array(z.object({
+      session_id: identifier,
+      deadline_at: timestamp,
+      state: z.literal("failed"),
+      provider_stop_error: z.string().min(1).optional(),
+    }).strict()).max(MAX_BATCH_SIZE),
+  }).strict(),
+}).strict();
 export const batchCancelResultSchema = z.object({
   ...envelopeFields,
   data: z.object({
@@ -379,6 +408,8 @@ export const toolContract = {
   batches_cancel: { input: batchCancelRequestSchema, output: z.union([batchCancelResultSchema, failureResultSchema]) },
   batches_get: { input: pageRequestSchema, output: z.union([batchGetResultSchema, failureResultSchema]) },
   batches_wait: { input: waitRequestSchema, output: z.union([waitResultSchema, failureResultSchema]) },
+  sessions_set_deadline: { input: setDeadlineRequestSchema, output: z.union([setDeadlineResultSchema, failureResultSchema]) },
+  deadlines_enforce: { input: enforceDeadlinesRequestSchema, output: z.union([enforceDeadlinesResultSchema, failureResultSchema]) },
   batches_recover: { input: recoveryRequestSchema, output: z.union([recoveryResultSchema, failureResultSchema]) },
 } as const;
 
@@ -392,6 +423,8 @@ const semanticRules = {
   batches_cancel: ["batch_ids MUST be unique", "data.items[].batch_id MUST be unique"],
   batches_get: ["next_cursor MUST be present exactly when has_more=true", "terminal sessions MUST have a state-appropriate stop_reason", "completed sessions MUST have artifact_manifest_id"],
   batches_wait: ["batch_ids MUST be unique", "data.items[].batch_id MUST be unique"],
+  sessions_set_deadline: ["session_ids MUST be unique", "data.items[].session_id MUST be unique"],
+  deadlines_enforce: [],
   batches_recover: ["next_cursor MUST be present exactly when has_more=true", "terminal sessions MUST have a state-appropriate stop_reason", "completed sessions MUST have artifact_manifest_id"],
 } satisfies Record<ToolName, string[]>;
 
