@@ -63,5 +63,7 @@ else if (mode === "recover") await service.dispatchPending();
 else throw new Error(`Unknown fixture mode: ${mode}`);
 
 function assertMatchingKey(idempotencyKey: string): void {
-  if (idempotencyKey !== request.idempotencyKey) throw new Error("Unexpected idempotency key");
+  if (idempotencyKey !== `${request.clientId}\0${request.idempotencyKey}`) {
+    throw new Error("Unexpected idempotency key");
+  }
 }
