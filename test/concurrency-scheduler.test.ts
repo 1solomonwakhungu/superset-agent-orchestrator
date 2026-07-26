@@ -339,6 +339,46 @@ test("recovered running retries reacquire capacity without duplicate permits", a
   (await queued)();
 });
 
+test("sequential recovery lookups reuse one active permit", async () => {
+  const scheduler = new ConcurrencyScheduler({ global: 1 });
+  const delegate = new FakeAgentAdapter([
+    { statuses: ["running", "running", "succeeded"], result: { status: "succeeded", output: "recovered" } },
+  ]);
+  const handle = await delegate.launch({ idempotencyKey: "recovered", prompt: "first", workspacePath: "/first" });
+  const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => base, () => base);
+
+  assert.deepEqual(await adapter.findByIdempotencyKey("recovered"), handle);
+  assert.deepEqual(await adapter.findByIdempotencyKey("recovered"), handle);
+  assert.equal(scheduler.snapshot().active, 1);
+  assert.equal((await adapter.status(handle)).status, "running");
+  assert.equal((await adapter.status(handle)).status, "succeeded");
+  assert.equal(scheduler.snapshot().active, 0);
+});
+
+test("retries recovery after a transient status failure without duplicating its permit", async () => {
+  const scheduler = new ConcurrencyScheduler({ global: 1 });
+  const delegate = new FakeAgentAdapter([
+    { statuses: ["running", "succeeded"], result: { status: "succeeded", output: "recovered" } },
+  ]);
+  const handle = await delegate.launch({ idempotencyKey: "recovered", prompt: "first", workspacePath: "/first" });
+  const status = delegate.status.bind(delegate);
+  let attempts = 0;
+  delegate.status = async (candidate) => {
+    attempts += 1;
+    if (attempts === 1) throw new Error("status unavailable");
+    return status(candidate);
+  };
+  const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => base, () => base);
+
+  await assert.rejects(adapter.findByIdempotencyKey("recovered"), /status unavailable/);
+  assert.equal(scheduler.snapshot().active, 1);
+  assert.deepEqual(await adapter.findByIdempotencyKey("recovered"), handle);
+  assert.equal(scheduler.snapshot().active, 1);
+  assert.equal((await adapter.status(handle)).status, "running");
+  assert.equal((await adapter.status(handle)).status, "succeeded");
+  assert.equal(scheduler.snapshot().active, 0);
+});
+
 test("recovery reserves capacity before a delayed backend lookup", async () => {
   const scheduler = new ConcurrencyScheduler({ global: 1 });
   const delegate = new FakeAgentAdapter([
