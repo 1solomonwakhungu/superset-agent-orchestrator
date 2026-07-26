@@ -448,6 +448,22 @@ PER-348 adversarial resilience regression coverage is complete locally.
 - Next: commit and push the exact reviewed head, resolve all PR 34 threads, verify
   GitHub checks, and merge with exact-head protection.
 
+## PER-347 companion fake-provider recovery hardening
+
+- Added one-shot, occurrence-scoped fake CLI faults recorded alongside the exact
+  schema-valid response produced before a timeout or malformed-output failure.
+- Added real subprocess recovery coverage proving an externally accepted launch
+  is rediscovered after orchestrator restart with one run and no second launch.
+- Added 40-way same-key launch concurrency coverage and temporary-state cleanup
+  when atomic replacement fails.
+- Verification: `npm run verify` passed 119 tests with one intentional real-system
+  skip; the focused suite passed 8/8 and both new race/recovery tests passed in
+  three additional stress iterations; `git diff --check` passed.
+- After integrating the advanced PER-347 base, `npm run verify` passed formatting,
+  lint, typecheck, build, 170 tests (169 pass and 1 intentional live skip),
+  coverage, Python 3/3, schema no-diff, and provenance verification.
+- Next: deliver and merge the companion PR into the PER-347 branch.
+
 Historical PER-336 local verification before PR 26 merged:
 
 - Reconciled the feature branch with `origin/main` at `90cef0d` via a clean merge
