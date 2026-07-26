@@ -36,6 +36,7 @@ const PLATFORM_INJECTED_VARIABLES = ["__CF_USER_TEXT_ENCODING", "NODE_V8_COVERAG
 
 test("discovery child processes inherit only allowlisted environment variables", async () => {
   const previous = process.env[SECRET_VARIABLE];
+  const previousAwsSecret = process.env.AWS_SECRET_ACCESS_KEY;
   process.env[SECRET_VARIABLE] = "must-not-leak";
   process.env.AWS_SECRET_ACCESS_KEY ??= "must-not-leak-either";
   try {
@@ -56,6 +57,8 @@ test("discovery child processes inherit only allowlisted environment variables",
   } finally {
     if (previous === undefined) delete process.env[SECRET_VARIABLE];
     else process.env[SECRET_VARIABLE] = previous;
+    if (previousAwsSecret === undefined) delete process.env.AWS_SECRET_ACCESS_KEY;
+    else process.env.AWS_SECRET_ACCESS_KEY = previousAwsSecret;
   }
 });
 
@@ -194,7 +197,7 @@ test("a corrupt registry is never silently replaced", async () => {
   });
 });
 
-test("a stale lock does not let two writers interleave a durable write", async () => {
+test("a refused idempotency conflict leaves durable state byte-identical", async () => {
   await withTemporaryDirectory("orchestrator-security", async (directory) => {
     const path = join(directory, "state.json");
     const store = new DurableStore(path);

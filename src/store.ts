@@ -292,7 +292,7 @@ export class DurableStore {
 
   constructor(
     private readonly path: string,
-    private readonly isProcessAlive: (pid: number, processStartedAt?: string) => boolean = DurableStore.isProcessAlive.bind(DurableStore),
+    private readonly isProcessAlive: (pid: number, processStartedAt?: string) => boolean = (...args) => DurableStore.isProcessAlive(...args),
     private readonly observeQuery: (measurement: QueryMeasurement) => void = () => undefined,
     private readonly now: () => number = performance.now.bind(performance),
   ) {}
@@ -489,13 +489,26 @@ export class DurableStore {
       await this.load();
       const intent = this.state.launchIntents?.find((candidate) => candidate.idempotencyKey === idempotencyKey);
       if (intent === undefined) throw new Error(`Unknown launch idempotency key: ${idempotencyKey}`);
-      if (intent.status === "bound" && (status !== "bound" || options.runId !== undefined && options.runId !== intent.runId)) {
-        throw new Error("A bound launch cannot be rebound or regressed");
+      const transitions: Record<LaunchStatus, readonly LaunchStatus[]> = {
+        reserved: ["reserved", "dispatching", "unknown_outcome"],
+        dispatching: ["dispatching", "unknown_outcome", "bound"],
+        unknown_outcome: ["unknown_outcome", "bound"],
+        bound: ["bound"],
+      };
+      if (!transitions[intent.status].includes(status)) {
+        throw new Error(`Invalid launch transition: ${intent.status} -> ${status}`);
       }
-      intent.status = status;
-      intent.updatedAt = now.toISOString();
-      if (options.runId !== undefined) intent.runId = options.runId;
-      if (options.diagnostic !== undefined) intent.diagnostic = options.diagnostic;
+      const updated = launchIntentSchema.parse({
+        ...intent,
+        status,
+        updatedAt: now.toISOString(),
+        ...(options.runId === undefined ? {} : { runId: options.runId }),
+        ...(options.diagnostic === undefined ? {} : { diagnostic: options.diagnostic }),
+      });
+      if (intent.status === "bound" && updated.runId !== intent.runId) {
+        throw new Error("A bound launch cannot be rebound");
+      }
+      Object.assign(intent, updated);
       await this.persist();
       return structuredClone(intent);
     });

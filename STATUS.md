@@ -9,21 +9,20 @@
   tests, and adversarial security-control tests. Added enforced coverage
   thresholds, a repeated race-test runner, a testing strategy document, and a
   flaky-test policy. No product code was added to satisfy a test.
-- Key results: 164/164 tests pass (101 before). Coverage over `src/**` rose from
-  88.96% lines, 80.00% branches, 86.64% functions to 98.65% lines, 92.64%
-  branches, 97.35% functions, enforced at 95/88/92. 15 repeated race runs of the
-  six concurrency-sensitive suites passed. Fixed one load-sensitive flake in
-  `test/launch-service.test.ts` that raced temporary-directory cleanup against a
-  background durable write.
+- Key results after integration with `main@cbd44e1`: 173 active JS/TS tests and
+  3 Python tests pass, with one explicit Superset Desktop smoke skip. C8 reports
+  97.05% lines/statements, 89.51% branches, and 95.52% functions across all
+  source files. Twenty repeated race runs and 75 focused domain, schema,
+  contract, persistence, and safety tests passed.
 - Review follow-up: Standalone coverage and race commands now build their
   required artifacts, the real discovery smoke test is explicitly opt-in, and
   Windows remains outside the supported compatibility envelope.
-- Verification: `npm run verify` passed 163/163 active tests with 1 opt-in smoke
-  test skipped and all 10 race runs; focused Markdown lint, PER-323 policy
-  verification, and `git diff --check` passed.
-- Verified implementation commit: `f4f2cd6a52684ad1467f39990f3bddce9fe65273`.
-- Next: External branch protection remains blocked with no checks reported;
-  merge after the required external approval or policy gate is satisfied.
+- Verification: `npm ci`, `npm run check`, focused tests, `RACE_REPEATS=20 npm
+  run test:race`, standalone `npm run schema:check`, and `git diff --check`
+  passed. Fixed false-positive test labels, ambient credential leakage, stale
+  state-transition assertions, and wall-clock polling in retry verification.
+- Next: confirm the pushed exact PR head, GitHub checks, merge state, and review
+  threads without merging, then keep PER-346 In Progress until accepted.
 
 ## PER-352 cross-platform compatibility CI
 

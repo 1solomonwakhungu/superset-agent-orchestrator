@@ -280,7 +280,11 @@ test("catalog generation is deterministic and JSON-serializable", () => {
   const first = JSON.stringify(jsonSchemaCatalog());
   const second = JSON.stringify(jsonSchemaCatalog());
   assert.equal(first, second);
-  assert.equal(JSON.parse(first).$id, "https://github.com/1solomonwakhungu/superset-agent-orchestrator/config/mcp-tools.schema.json");
+  const parsed: unknown = JSON.parse(first);
+  assert.equal(
+    (parsed as { $id?: unknown }).$id,
+    "https://github.com/1solomonwakhungu/superset-agent-orchestrator/config/mcp-tools.schema.json",
+  );
 });
 
 function assignment(): Record<string, unknown> {

@@ -192,7 +192,7 @@ test("assignments without exact identities can never accept a result", async () 
     assert.equal(intents[0]?.status, "bound");
     await assert.rejects(
       () => store.updateLaunch("pre-key-1", "reserved"),
-      /A bound launch cannot be rebound or regressed/,
+      /Invalid launch transition: bound -> reserved/,
       "an upgraded file keeps its bindings immutable",
     );
   });

@@ -46,16 +46,17 @@ The real discovery integration smoke test is excluded from default runs. Set
 | Command | Purpose |
 | --- | --- |
 | `npm test` | Full suite, no coverage instrumentation |
-| `npm run test:coverage` | Builds, then runs the full suite with enforced coverage thresholds |
+| `npm run test:coverage` | Runs the full suite with c8 coverage over all source files and enforced thresholds |
 | `npm run test:race` | Builds, then repeats the concurrency-sensitive suites (`RACE_REPEATS`, default 10) |
-| `npm run check` | Type checking with no emit |
-| `npm run verify` | `check` then `test:coverage` then `test:race` (both test commands build first) |
+| `npm run check` | Formatting, type-aware lint, typecheck, production build, JS tests, coverage, Python tests, and schema no-diff |
+| `npm run verify` | Full `check`, then the repeated race suite |
 
 ## Coverage threshold
 
-`npm run test:coverage` fails below **95% lines, 88% branches, 92% functions**
-over `src/**`. Tests, build output, and scripts are excluded so the number
-reflects product code only.
+`npm run test:coverage` uses c8's all-files instrumentation and fails below
+**85% lines/statements, 80% branches, and 65% functions** over the complete
+source tree, including modules not imported by a test. The current verifier run
+measured 97.05% lines/statements, 89.51% branches, and 95.52% functions.
 
 The thresholds sit just under the measured values rather than at them. The
 margin is deliberate and bounded:
