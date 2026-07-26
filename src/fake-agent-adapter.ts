@@ -35,6 +35,7 @@ export class FakeAgentAdapter implements AgentAdapter {
   ) {}
 
   async launch(request: LaunchRequest): Promise<RunHandle> {
+    await request.revalidateWorkspace();
     const existing = this.runsByIdempotencyKey.get(request.idempotencyKey);
     if (existing !== undefined) return existing;
     const script = this.scripts[this.launches.length];

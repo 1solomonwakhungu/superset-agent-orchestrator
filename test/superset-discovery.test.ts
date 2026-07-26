@@ -31,7 +31,7 @@ async function expectCode(adapter: SupersetDiscoveryAdapter, code: string): Prom
 
 test("discovers valid local projects, workspaces, host, and presets", async () => {
   const fake = fakeRunner();
-  const result = await new SupersetDiscoveryAdapter({ runner: fake.runner }).discover();
+  const result = await new SupersetDiscoveryAdapter({ executable: process.execPath, runner: fake.runner }).discover();
   assert.equal(result.version, "1.16.1");
   assert.equal(result.host.hostId, "host-local");
   assert.equal(result.projects[0]?.id, "project-1");
@@ -41,40 +41,39 @@ test("discovers valid local projects, workspaces, host, and presets", async () =
 });
 
 test("normalizes malformed JSON and schema mismatches", async () => {
-  await expectCode(new SupersetDiscoveryAdapter({ runner: fakeRunner({ "projects list --local --json": "not-json" }).runner }), "MALFORMED_RESPONSE");
-  await expectCode(new SupersetDiscoveryAdapter({ runner: fakeRunner({ "status --json": { ...host, hostId: null } }).runner }), "MALFORMED_RESPONSE");
+  await expectCode(new SupersetDiscoveryAdapter({ executable: process.execPath, runner: fakeRunner({ "projects list --local --json": "not-json" }).runner }), "MALFORMED_RESPONSE");
+  await expectCode(new SupersetDiscoveryAdapter({ executable: process.execPath, runner: fakeRunner({ "status --json": { ...host, hostId: null } }).runner }), "MALFORMED_RESPONSE");
 });
 
 test("normalizes unavailable and timed-out commands", async () => {
-  await expectCode(new SupersetDiscoveryAdapter({ runner: fakeRunner({ "status --json": new SupersetDiscoveryError("UNAVAILABLE", "offline") }).runner }), "UNAVAILABLE");
-  await expectCode(new SupersetDiscoveryAdapter({ runner: fakeRunner({ "--version": new SupersetDiscoveryError("TIMED_OUT", "late") }).runner }), "TIMED_OUT");
+  await expectCode(new SupersetDiscoveryAdapter({ executable: process.execPath, runner: fakeRunner({ "status --json": new SupersetDiscoveryError("UNAVAILABLE", "offline") }).runner }), "UNAVAILABLE");
+  await expectCode(new SupersetDiscoveryAdapter({ executable: process.execPath, runner: fakeRunner({ "--version": new SupersetDiscoveryError("TIMED_OUT", "late") }).runner }), "TIMED_OUT");
 });
 
 test("rejects ambiguous duplicate identities", async () => {
   const fake = fakeRunner({ "agents list --local --json": [presets[0], { ...presets[0], label: "Duplicate" }] });
-  await expectCode(new SupersetDiscoveryAdapter({ runner: fake.runner }), "AMBIGUOUS");
+  await expectCode(new SupersetDiscoveryAdapter({ executable: process.execPath, runner: fake.runner }), "AMBIGUOUS");
 });
 
 test("rejects remote-only workspaces returned by local routing", async () => {
   const fake = fakeRunner({ "workspaces list --local --json": [{ ...workspaces[0], hostId: "host-remote" }] });
-  await expectCode(new SupersetDiscoveryAdapter({ runner: fake.runner }), "REMOTE_ONLY");
+  await expectCode(new SupersetDiscoveryAdapter({ executable: process.execPath, runner: fake.runner }), "REMOTE_ONLY");
 });
 
 test("rejects unsupported CLI versions before discovery", async () => {
   const fake = fakeRunner({ "--version": "superset 0.9.0\n" });
-  await expectCode(new SupersetDiscoveryAdapter({ runner: fake.runner }), "UNSUPPORTED_VERSION");
+  await expectCode(new SupersetDiscoveryAdapter({ executable: process.execPath, runner: fake.runner }), "UNSUPPORTED_VERSION");
   assert.deepEqual(fake.calls, [["--version"]]);
 });
 
-test("passes executable and values without shell interpolation", async () => {
-  const executable = "superset; touch /tmp/not-created";
+test("passes a pinned executable and fixed argument vectors to the runner", async () => {
   const calls: Array<{ executable: string; args: readonly string[] }> = [];
   const fake = fakeRunner();
-  const runner: ProcessRunner = async (actualExecutable, args, timeoutMs) => {
-    calls.push({ executable: actualExecutable, args });
-    return fake.runner(actualExecutable, args, timeoutMs);
+  const runner: ProcessRunner = async (executable, args, timeoutMs) => {
+    calls.push({ executable, args });
+    return fake.runner(executable, args, timeoutMs);
   };
-  await new SupersetDiscoveryAdapter({ executable, runner }).discover();
-  assert.equal(calls[0]?.executable, executable);
+  await new SupersetDiscoveryAdapter({ executable: process.execPath, runner }).discover();
+  assert.equal(calls[0]?.executable, process.execPath);
   assert.deepEqual(calls[0]?.args, ["--version"]);
 });
