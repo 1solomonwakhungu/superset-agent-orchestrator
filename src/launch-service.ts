@@ -163,7 +163,8 @@ export class LaunchService {
         let recovered: RunHandle | undefined;
         try {
           recovered = validRunHandle(await this.adapter.findByIdempotencyKey(assignment.idempotencyKey));
-        } catch {
+        } catch (lookupError) {
+          if (!(lookupError instanceof MalformedRunHandleError)) throw lookupError;
           await this.recordLaunchFailure(assignment, "Provider returned a malformed run handle");
           return;
         }
@@ -205,6 +206,7 @@ export class LaunchService {
 }
 
 export class InjectedCrash extends Error {}
+class MalformedRunHandleError extends Error {}
 
 function stableId(kind: string, key: string): string {
   return `${kind}_${createHash("sha256").update(`${kind}\0${key}`).digest("hex").slice(0, 24)}`;
@@ -246,7 +248,7 @@ function validRunHandle(value: unknown): RunHandle | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "object" || value === null || typeof (value as { runId?: unknown }).runId !== "string"
     || (value as { runId: string }).runId.length === 0) {
-    throw new Error("Provider returned a malformed run handle");
+    throw new MalformedRunHandleError("Provider returned a malformed run handle");
   }
   return { runId: (value as { runId: string }).runId };
 }

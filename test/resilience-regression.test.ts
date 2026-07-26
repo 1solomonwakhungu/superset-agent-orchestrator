@@ -74,6 +74,26 @@ test("malformed provider handles fail closed and release dispatch locks", async 
   });
 });
 
+test("transient recovery lookup failures remain retryable", async () => {
+  await fixture(async (path) => {
+    const adapter: AgentAdapter = {
+      findByIdempotencyKey: async () => { throw new Error("provider unavailable"); },
+      launch: async () => { throw new Error("launch transport unavailable"); },
+      status: async () => { throw new Error("unused"); }, result: async () => undefined,
+      cancel: async () => undefined, resumeMetadata: async () => undefined,
+    };
+    const service = new LaunchService(new DurableStore(path), adapter);
+    const accepted = await service.accept(request);
+
+    await assert.rejects(service.dispatchPending(), /provider unavailable/);
+
+    const assignment = await new DurableStore(path).assignmentForResult(accepted.assignmentId);
+    assert.equal(assignment.status, "launching");
+    assert.equal(assignment.error, undefined);
+    assert.deepEqual((await readdir(join(path, ".."))).filter((name) => name.includes(".lock") || name.endsWith(".tmp")), []);
+  });
+});
+
 test("concurrent dispatchers atomically claim one provider launch", async () => {
   await fixture(async (path) => {
     let launches = 0;
