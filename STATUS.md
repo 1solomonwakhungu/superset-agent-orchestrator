@@ -1,5 +1,19 @@
 # Status
 
+## PER-347 PR #82 final hardening integration, 2026-07-26
+
+- Integrated current `origin/main` `764f0a7e227e5e8bae863a5846e4ec063efd3d33`
+  into PR #82's fake-provider hardening commit
+  `62c4cd8e2b9a2a920d33cd0b54bc8a0918182208` without conflicts.
+- Verified workspace-root containment, immediate pre-spawn workspace revalidation,
+  durable provider cancellation and restart recovery, and the expanded provider
+  response buffer after integrating current main.
+- Verification passed: focused fake-provider suite 15/15; full `npm run check`
+  with 434 passing and one explicit live-smoke skip; race suite 10/10.
+- Resolved final review blockers by applying the configured provider timeout to
+  lifecycle cancellation and preserving adapter protocol-error classification;
+  focused lifecycle/MCP tests passed 75/75, followed by full checks and 10/10 races.
+
 ## PER-369 deterministic result reporting, 2026-07-26
 
 - Added canonical JSON and human-readable Markdown baseline report generation,
