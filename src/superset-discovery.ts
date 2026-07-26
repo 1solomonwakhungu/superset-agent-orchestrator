@@ -80,10 +80,12 @@ export const runProcess: ProcessRunner = async (executable, args, timeoutMs) => 
   const stdoutFile = await open(stdoutPath, "wx", 0o600);
   try {
     const result = await new Promise<Omit<ProcessResult, "stdout">>((resolve, reject) => {
+      const useProcessGroup = process.platform !== "win32";
       const child = spawn(executable, [...args], {
         shell: false,
         stdio: ["ignore", stdoutFile.fd, "pipe"],
         windowsHide: true,
+        detached: useProcessGroup,
         env: childEnvironment(),
       });
       let stderr = "";
@@ -95,9 +97,16 @@ export const runProcess: ProcessRunner = async (executable, args, timeoutMs) => 
         clearTimeout(timer);
         action();
       };
+      const terminate = () => {
+        try {
+          process.kill(useProcessGroup ? -child.pid! : child.pid!, "SIGKILL");
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+        }
+      };
       const append = (current: string, chunk: Buffer) => {
         if (Buffer.byteLength(current) + chunk.byteLength > MAX_OUTPUT_BYTES) {
-          child.kill("SIGKILL");
+          terminate();
           finish(() => reject(new SupersetDiscoveryError(
             "MALFORMED_RESPONSE",
             "Superset discovery output exceeded the supported limit",
@@ -119,7 +128,7 @@ export const runProcess: ProcessRunner = async (executable, args, timeoutMs) => 
       })));
 
       const timer = setTimeout(() => {
-        child.kill("SIGKILL");
+        terminate();
         finish(() => reject(new SupersetDiscoveryError(
           "TIMED_OUT",
           `Superset discovery exceeded ${timeoutMs} ms`,
