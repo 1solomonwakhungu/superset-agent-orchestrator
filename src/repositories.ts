@@ -39,7 +39,15 @@ export function createRepositories(database: DatabaseSync): Repositories {
     sessions: { get: get("sessions", session), insert: (r) => { database.prepare("INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(r.id, r.assignmentId, r.backend, r.backendSessionId, r.attempt, r.state, r.createdAt, r.updatedAt, r.terminalAt); }, listByAssignment: (id) => database.prepare("SELECT * FROM sessions WHERE assignment_id = ? ORDER BY attempt").all(id).map(session) },
     results: { get: get("results", result), insert: (r) => { database.prepare("INSERT INTO results VALUES (?, ?, ?, ?, ?, ?, ?)").run(r.id, r.sessionId, r.body, JSON.stringify(r.artifacts), r.stopReason, r.capturedAt, r.payloadPurgedAt); }, getBySession: (id) => { const row = database.prepare("SELECT * FROM results WHERE session_id = ?").get(id); return row ? result(row) : undefined; } },
     events: { get: get("events", event), append: (r) => { database.prepare("INSERT INTO events(id, aggregate_type, aggregate_id, event_type, actor, data_json, occurred_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(r.id, r.aggregateType, r.aggregateId, r.eventType, r.actor, JSON.stringify(r.data), r.occurredAt); return event(database.prepare("SELECT * FROM events WHERE id = ?").get(r.id)); }, list: (type, id) => database.prepare("SELECT * FROM events WHERE aggregate_type = ? AND aggregate_id = ? ORDER BY sequence").all(type, id).map(event) },
-    workspaceLeases: { get: get("workspace_leases", lease), insert: (r) => { database.prepare("INSERT INTO workspace_leases VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(r.id, r.workspaceId, r.mode, r.ownerSessionId, r.ownerBatchId, r.acquiredAt, r.expiresAt, r.releasedAt); }, activeWriter: (id) => { const row = database.prepare("SELECT * FROM workspace_leases WHERE workspace_id = ? AND mode = 'writer' AND released_at IS NULL").get(id); return row ? lease(row) : undefined; } },
+    workspaceLeases: { get: get("workspace_leases", lease), insert: (r) => {
+      if (r.mode === "writer") throw new Error("Writer leases require fenced acquisition");
+      database.prepare(`INSERT INTO workspace_leases
+        (id, workspace_id, mode, owner_session_id, owner_batch_id, acquired_at, expires_at, released_at,
+          state, heartbeat_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(r.id, r.workspaceId, r.mode, r.ownerSessionId, r.ownerBatchId, r.acquiredAt, r.expiresAt,
+          r.releasedAt, r.releasedAt === null ? "active" : "released", r.acquiredAt);
+    }, activeWriter: (id) => { const row = database.prepare("SELECT * FROM workspace_leases WHERE workspace_id = ? AND mode = 'writer' AND state != 'released'").get(id); return row ? lease(row) : undefined; } },
     idempotency: { get: (scope, key) => { const row = database.prepare("SELECT * FROM idempotency_records WHERE scope = ? AND key = ?").get(scope, key); return row ? idempotency(row) : undefined; }, insert: (r) => { database.prepare("INSERT INTO idempotency_records VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(r.scope, r.key, r.requestHash, JSON.stringify(r.response), r.resourceType, r.resourceId, r.createdAt, r.expiresAt); } },
   };
 }
