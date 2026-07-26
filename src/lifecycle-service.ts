@@ -165,10 +165,11 @@ export class LifecycleService {
     }
     const handle = { runId: intent.worker.runId };
     if (!await this.store.claimCancellationDelivery(sessionId)) {
+      const worker = await this.store.worker(sessionId);
       return {
         sessionId,
-        status: "canceling",
-        ...(intent.worker.stopReason === undefined ? {} : { stopReason: intent.worker.stopReason }),
+        status: worker?.status ?? "canceling",
+        ...(worker?.stopReason === undefined ? {} : { stopReason: worker.stopReason }),
         changed: true,
       };
     }

@@ -173,6 +173,9 @@ test("local cancellation prevents a dispatcher holding stale acceptance from lau
     await service.dispatchPending();
     assert.deepEqual(launches, []);
     assert.equal((await store.worker(accepted.sessionId))?.status, "canceled");
+    assert.equal(store.snapshot().assignments[0]?.status, "failed");
+    assert.equal(store.snapshot().auditEvents.at(-1)?.type, "launch_failed");
+    assert.equal(store.snapshot().auditEvents.at(-1)?.error, "Launch was canceled before provider dispatch");
   });
 });
 

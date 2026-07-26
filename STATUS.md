@@ -138,6 +138,9 @@
   111/111; the complete quality gate passed 343/344 TypeScript tests with one
   declared live smoke skip, 6 Python tests with one model-dependent skip, schema
   no-diff, provenance, and research verification.
+- Final review hardening also makes normal cancellation result failures retryable,
+  reports a deadline that wins the delivery-claim race from durable state, and
+  records `launch_failed` evidence when local cancellation beats stale dispatch.
 
 ## PER-351 performance and load validation
 

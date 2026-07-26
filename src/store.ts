@@ -839,7 +839,8 @@ export class DurableStore {
           candidate.result = options.result;
         }
         (candidate.lateObservations ??= []).push({ observedAt: at.toISOString(), status, retainedResult });
-        if (!options.keepReconciliationPending) delete candidate.lifecycleReconcilePending;
+        if (options.keepReconciliationPending) candidate.lifecycleReconcilePending = true;
+        else delete candidate.lifecycleReconcilePending;
         delete candidate.cancellationDeliveryPending;
         delete candidate.cancellationDeliveryClaimed;
         return;
@@ -848,7 +849,8 @@ export class DurableStore {
       claimed = true;
       candidate.status = status;
       candidate.completedAt = at.toISOString();
-      if (!options.keepReconciliationPending) delete candidate.lifecycleReconcilePending;
+      if (options.keepReconciliationPending) candidate.lifecycleReconcilePending = true;
+      else delete candidate.lifecycleReconcilePending;
       delete candidate.cancellationDeliveryPending;
       delete candidate.cancellationDeliveryClaimed;
       if (options.result !== undefined) candidate.result = options.result;
@@ -1187,10 +1189,23 @@ export class DurableStore {
       if (assignment === undefined) throw new Error(`Unknown assignment: ${assignmentId}`);
       const lifecycleWorker = this.state.workers.find(({ id }) => id === assignment.sessionId);
       if (status === "launching" && lifecycleWorker !== undefined && DurableStore.isTerminal(lifecycleWorker.status)) {
+        const previousState = structuredClone(this.state);
         assignment.status = "failed";
         assignment.updatedAt = event.occurredAt;
         assignment.error = "Launch was canceled before provider dispatch";
-        await this.persist();
+        this.state.auditEvents.push({
+          ...event,
+          type: "launch_failed",
+          error: assignment.error,
+        });
+        if (securityAudit !== undefined) this.appendSecurityAuditToState(securityAudit, new Date(event.occurredAt));
+        try {
+          await this.persist();
+        } catch (error) {
+          this.state = previousState;
+          this.rebuildIndexes();
+          throw error;
+        }
         return { assignment: structuredClone(assignment), transitioned: false };
       }
       if (event.assignmentId !== assignmentId) throw new Error("Launch event assignment does not match its target");

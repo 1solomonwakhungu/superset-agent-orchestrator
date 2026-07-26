@@ -607,11 +607,15 @@ test("terminal provider status settles cancellation when result retrieval fails"
   const created = await store.createBatch("missing-result", "client", [{ agent: "codex", task: "work" }]);
   const id = created.sessions[0]!.id;
   await store.bindWorkerRun(id, "run-1");
+  let resultCalls = 0;
   const service = new LifecycleService(store, stub({
     cancellation: "supported",
     cancel: async () => ({ status: "accepted" as const }),
     status: async (handle) => ({ ...handle, status: "cancelled" as const, updatedAt: "2026-07-26T00:00:00.000Z" }),
-    result: async () => { throw new Error("result endpoint offline"); },
+    result: async () => {
+      if (resultCalls++ === 0) throw new Error("result endpoint offline");
+      return { status: "cancelled" as const, output: "eventual cancellation result" };
+    },
   }));
 
   const outcome = accepted(await service.cancelSession(id));
@@ -620,6 +624,26 @@ test("terminal provider status settles cancellation when result retrieval fails"
   assert.equal(worker?.status, "canceled");
   assert.equal((worker?.result as AgentResultClaim).status, "malformed");
   assert.equal((worker?.result as AgentResultClaim).completeness, "malformed");
+  assert.equal(worker?.lifecycleReconcilePending, true);
+  await service.reconcileTimedOutResults();
+  const reconciled = await store.worker(id);
+  assert.equal((reconciled?.result as AgentResultClaim).output, "eventual cancellation result");
+  assert.equal(reconciled?.lifecycleReconcilePending, undefined);
+}));
+
+test("cancellation reports a deadline that wins before delivery is claimed", async () => harness(async (store) => {
+  const created = await store.createBatch("delivery-deadline-race", "client", [{ agent: "codex", task: "work" }]);
+  const id = created.sessions[0]!.id;
+  await store.bindWorkerRun(id, "run-1");
+  await store.setWorkerDeadline(id, new Date("2026-07-26T00:00:00.000Z"));
+  store.claimCancellationDelivery = async (workerId) => {
+    await store.expireWorker(workerId, { at: new Date("2026-07-26T00:00:01.000Z") });
+    return false;
+  };
+
+  const outcome = accepted(await new LifecycleService(store, stub({ cancellation: "supported" })).cancelSession(id));
+  assert.equal(outcome.status, "failed");
+  assert.equal(outcome.stopReason, "deadline_exceeded");
 }));
 
 test("deadline reconciliation keeps terminal status when result retrieval fails", async () => harness(async (store) => {
