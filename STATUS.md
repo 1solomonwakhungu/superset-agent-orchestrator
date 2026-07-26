@@ -1,5 +1,17 @@
 # Status
 
+## PER-346 companion parallel discovery cleanup, 2026-07-26
+
+- Added coordinated cancellation for parallel Superset discovery commands so one
+  failure terminates and awaits sibling process trees before returning.
+- Added an offline real-process regression proving descendants cannot survive a
+  sibling command failure and perform delayed writes.
+- Verification passed: focused platform compatibility 6/6; typecheck; lint;
+  full `npm run check` with 384 tests, one explicit live-smoke skip, coverage,
+  Python, schema, provenance, and research gates; and 10/10 race runs.
+- Next: deliver the companion PR into PR #29's feature branch without marking
+  PER-346 Done.
+
 ## PER-346 final integration, 2026-07-26
 
 - Integrated PR #29, including companion PR #68, with current `main` at `12a6d918d46d8f3242c07b65da150abed8231371`.
