@@ -62,7 +62,7 @@ test("fake Superset proves completion, failure, cancellation, restart recovery, 
       assert.equal(result.batchId, acceptedLaunch.batchId);
       assert.equal(result.sessionId, acceptedLaunch.sessionId);
       assert.equal(result.workspaceId, `workspace-${index}`);
-      assert.equal(result.workspacePath, `/workspaces/workspace-${index}`);
+      assert.equal(result.workspacePath, `/workspaces/${index}`);
       assert.equal(result.attempt, 1);
       assert.match(result.attemptId, /^attempt_/);
       assert.match(result.runId, /^fake-/);
