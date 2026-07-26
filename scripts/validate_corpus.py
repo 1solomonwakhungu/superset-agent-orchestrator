@@ -51,6 +51,105 @@ def _object(value: Any, context: str) -> dict[str, Any]:
     return value
 
 
+def _closed(value: Any, required: set[str], context: str) -> dict[str, Any]:
+    result = _object(value, context)
+    if set(result) != required:
+        raise CorpusValidationError(
+            f"{context}: fields must be exactly {sorted(required)}"
+        )
+    return result
+
+
+def _non_empty_string(value: Any, context: str) -> None:
+    if not isinstance(value, str) or not value:
+        raise CorpusValidationError(f"{context}: expected a non-empty string")
+
+
+def _validate_evidence(evidence: dict[str, Any], context: str) -> None:
+    evidence_type = evidence.get("type")
+    if evidence_type == "exact":
+        value = _closed(evidence, {"type", "value"}, context)["value"]
+        _non_empty_string(value, f"{context}.value")
+    elif evidence_type == "json-semantic":
+        _closed(evidence, {"type", "value"}, context)
+    elif evidence_type in {"python-unittest", "javascript-cases"}:
+        typed = _closed(evidence, {"type", "entrypoint", "cases"}, context)
+        _non_empty_string(typed["entrypoint"], f"{context}.entrypoint")
+        if not isinstance(typed["cases"], list) or not typed["cases"]:
+            raise CorpusValidationError(f"{context}.cases: expected a non-empty list")
+        for index, case_value in enumerate(typed["cases"]):
+            case = _object(case_value, f"{context}.cases[{index}]")
+            if set(case) not in ({"args", "returns"}, {"args", "raises"}):
+                raise CorpusValidationError(f"{context}.cases[{index}]: invalid fields")
+            if not isinstance(case["args"], list):
+                raise CorpusValidationError(f"{context}.cases[{index}].args: expected a list")
+            if "raises" in case:
+                _non_empty_string(case["raises"], f"{context}.cases[{index}].raises")
+    elif evidence_type == "generated-sentinel":
+        typed = _closed(
+            evidence,
+            {"type", "generator", "target_tokens", "seed", "sentinel", "expected"},
+            context,
+        )
+        if typed["generator"] != "counter-v1":
+            raise CorpusValidationError(f"{context}.generator: unsupported generator")
+        if not isinstance(typed["target_tokens"], int) or typed["target_tokens"] < 2:
+            raise CorpusValidationError(f"{context}.target_tokens: invalid count")
+        if not isinstance(typed["seed"], int) or typed["seed"] < 0:
+            raise CorpusValidationError(f"{context}.seed: invalid seed")
+        for field in ("sentinel", "expected"):
+            _non_empty_string(typed[field], f"{context}.{field}")
+            if " " in typed[field]:
+                raise CorpusValidationError(f"{context}.{field}: spaces are not allowed")
+    elif evidence_type == "tool-call-sequence":
+        typed = _closed(
+            evidence,
+            {"type", "tools", "calls", "independent_calls_may_commute"},
+            context,
+        )
+        if not isinstance(typed["tools"], list) or not typed["tools"]:
+            raise CorpusValidationError(f"{context}.tools: expected a non-empty list")
+        if not isinstance(typed["calls"], list) or not typed["calls"]:
+            raise CorpusValidationError(f"{context}.calls: expected a non-empty list")
+        if not isinstance(typed["independent_calls_may_commute"], bool):
+            raise CorpusValidationError(f"{context}.independent_calls_may_commute: expected bool")
+        tool_names: set[str] = set()
+        for index, tool_value in enumerate(typed["tools"]):
+            tool = _closed(tool_value, {"type", "function"}, f"{context}.tools[{index}]")
+            if tool["type"] != "function":
+                raise CorpusValidationError(f"{context}.tools[{index}].type: expected function")
+            function = _closed(
+                tool["function"],
+                {"name", "description", "parameters"},
+                f"{context}.tools[{index}].function",
+            )
+            _non_empty_string(function["name"], f"{context}.tools[{index}].function.name")
+            _non_empty_string(function["description"], f"{context}.tools[{index}].function.description")
+            _object(function["parameters"], f"{context}.tools[{index}].function.parameters")
+            tool_names.add(function["name"])
+        for index, call_value in enumerate(typed["calls"]):
+            call = _object(call_value, f"{context}.calls[{index}]")
+            if set(call) not in ({"function"}, {"condition", "function"}):
+                raise CorpusValidationError(f"{context}.calls[{index}]: invalid fields")
+            function = _closed(
+                call["function"], {"name", "arguments"}, f"{context}.calls[{index}].function"
+            )
+            if function["name"] not in tool_names:
+                raise CorpusValidationError(f"{context}.calls[{index}]: unknown tool")
+            _object(function["arguments"], f"{context}.calls[{index}].function.arguments")
+            if "condition" in call:
+                condition = _closed(
+                    call["condition"],
+                    {"path", "operator", "value"},
+                    f"{context}.calls[{index}].condition",
+                )
+                _non_empty_string(condition["path"], f"{context}.calls[{index}].condition.path")
+                if condition["operator"] not in {">=", ">", "==", "<", "<="}:
+                    raise CorpusValidationError(f"{context}.calls[{index}].condition.operator: invalid")
+    else:
+        raise CorpusValidationError(f"{context}: unsupported evidence type {evidence_type!r}")
+
+
 def _validate_item(item: dict[str, Any], expected_domain: str, context: str) -> None:
     unknown = set(item) - ITEM_FIELDS
     missing = REQUIRED_FIELDS - set(item)
@@ -84,7 +183,7 @@ def _validate_item(item: dict[str, Any], expected_domain: str, context: str) -> 
     evidence = [field for field in ("gold", "verifier") if field in item]
     if len(evidence) != 1:
         raise CorpusValidationError(f"{context}: exactly one of gold or verifier is required")
-    _object(item[evidence[0]], f"{context}.{evidence[0]}")
+    _validate_evidence(_object(item[evidence[0]], f"{context}.{evidence[0]}"), f"{context}.{evidence[0]}")
 
 
 def validate_corpus(corpus_dir: Path) -> dict[str, int]:

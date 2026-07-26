@@ -16,6 +16,13 @@ assert SPEC and SPEC.loader
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
+MATERIALIZER_SPEC = importlib.util.spec_from_file_location(
+    "materialize_long_context", ROOT / "scripts" / "materialize_long_context.py"
+)
+assert MATERIALIZER_SPEC and MATERIALIZER_SPEC.loader
+MATERIALIZER = importlib.util.module_from_spec(MATERIALIZER_SPEC)
+MATERIALIZER_SPEC.loader.exec_module(MATERIALIZER)
+
 
 class ValidateCorpusTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -89,6 +96,27 @@ class ValidateCorpusTest(unittest.TestCase):
         self.rewrite_manifest()
         with self.assertRaisesRegex(MODULE.CorpusValidationError, "invalid JSON"):
             MODULE.validate_corpus(self.corpus)
+
+    def test_rejects_unknown_evidence_type(self) -> None:
+        self.mutate_first(
+            "reasoning.jsonl", lambda item: item.update(gold={"type": "bogus"})
+        )
+        with self.assertRaisesRegex(MODULE.CorpusValidationError, "unsupported evidence type"):
+            MODULE.validate_corpus(self.corpus)
+
+    def test_rejects_incomplete_evidence(self) -> None:
+        self.mutate_first(
+            "reasoning.jsonl", lambda item: item.update(gold={"type": "exact"})
+        )
+        with self.assertRaisesRegex(MODULE.CorpusValidationError, "fields must be exactly"):
+            MODULE.validate_corpus(self.corpus)
+
+    def test_counter_v1_is_deterministic_and_exact_length(self) -> None:
+        first = MATERIALIZER.materialize(4096, 365, "LC4096", "value-4096")
+        second = MATERIALIZER.materialize(4096, 365, "LC4096", "value-4096")
+        self.assertEqual(first, second)
+        self.assertEqual(len(first.split(" ")), 4096)
+        self.assertTrue(first.endswith("LC4096 value-4096"))
 
 
 if __name__ == "__main__":
