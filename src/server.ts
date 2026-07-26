@@ -98,12 +98,20 @@ async function main(): Promise<void> {
 
   const providerExecutable = process.env.SUPERSET_ORCHESTRATOR_PROVIDER_EXECUTABLE;
   const providerArgs = JSON.parse(process.env.SUPERSET_ORCHESTRATOR_PROVIDER_ARGS ?? "[]") as string[];
+  const providerTimeoutMs = Number(process.env.SUPERSET_ORCHESTRATOR_PROVIDER_TIMEOUT_MS ?? 30_000);
   const provider = providerExecutable === undefined ? undefined : new SupersetProcessAdapter({
     executable: providerExecutable,
     args: providerArgs,
-    timeoutMs: Number(process.env.SUPERSET_ORCHESTRATOR_PROVIDER_TIMEOUT_MS ?? 30_000),
+    timeoutMs: providerTimeoutMs,
   });
-  const lifecycle = new LifecycleService(store, provider ?? unsupportedBackend);
+  const lifecycle = new LifecycleService(
+    store,
+    provider ?? unsupportedBackend,
+    undefined,
+    undefined,
+    undefined,
+    provider === undefined ? undefined : providerTimeoutMs,
+  );
   let lifecycleSweep: Promise<void> | undefined;
   const deadlineTimer = setInterval(() => {
     if (lifecycleSweep !== undefined) return;
@@ -264,6 +272,14 @@ async function main(): Promise<void> {
           continue;
         }
         try {
+          const state = await provider.status({ runId: assignment.runId });
+          if (state.status !== "queued" && state.status !== "running") {
+            items.push({
+              session_id: sessionId,
+              error: contractError("INVALID_TRANSITION", "A terminal session cannot be canceled"),
+            });
+            continue;
+          }
           const cancellation = await lifecycle.cancelSession(sessionId, "user_requested", reason);
           if ("error" in cancellation) {
             items.push({
