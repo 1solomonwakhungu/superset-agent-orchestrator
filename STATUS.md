@@ -1,5 +1,19 @@
 # Status
 
+## PER-345 canonical hash and PER-342 tool compatibility, 2026-07-26
+
+- Strictly schema-normalized launch requests before versioned canonical hashing;
+  unknown top-level and nested fields now fail closed.
+- Added equality and inequality coverage for optional normalization, key order,
+  every semantic field, and the intentionally excluded idempotency key.
+- Reviewed the five PER-342 lifecycle tools into an exact post-merge snapshot
+  without relaxing the command, path, filesystem, process, or plugin deny policy.
+- Verification: focused security/idempotency tests passed 54/54; `npm run verify`
+  passed 167 tests with 1 explicit optional skip, coverage, Python 3/3, and schema
+  checks; `git diff --check` passed.
+- Next: open and merge the companion PR into the primary PER-345 branch. Linear
+  remains owned by the final integrator.
+
 ## PER-345 companion state/auth/hash hardening, 2026-07-26
 
 - Added fail-closed absolute state-path checks for a dedicated owner-only `0700`

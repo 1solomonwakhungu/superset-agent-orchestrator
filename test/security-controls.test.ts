@@ -33,6 +33,7 @@ import {
   assertRegisteredToolNames,
   assertSafeToolNames,
   REGISTERED_TOOL_NAMES,
+  PER_342_LIFECYCLE_TOOL_NAMES,
 } from "../src/tool-security.js";
 
 const HOST = "host-local";
@@ -790,6 +791,10 @@ test("T-TOOLS-01 the registered surface excludes destructive and generic capabil
     "recent_sessions", "reopen_batch", "recovery_diagnostics",
   ]);
   assertRegisteredToolNames([...REGISTERED_TOOL_NAMES]);
+  assert.deepEqual([...PER_342_LIFECYCLE_TOOL_NAMES], [
+    "sessions_cancel", "batches_cancel", "batches_wait", "sessions_set_deadline", "deadlines_enforce",
+  ]);
+  assertRegisteredToolNames([...REGISTERED_TOOL_NAMES, ...PER_342_LIFECYCLE_TOOL_NAMES]);
 
   for (const excluded of [
     "shell", "run_shell", "exec_command", "terminal_open", "bash_run", "eval_script",
@@ -804,6 +809,9 @@ test("T-TOOLS-01 the registered surface excludes destructive and generic capabil
 
 test("T-TOOLS-02 the reviewed snapshot fails on any registration drift", () => {
   assert.throws(() => assertRegisteredToolNames([...REGISTERED_TOOL_NAMES, "batches_cancel"]), SecurityError);
+  assert.throws(() => assertRegisteredToolNames([
+    ...REGISTERED_TOOL_NAMES, ...PER_342_LIFECYCLE_TOOL_NAMES.slice(1),
+  ]), SecurityError);
   assert.throws(() => assertRegisteredToolNames(REGISTERED_TOOL_NAMES.slice(1)), SecurityError);
   assert.throws(() => assertRegisteredToolNames([...REGISTERED_TOOL_NAMES, "shell_exec"]), SecurityError);
 });
