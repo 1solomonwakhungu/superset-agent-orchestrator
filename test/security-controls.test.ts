@@ -688,6 +688,21 @@ test("T-AUDIT-02 loading fails closed when the audit suffix is truncated", async
   });
 });
 
+test("T-AUDIT-02 loading fails closed when a non-empty audit trail loses its head", async () => {
+  await withStore(async (path) => {
+    const store = new DurableStore(path);
+    await store.appendSecurityAudit({
+      requesterId: "client-1", operation: "sessions_launch", decision: "allowed",
+      reasonCode: "launch_intent", correlationId: "operation-1",
+    });
+    const tampered = JSON.parse(await readFile(path, "utf8")) as DurableState;
+    delete tampered.securityAuditHead;
+    await writeFile(path, JSON.stringify(tampered), "utf8");
+
+    await assert.rejects(new DurableStore(path).reconcile(), /Security audit integrity failure at sequence 2/);
+  });
+});
+
 test("T-AUDIT-02 loading fails closed when a controlled launch loses its entire audit trail", async () => {
   await withStore(async (path) => {
     const store = new DurableStore(path);
