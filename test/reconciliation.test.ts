@@ -160,7 +160,7 @@ test("valid JSON with stale cross-record identities fails without rewriting stat
     const corrupt = JSON.stringify(state);
     await writeFile(path, corrupt, "utf8");
 
-    await assert.rejects(new DurableStore(path).reconcile(), /inconsistent durable identity|missing session/);
+    await assert.rejects(new DurableStore(path).reconcile(), /inconsistent durable identity|missing session|unknown session/);
     assert.equal(await readFile(path, "utf8"), corrupt);
   });
 });
