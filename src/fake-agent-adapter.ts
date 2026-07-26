@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import type {
   AgentAdapter,
   LaunchRequest,
@@ -27,6 +28,7 @@ export class FakeAgentAdapter implements AgentAdapter {
   readonly cancellations: Array<{ runId: string; reason?: string }> = [];
   private readonly runs = new Map<string, FakeRun>();
   private readonly runsByIdempotencyKey = new Map<string, RunHandle>();
+  private readonly requestsByIdempotencyKey = new Map<string, ComparableLaunchRequest>();
   private nextRunId = 1;
 
   constructor(
@@ -37,7 +39,13 @@ export class FakeAgentAdapter implements AgentAdapter {
   async launch(request: LaunchRequest): Promise<RunHandle> {
     await request.revalidateWorkspace();
     const existing = this.runsByIdempotencyKey.get(request.idempotencyKey);
-    if (existing !== undefined) return existing;
+    if (existing !== undefined) {
+      const original = this.requestsByIdempotencyKey.get(request.idempotencyKey);
+      if (!isDeepStrictEqual(original, comparableRequest(request))) {
+        throw new Error("Idempotency key was already used for a different launch request");
+      }
+      return existing;
+    }
     const script = this.scripts[this.launches.length];
     if (script === undefined) throw new Error("No fake run script available");
     this.validateScript(script);
@@ -47,6 +55,7 @@ export class FakeAgentAdapter implements AgentAdapter {
     const handle = { runId };
     this.runs.set(runId, { script, position: 0, resultAvailable: false });
     this.runsByIdempotencyKey.set(request.idempotencyKey, handle);
+    this.requestsByIdempotencyKey.set(request.idempotencyKey, comparableRequest(request));
     return handle;
   }
 
@@ -106,4 +115,16 @@ export class FakeAgentAdapter implements AgentAdapter {
       throw new Error("Fake run script cannot transition away from a terminal status");
     }
   }
+}
+
+type ComparableLaunchRequest = Omit<LaunchRequest, "revalidateWorkspace">;
+
+function comparableRequest(request: LaunchRequest): ComparableLaunchRequest {
+  return structuredClone({
+    idempotencyKey: request.idempotencyKey,
+    prompt: request.prompt,
+    workspacePath: request.workspacePath,
+    environment: request.environment,
+    ...(request.resume === undefined ? {} : { resume: request.resume }),
+  });
 }

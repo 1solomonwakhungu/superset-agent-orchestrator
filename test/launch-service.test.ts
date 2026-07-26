@@ -277,7 +277,8 @@ test("asynchronous launch returns after acceptance without waiting for the adapt
       cancel: async () => undefined,
       resumeMetadata: async () => undefined,
     };
-    const service = new LaunchService(new DurableStore(path), adapter, authorizer);
+    const store = new DurableStore(path);
+    const service = new LaunchService(store, adapter, authorizer);
 
     const accepted = await service.launch(request);
     assert.equal(accepted.status, "accepted");
@@ -286,12 +287,8 @@ test("asynchronous launch returns after acceptance without waiting for the adapt
     assert.equal((JSON.parse(await readFile(path, "utf8")) as DurableState).assignments[0]?.status, "launching");
 
     releaseLaunch();
-    let status: string | undefined;
-    for (let attempt = 0; attempt < 100 && status !== "launched"; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      status = (JSON.parse(await readFile(path, "utf8")) as DurableState).assignments[0]?.status;
-    }
-    assert.equal(status, "launched");
+    await service.dispatchPending();
+    assert.equal((JSON.parse(await readFile(path, "utf8")) as DurableState).assignments[0]?.status, "launched");
   });
 });
 
@@ -387,17 +384,19 @@ test("retries transient background dispatch failure without another launch reque
       if (attempts === 1) throw new Error("transient storage error");
       return pending();
     };
+    const recordLaunchEvent = store.recordLaunchEvent.bind(store);
+    let markLaunched: (() => void) | undefined;
+    const launched = new Promise<void>((resolve) => { markLaunched = resolve; });
+    store.recordLaunchEvent = async (...args) => {
+      const assignment = await recordLaunchEvent(...args);
+      if (assignment.assignment.status === "launched") markLaunched?.();
+      return assignment;
+    };
     const service = new LaunchService(store, adapter, authorizer, () => new Date(), () => undefined, 5);
     await service.launch(request);
 
-    let launched = false;
-    for (let attempt = 0; attempt < 100 && !launched; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      const state = JSON.parse(await readFile(path, "utf8")) as DurableState;
-      launched = state.assignments[0]?.status === "launched";
-    }
-    assert.equal(launched, true);
-    await service.close();
+    await launched;
+    assert.equal((JSON.parse(await readFile(path, "utf8")) as DurableState).assignments[0]?.status, "launched");
     assert.equal(adapter.launches.length, 1);
     assert.ok(attempts >= 2);
     await service.stop();
@@ -471,10 +470,10 @@ test("recovers without duplicate work after crashes across every launch boundary
       const interrupted = new LaunchService(new DurableStore(path), adapter, authorizer, () => new Date(), crash);
 
       if (boundary === "after_acceptance") {
-        await assert.rejects(interrupted.accept(request), InjectedCrash);
+        await assert.rejects(interrupted.accept(request), InjectedCrash, boundary);
       } else {
         await interrupted.accept(request);
-        await assert.rejects(interrupted.dispatchPending(), InjectedCrash);
+        await assert.rejects(interrupted.dispatchPending(), InjectedCrash, boundary);
       }
 
       const restarted = new LaunchService(new DurableStore(path), adapter, authorizer);
