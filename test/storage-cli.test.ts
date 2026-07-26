@@ -17,9 +17,11 @@ test("storage CLI exports state and reports full integrity", async () => {
   storage.close();
   try {
     const integrity = await execute(process.execPath, ["dist/src/storage-cli.js", "integrity-check", "--database", database]);
-    assert.equal(JSON.parse(integrity.stdout).ok, true);
+    const report: unknown = JSON.parse(integrity.stdout);
+    assert.equal((report as { ok: boolean }).ok, true);
     await execute(process.execPath, ["dist/src/storage-cli.js", "export", "--database", database, "--output", output]);
-    assert.equal(JSON.parse(await readFile(output, "utf8")).format, "superset-agent-orchestrator-export");
+    const exported: unknown = JSON.parse(await readFile(output, "utf8"));
+    assert.equal((exported as { format: string }).format, "superset-agent-orchestrator-export");
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 

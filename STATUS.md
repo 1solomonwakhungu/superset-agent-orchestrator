@@ -300,3 +300,13 @@ PER-336 merge-readiness review fixes are complete locally.
 - Discovery fixture recording now pseudonymizes commands and arguments and replaces environment values.
 - Verification: clean `npm ci` passed with 2 pre-existing moderate audit findings; build and typecheck passed; 110 tests ran with 109 passing, 0 failing, and 1 optional live-discovery skip; schema generation, compatibility probe, PER-323 routing verification, and `git diff --check` passed.
 - Next: commit, push, and verify PR 26 exact-head checks and merge state. Do not merge; independent verifier owns merge.
+
+PER-336 is reconciled with the repository quality gates from `cbd44e1`.
+
+- Preserved the storage CLI, discovery recorder, compatibility report, platform declaration, and all format, type-aware lint, typecheck, build, coverage, Python, and schema gates while resolving generated lock metadata.
+- Existing prior schemas now undergo exact schema and foreign-key validation before migration; rejected registries remain at their original ledger version.
+- Verified backups now pass full page, foreign-key, ledger, and canonical-schema checks before rollback starts.
+- Invalid negative, non-finite, or infinite retention durations fail before the registry opens.
+- Recorded discovery remains deterministic while live discovery requires explicit smoke opt-in or the required-live setting.
+- Verification: clean `npm ci` passed with 2 pre-existing moderate advisories; focused persistence tests passed 18/18; `npm run check` passed formatting, ESLint, typecheck, build, 119 tests (118 pass, 0 fail, 1 optional live skip), coverage, Python 3/3, and schema no-diff; `git diff --check` passed.
+- Next: commit and push the current-main integration, verify exact-head Quality and Compatibility checks and review threads, then leave PR 26 unmerged for independent verification.

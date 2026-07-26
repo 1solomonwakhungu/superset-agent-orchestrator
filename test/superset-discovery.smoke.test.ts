@@ -40,7 +40,7 @@ function fieldNames(value: unknown): string[] {
   const names = new Set<string>();
   for (const record of records) {
     if (record !== null && typeof record === "object") {
-      for (const name of Object.keys(record)) names.add(name);
+      for (const name of Object.keys(record as Record<string, unknown>)) names.add(name);
     }
   }
   return [...names].sort();
@@ -74,9 +74,12 @@ test("recorded Superset CLI responses match supported discovery schemas", async 
 
 const executablePath = resolveSupersetExecutable();
 const required = liveDiscoveryRequired();
-const skip = executablePath === null && !required
-  ? `Superset executable not found on PATH; recorded discovery coverage still ran. Set ${REQUIRE_LIVE_VARIABLE}=1 to make this a failure.`
-  : false;
+const smokeEnabled = process.env.SUPERSET_DISCOVERY_SMOKE === "1";
+const skip = !required && !smokeEnabled
+  ? `requires explicit SUPERSET_DISCOVERY_SMOKE=1 opt-in; recorded discovery coverage still ran. Set ${REQUIRE_LIVE_VARIABLE}=1 to require live discovery.`
+  : executablePath === null && !required
+    ? `Superset executable not found on PATH; recorded discovery coverage still ran. Set ${REQUIRE_LIVE_VARIABLE}=1 to make this a failure.`
+    : false;
 
 // Runs only against a real installation. An executable that exists but
 // misbehaves still fails here; only a genuinely absent executable is skipped.

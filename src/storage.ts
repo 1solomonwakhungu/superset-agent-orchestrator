@@ -154,7 +154,7 @@ function inspectIntegrity(database: DatabaseSync): IntegrityReport {
   try {
     report.databaseErrors = (database.prepare("PRAGMA integrity_check").all() as { integrity_check: string }[])
       .map(({ integrity_check }) => integrity_check).filter((message) => message !== "ok");
-    report.foreignKeyErrors = database.prepare("PRAGMA foreign_key_check").all() as Record<string, unknown>[];
+    report.foreignKeyErrors = database.prepare("PRAGMA foreign_key_check").all();
     validateSchema(database, report);
   } catch (error) {
     report.databaseErrors.push((error as Error).message);
@@ -173,6 +173,12 @@ export class OrchestratorStorage {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.resultRetentionDays = options.resultRetentionDays ?? 30;
     this.idempotencyRetentionDays = options.idempotencyRetentionDays ?? 7;
+    if (!Number.isFinite(this.resultRetentionDays) || this.resultRetentionDays < 0) {
+      throw new Error("resultRetentionDays must be a finite non-negative number");
+    }
+    if (!Number.isFinite(this.idempotencyRetentionDays) || this.idempotencyRetentionDays < 0) {
+      throw new Error("idempotencyRetentionDays must be a finite non-negative number");
+    }
     this.database = new DatabaseSync(path);
     try {
       this.database.exec("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
@@ -188,6 +194,10 @@ export class OrchestratorStorage {
         validateSchema(this.database, preMigrationReport, version);
         if (preMigrationReport.schemaErrors.length > 0) {
           throw new Error(`schema validation failed before migration: ${preMigrationReport.schemaErrors.join("; ")}`);
+        }
+        const preMigrationForeignKeyErrors = this.database.prepare("PRAGMA foreign_key_check").all();
+        if (preMigrationForeignKeyErrors.length > 0) {
+          throw new Error(`foreign key validation failed before migration: ${preMigrationForeignKeyErrors.length} violation(s)`);
         }
       }
       if (path !== ":memory:") this.database.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;");
@@ -311,8 +321,10 @@ export class OrchestratorStorage {
     this.database.exec(`VACUUM INTO '${destination.replaceAll("'", "''")}'`);
     const verification = new DatabaseSync(destination, { readOnly: true });
     try {
-      const result = verification.prepare("PRAGMA integrity_check").get() as { integrity_check: string };
-      if (result.integrity_check !== "ok") throw new Error(`Backup integrity check failed: ${result.integrity_check}`);
+      const report = inspectIntegrity(verification);
+      if (!report.ok) {
+        throw new Error(`Backup integrity check failed: ${[...report.databaseErrors, ...report.schemaErrors].join("; ")}`);
+      }
     } finally { verification.close(); }
   }
 
