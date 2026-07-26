@@ -1026,6 +1026,7 @@ export class DurableStore {
     batch: Batch;
     workers: Worker[];
     events: LaunchAuditEvent[];
+    securityAudits: SecurityAuditInput[];
   }): Promise<{ assignments: Assignment[]; created: boolean }> {
     return this.withLock(async () => {
       await this.load();
@@ -1035,8 +1036,11 @@ export class DurableStore {
       batchSchema.parse(input.batch);
       input.events.forEach((auditEvent) => auditEventSchema.parse(auditEvent));
       if (input.workers.length !== input.assignments.length
-        || input.workers.some((worker, index) => worker.sessionId !== input.assignments[index]?.sessionId)) {
-        throw new Error("Launch batch workers must match assignments in order");
+        || input.events.length !== input.assignments.length
+        || input.securityAudits.length !== input.assignments.length
+        || input.workers.some((worker, index) => worker.sessionId !== input.assignments[index]?.sessionId)
+        || input.events.some((event, index) => event.assignmentId !== input.assignments[index]?.id)) {
+        throw new Error("Launch batch evidence must match assignments in order");
       }
       const existing = input.assignments.map((assignment) =>
         this.state.assignments.find(({ idempotencyKey }) => idempotencyKey === assignment.idempotencyKey));
@@ -1056,13 +1060,22 @@ export class DurableStore {
       if (this.state.batches.some(({ id }) => id === input.batch.id)) {
         throw new Error("A batch idempotency key was reused with different assignments");
       }
-      this.state.sessions.push(...input.sessions);
-      this.state.batches.push(input.batch);
-      this.state.assignments.push(...input.assignments);
-      this.state.workers.push(...input.workers);
-      this.state.auditEvents.push(...input.events);
-      this.rebuildIndexes();
-      await this.persist();
+      const previousState = structuredClone(this.state);
+      try {
+        this.state.sessions.push(...input.sessions);
+        this.state.batches.push(input.batch);
+        this.state.assignments.push(...input.assignments);
+        this.state.workers.push(...input.workers);
+        this.state.auditEvents.push(...input.events);
+        input.securityAudits.forEach((audit, index) =>
+          this.appendSecurityAuditToState(audit, new Date(input.events[index]!.occurredAt)));
+        this.rebuildIndexes();
+        await this.persist();
+      } catch (error) {
+        this.state = previousState;
+        this.rebuildIndexes();
+        throw error;
+      }
       return { assignments: structuredClone(input.assignments), created: true };
     });
   }
@@ -1162,6 +1175,14 @@ export class DurableStore {
           worker.runId = event.runId;
         }
         if (event.error !== undefined) assignment.error = this.redaction.text(event.error);
+        if (event.errorCode !== undefined) assignment.errorCode = event.errorCode;
+        if (status === "failed") {
+          const worker = this.state.workers.find(({ id }) => id === assignment.sessionId);
+          if (worker === undefined) throw new Error(`Missing lifecycle worker for assignment: ${assignmentId}`);
+          worker.status = "failed";
+          worker.stopReason = "launch_error";
+          worker.completedAt = event.occurredAt;
+        }
         if (existingEvent === undefined) this.state.auditEvents.push({
           ...event,
           ...(event.error === undefined ? {} : { error: this.redaction.text(event.error) }),
@@ -1172,14 +1193,6 @@ export class DurableStore {
         this.state = previousState;
         this.rebuildIndexes();
         throw error;
-      }
-      if (event.errorCode !== undefined) assignment.errorCode = event.errorCode;
-      if (status === "failed") {
-        const worker = this.state.workers.find(({ id }) => id === assignment.sessionId);
-        if (worker === undefined) throw new Error(`Missing lifecycle worker for assignment: ${assignmentId}`);
-        worker.status = "failed";
-        worker.stopReason = "launch_error";
-        worker.completedAt = event.occurredAt;
       }
       return { assignment: structuredClone(assignment), transitioned: true };
     });

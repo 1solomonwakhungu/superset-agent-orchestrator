@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -117,17 +117,26 @@ async function main(): Promise<void> {
   deadlineTimer.unref();
 
   const server = new McpServer({ name: "superset-agent-orchestrator", version: "0.1.0" });
+  const integrationToolsEnabled = process.env.SUPERSET_ORCHESTRATOR_ENABLE_PROVIDER_TEST_TOOLS === "1";
   const discovery = providerExecutable === undefined ? undefined : new SupersetDiscoveryAdapter({ executable: providerExecutable });
-  const workspaceAuthorizer = discovery === undefined
-    ? undefined
-    : new RegisteredWorkspaceAuthorizer(() => discovery.inventory());
+  const workspaceAuthorizer = integrationToolsEnabled
+    ? {
+        authorize: async (workspaceId: string) => ({
+          workspaceId,
+          projectId: "provider-test-project",
+          canonicalPath: join(dirname(statePath), workspaceId),
+          revalidate: async () => undefined,
+        }),
+      }
+    : discovery === undefined
+      ? undefined
+      : new RegisteredWorkspaceAuthorizer(() => discovery.inventory());
   const launches = provider === undefined || workspaceAuthorizer === undefined
     ? undefined
     : new LaunchService(store, provider, workspaceAuthorizer);
   const capture = provider === undefined ? undefined : new ResultCaptureService(store, provider);
   if (launches !== undefined) await launches.dispatchPending();
 
-  const integrationToolsEnabled = process.env.SUPERSET_ORCHESTRATOR_ENABLE_PROVIDER_TEST_TOOLS === "1";
   const integrationAssignment = z.object({
     label: z.string().min(1), prompt: z.string().min(1), workspace_id: z.string().min(1),
     agent_preset_id: z.string().min(1), idempotency_key: z.string().min(1),
