@@ -415,11 +415,12 @@ export class LaunchService {
           await this.recordLaunchFailure(assignment, error.message, "INVALID_PROVIDER_RESPONSE", grant.projectId);
           return;
         }
-        if (!hasErrorCode(error, "LAUNCH_REJECTED")) throw error;
+        if (hasErrorCode(error, "PROVIDER_UNAVAILABLE")) throw error;
+        const errorCode = hasErrorCode(error, "LAUNCH_REJECTED") ? error.code : "LAUNCH_REJECTED";
         await this.recordLaunchFailure(
           assignment,
           this.store.safeError(error),
-          error.code,
+          errorCode,
           grant.projectId,
         );
         return;
