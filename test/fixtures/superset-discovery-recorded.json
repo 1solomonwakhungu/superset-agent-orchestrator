@@ -1,0 +1,416 @@
+{
+  "recordedAt": "2000-01-01T00:00:00.000Z",
+  "recordedFromVersion": "1.16.1",
+  "note": "Recorded from a real local Superset CLI by scripts/record-discovery-fixture.mjs. Field names, types, and null/absent distinctions are verbatim; live values follow the strict privacy classification documented in docs/configuration-and-discovery.md.",
+  "responses": {
+    "--version": "1.16.1\n",
+    "status --json": {
+      "running": true,
+      "healthy": true,
+      "pid": 1,
+      "port": 40001,
+      "endpoint": "http://127.0.0.1:40001",
+      "organizationId": "00000000-0000-4000-8000-000000000001",
+      "hostId": "00000000000000000000000000000001",
+      "hostName": "recorded-hostname-1",
+      "uptimeSec": 1
+    },
+    "projects list --local --json": [
+      {
+        "id": "00000000-0000-4000-8000-000000000002",
+        "name": "recorded-name-1",
+        "slug": "recorded-slug-1",
+        "repoCloneUrl": null,
+        "githubRepositoryId": null,
+        "setUp": "yes",
+        "path": "/recorded/workspace-1"
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000003",
+        "name": "recorded-name-2",
+        "slug": "recorded-slug-2",
+        "repoCloneUrl": "https://github.com/recorded-org/recorded-repo-1",
+        "githubRepositoryId": null,
+        "setUp": "yes",
+        "path": "/recorded/workspace-2"
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000004",
+        "name": "recorded-name-3",
+        "slug": "recorded-slug-3",
+        "repoCloneUrl": "https://github.com/recorded-org/recorded-repo-2",
+        "githubRepositoryId": null,
+        "setUp": "yes",
+        "path": "/recorded/workspace-3"
+      }
+    ],
+    "workspaces list --local --json": [
+      {
+        "id": "00000000-0000-4000-8000-000000000005",
+        "organizationId": "00000000-0000-4000-8000-000000000001",
+        "projectId": "00000000-0000-4000-8000-000000000003",
+        "hostId": "00000000000000000000000000000001",
+        "name": "recorded-name-4",
+        "branch": "recorded-branch-1",
+        "type": "main",
+        "createdByUserId": "00000000-0000-4000-8000-000000000006",
+        "taskId": null,
+        "createdAt": "2000-01-01T00:00:01.000Z",
+        "updatedAt": "2000-01-01T00:00:01.000Z",
+        "worktreePath": "/recorded/workspace-2",
+        "worktreeExists": true,
+        "projectName": "recorded-projectname-1",
+        "hostName": "recorded-hostname-1"
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000007",
+        "organizationId": "00000000-0000-4000-8000-000000000001",
+        "projectId": "00000000-0000-4000-8000-000000000004",
+        "hostId": "00000000000000000000000000000001",
+        "name": "recorded-name-4",
+        "branch": "recorded-branch-1",
+        "type": "main",
+        "createdByUserId": "00000000-0000-4000-8000-000000000006",
+        "taskId": null,
+        "createdAt": "2000-01-01T00:00:02.000Z",
+        "updatedAt": "2000-01-01T00:00:02.000Z",
+        "worktreePath": "/recorded/workspace-3",
+        "worktreeExists": true,
+        "projectName": "recorded-projectname-2",
+        "hostName": "recorded-hostname-1"
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000008",
+        "organizationId": "00000000-0000-4000-8000-000000000001",
+        "projectId": "00000000-0000-4000-8000-000000000002",
+        "hostId": "00000000000000000000000000000001",
+        "name": "recorded-name-4",
+        "branch": "recorded-branch-1",
+        "type": "main",
+        "createdByUserId": "00000000-0000-4000-8000-000000000006",
+        "taskId": null,
+        "createdAt": "2000-01-01T00:00:03.000Z",
+        "updatedAt": "2000-01-01T00:00:03.000Z",
+        "worktreePath": "/recorded/workspace-1",
+        "worktreeExists": true,
+        "projectName": "recorded-projectname-3",
+        "hostName": "recorded-hostname-1"
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000009",
+        "organizationId": "00000000-0000-4000-8000-000000000001",
+        "projectId": "00000000-0000-4000-8000-000000000010",
+        "hostId": "00000000000000000000000000000001",
+        "name": "recorded-name-4",
+        "branch": "recorded-branch-1",
+        "type": "main",
+        "createdByUserId": null,
+        "taskId": null,
+        "createdAt": "2000-01-01T00:00:04.000Z",
+        "updatedAt": "2000-01-01T00:00:04.000Z",
+        "worktreePath": "/recorded/workspace-4",
+        "worktreeExists": true,
+        "projectName": "recorded-projectname-4",
+        "hostName": "recorded-hostname-1"
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000011",
+        "organizationId": "00000000-0000-4000-8000-000000000001",
+        "projectId": "00000000-0000-4000-8000-000000000003",
+        "hostId": "00000000000000000000000000000001",
+        "name": "recorded-name-5",
+        "branch": "recorded-branch-2",
+        "type": "worktree",
+        "createdByUserId": null,
+        "taskId": null,
+        "createdAt": "2000-01-01T00:00:05.000Z",
+        "updatedAt": "2000-01-01T00:00:05.000Z",
+        "worktreePath": "/recorded/workspace-5",
+        "worktreeExists": true,
+        "projectName": "recorded-projectname-1",
+        "hostName": "recorded-hostname-1"
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000012",
+        "organizationId": "00000000-0000-4000-8000-000000000001",
+        "projectId": "00000000-0000-4000-8000-000000000013",
+        "hostId": "00000000000000000000000000000001",
+        "name": "recorded-name-4",
+        "branch": "recorded-branch-1",
+        "type": "main",
+        "createdByUserId": null,
+        "taskId": null,
+        "createdAt": "2000-01-01T00:00:06.000Z",
+        "updatedAt": "2000-01-01T00:00:06.000Z",
+        "worktreePath": "/recorded/workspace-6",
+        "worktreeExists": true,
+        "projectName": "recorded-projectname-5",
+        "hostName": "recorded-hostname-1"
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000014",
+        "organizationId": "00000000-0000-4000-8000-000000000001",
+        "projectId": "00000000-0000-4000-8000-000000000003",
+        "hostId": "00000000000000000000000000000001",
+        "name": "recorded-name-6",
+        "branch": "recorded-branch-3",
+        "type": "worktree",
+        "createdByUserId": null,
+        "taskId": "00000000-0000-4000-8000-000000000015",
+        "createdAt": "2000-01-01T00:00:07.000Z",
+        "updatedAt": "2000-01-01T00:00:07.000Z",
+        "worktreePath": "/recorded/workspace-7",
+        "worktreeExists": true,
+        "projectName": "recorded-projectname-1",
+        "hostName": "recorded-hostname-1"
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000016",
+        "organizationId": "00000000-0000-4000-8000-000000000001",
+        "projectId": "00000000-0000-4000-8000-000000000013",
+        "hostId": "00000000000000000000000000000001",
+        "name": "recorded-name-7",
+        "branch": "recorded-branch-4",
+        "type": "worktree",
+        "createdByUserId": null,
+        "taskId": null,
+        "createdAt": "2000-01-01T00:00:08.000Z",
+        "updatedAt": "2000-01-01T00:00:08.000Z",
+        "worktreePath": "/recorded/workspace-8",
+        "worktreeExists": true,
+        "projectName": "recorded-projectname-5",
+        "hostName": "recorded-hostname-1"
+      }
+    ],
+    "agents list --local --json": [
+      {
+        "id": "00000000-0000-4000-8000-000000000017",
+        "presetId": "recorded-presetid-1",
+        "iconId": null,
+        "label": "recorded-label-1",
+        "command": "recorded-command-1",
+        "args": [
+          "recorded-arg-1"
+        ],
+        "promptTransport": "argv",
+        "promptArgs": [],
+        "env": {},
+        "order": 0
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000018",
+        "presetId": "recorded-presetid-2",
+        "iconId": null,
+        "label": "recorded-label-2",
+        "command": "recorded-command-2",
+        "args": [],
+        "promptTransport": "stdin",
+        "promptArgs": [],
+        "env": {},
+        "order": 1
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000019",
+        "presetId": "recorded-presetid-3",
+        "iconId": null,
+        "label": "recorded-label-3",
+        "command": "recorded-command-3",
+        "args": [
+          "recorded-arg-1"
+        ],
+        "promptTransport": "argv",
+        "promptArgs": [
+          "recorded-arg-1"
+        ],
+        "env": {},
+        "order": 2
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000020",
+        "presetId": "recorded-presetid-4",
+        "iconId": null,
+        "label": "recorded-label-4",
+        "command": "recorded-command-4",
+        "args": [
+          "recorded-arg-1"
+        ],
+        "promptTransport": "argv",
+        "promptArgs": [],
+        "env": {},
+        "order": 3
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000021",
+        "presetId": "recorded-presetid-5",
+        "iconId": null,
+        "label": "recorded-label-5",
+        "command": "recorded-command-5",
+        "args": [],
+        "promptTransport": "argv",
+        "promptArgs": [
+          "recorded-arg-1"
+        ],
+        "env": {},
+        "order": 4
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000022",
+        "presetId": "recorded-presetid-6",
+        "iconId": null,
+        "label": "recorded-label-6",
+        "command": "recorded-command-6",
+        "args": [],
+        "promptTransport": "argv",
+        "promptArgs": [
+          "recorded-arg-1"
+        ],
+        "env": {},
+        "order": 5
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000023",
+        "presetId": "recorded-presetid-7",
+        "iconId": null,
+        "label": "recorded-label-7",
+        "command": "recorded-command-7",
+        "args": [],
+        "promptTransport": "argv",
+        "promptArgs": [],
+        "env": {},
+        "order": 6
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000024",
+        "presetId": "recorded-presetid-8",
+        "iconId": null,
+        "label": "recorded-label-8",
+        "command": "recorded-command-8",
+        "args": [
+          "recorded-arg-1"
+        ],
+        "promptTransport": "argv",
+        "promptArgs": [
+          "recorded-arg-1"
+        ],
+        "env": {},
+        "order": 7
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000025",
+        "presetId": "recorded-presetid-9",
+        "iconId": null,
+        "label": "recorded-label-9",
+        "command": "recorded-command-9",
+        "args": [],
+        "promptTransport": "argv",
+        "promptArgs": [],
+        "env": {},
+        "order": 8
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000026",
+        "presetId": "recorded-presetid-10",
+        "iconId": null,
+        "label": "recorded-label-10",
+        "command": "recorded-command-10",
+        "args": [],
+        "promptTransport": "argv",
+        "promptArgs": [],
+        "env": {},
+        "order": 9
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000027",
+        "presetId": "recorded-presetid-11",
+        "iconId": null,
+        "label": "recorded-label-11",
+        "command": "recorded-command-1",
+        "args": [
+          "recorded-arg-1",
+          "recorded-arg-2",
+          "recorded-arg-3",
+          "recorded-arg-4",
+          "recorded-arg-5"
+        ],
+        "promptTransport": "argv",
+        "promptArgs": [],
+        "env": {},
+        "order": 10
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000028",
+        "presetId": "recorded-presetid-12",
+        "iconId": null,
+        "label": "recorded-label-12",
+        "command": "recorded-command-6",
+        "args": [
+          "recorded-arg-1",
+          "recorded-arg-2"
+        ],
+        "promptTransport": "argv",
+        "promptArgs": [
+          "recorded-arg-1"
+        ],
+        "env": {},
+        "order": 11
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000029",
+        "presetId": "recorded-presetid-12",
+        "iconId": null,
+        "label": "recorded-label-13",
+        "command": "recorded-command-6",
+        "args": [
+          "recorded-arg-1",
+          "recorded-arg-2"
+        ],
+        "promptTransport": "argv",
+        "promptArgs": [
+          "recorded-arg-1"
+        ],
+        "env": {},
+        "order": 12
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000030",
+        "presetId": "recorded-presetid-12",
+        "iconId": null,
+        "label": "recorded-label-14",
+        "command": "recorded-command-6",
+        "args": [
+          "recorded-arg-1",
+          "recorded-arg-2"
+        ],
+        "promptTransport": "argv",
+        "promptArgs": [
+          "recorded-arg-1"
+        ],
+        "env": {},
+        "order": 13
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000031",
+        "presetId": "recorded-presetid-12",
+        "iconId": null,
+        "label": "recorded-label-15",
+        "command": "recorded-command-6",
+        "args": [
+          "recorded-arg-1",
+          "recorded-arg-2"
+        ],
+        "promptTransport": "argv",
+        "promptArgs": [
+          "recorded-arg-1"
+        ],
+        "env": {},
+        "order": 14
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000032",
+        "presetId": "recorded-presetid-13",
+        "label": "recorded-label-16",
+        "command": "recorded-command-11"
+      }
+    ]
+  }
+}
