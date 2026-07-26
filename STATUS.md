@@ -10,6 +10,19 @@
   131 runnable TypeScript tests and 6 Python tests with one explicit skip.
 - Next: PR delivery, exact-head CI, merge, and merged-main readback.
 
+## PER-362 MiniCPM5 reproducible environment
+
+- Added a uv 0.8.3 lock for Python 3.12 targeting Linux x86-64 and macOS arm64.
+- Pinned MiniCPM5-1B, container bases, Python dependencies, MLX wheels, and
+  recorded llama.cpp/MLX source revisions.
+- Added deterministic fingerprint tooling and Linux/macOS environment capture.
+- Verified two independent 29-package frozen installs, 4/4 Python tests, and an
+  unprivileged Linux/amd64 image build plus environment-capture smoke test.
+- No model fingerprint result is claimed: overnight workers are prohibited from
+  loading or querying the model.
+- Remaining: capture a native Linux x86-64 host and run same-host fingerprints
+  on both targets using an authorized executor.
+
 ## PER-361 MiniCPM5 checkpoint provenance
 
 - Pinned the authoritative BF16 checkpoint and the published SFT, GGUF, and MLX
