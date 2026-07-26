@@ -679,7 +679,6 @@ locally.
   95.35% lines, and Python 3.11 tests 3/3; the focused 71-test suite passed 20
   consecutive runs (1,420/1,420), with schema no-diff, routing, Markdown lint,
   compileall, and `git diff --check` also passing.
-
 PER-347/PER-345 merge resolution is complete locally.
 
 - Preserved fake-provider batch, lifecycle, restart, typed-error, and exact
@@ -699,6 +698,10 @@ PER-347/PER-345 merge resolution is complete locally.
 - Merge verification: `npm run build` passed; focused security, launch,
   idempotency, fake-provider process/MCP, and result tests passed 88/88; focused
   lifecycle tests passed 40/40; conflict-marker and whitespace checks passed.
+- Latest concurrent PER-347 merge resolution preserves atomic batch acceptance
+  rollback, assignment/worker launch-failure transitions, hash-chained security
+  audits, typed provider errors, canonical workspace authorization, and lifecycle
+  synchronization. `npm run build` and 122 focused tests passed.
 
 PER-348 adversarial resilience regression coverage is complete locally.
 
@@ -854,3 +857,11 @@ PER-336 security hotfix is complete locally after insecure PR 26 merged as `8989
 - Follow-up PR 38 was opened at `2ae84ac`, then verifier review required committed no-overwrite concurrency coverage. New deterministic worker-barrier tests prove two simultaneous exports produce exactly one valid `0600` output and one refusal, while preexisting backup/export files and hard-link sources retain exact bytes and modes. The storage-focused 20/20 suite passed five consecutive runs.
 - Exact-head review then found missing ownership checks. Preexisting directories, registries, and sidecars now fail closed unless their UID matches the effective process UID where the platform exposes ownership; generated artifacts are explicitly ownership-tested.
 - Next: push the coverage follow-up to PR 38 and leave it unmerged for independent verification.
+
+## PER-347 final integration
+
+- Reconciled PR 33 and its merged provider-error companion with current main's workspace authorization, path security, redaction, audit-chain, and tool-surface controls.
+- Batch acceptance now authorizes canonical workspaces, writes one security audit per assignment atomically, preserves client-scoped idempotency, and persists complete typed provider errors before the durable write.
+- The gated production MCP fixture uses explicit canonical test workspaces; both fake-provider suites cover deterministic 100-session batches without weakening normal registered-workspace authorization.
+- Verification: `npm run check` passed with 0 failures, including formatting, ESLint, typecheck, build, TypeScript tests and coverage, Python tests (one optional skip), schema no-diff, provenance manifests, and the 28-work research contract. `git diff --check` passed.
+- Next: push the verified merge to PR 33, wait for exact-head checks, merge to main, and synchronize PER-347.
