@@ -22,6 +22,20 @@ export const REGISTERED_TOOL_NAMES = [
 
 export type RegisteredToolName = (typeof REGISTERED_TOOL_NAMES)[number];
 
+/** Exact additional surface introduced by the reviewed PER-342 lifecycle merge. */
+export const PER_342_LIFECYCLE_TOOL_NAMES = [
+  "sessions_cancel",
+  "batches_cancel",
+  "batches_wait",
+  "sessions_set_deadline",
+  "deadlines_enforce",
+] as const;
+
+const POST_PER_342_TOOL_NAMES = [
+  ...REGISTERED_TOOL_NAMES,
+  ...PER_342_LIFECYCLE_TOOL_NAMES,
+] as const;
+
 /**
  * Capabilities the threat model excludes from MVP: arbitrary command execution,
  * destructive workspace or repository mutation, raw filesystem or database access,
@@ -57,9 +71,12 @@ export function assertSafeToolNames(names: readonly string[]): void {
 /** Requires the registered surface to match the reviewed snapshot exactly. */
 export function assertRegisteredToolNames(names: readonly string[]): void {
   assertSafeToolNames(names);
-  const reviewed = [...REGISTERED_TOOL_NAMES].sort();
   const actual = [...names].sort();
-  if (actual.length !== reviewed.length || actual.some((name, index) => name !== reviewed[index])) {
+  const matchesReviewedSnapshot = [REGISTERED_TOOL_NAMES, POST_PER_342_TOOL_NAMES].some((snapshot) => {
+    const reviewed = [...snapshot].sort();
+    return actual.length === reviewed.length && actual.every((name, index) => name === reviewed[index]);
+  });
+  if (!matchesReviewedSnapshot) {
     throw new SecurityError(
       "POLICY_DENIED",
       `Registered tool surface requires security review: ${JSON.stringify(actual)}`,
@@ -68,3 +85,4 @@ export function assertRegisteredToolNames(names: readonly string[]): void {
 }
 
 assertSafeToolNames(REGISTERED_TOOL_NAMES);
+assertSafeToolNames(PER_342_LIFECYCLE_TOOL_NAMES);

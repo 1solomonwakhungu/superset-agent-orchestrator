@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { z } from "zod";
 import type { AgentAdapter, RunHandle } from "./agent-adapter.js";
 import type { DurableStore, LaunchIntent, WorkerAttribution } from "./store.js";
 import {
@@ -25,6 +26,17 @@ export interface AttributedLaunchRequest {
   workerId: string;
   attribution: WorkerAttribution;
 }
+
+const attributedLaunchRequestSchema = z.object({
+  idempotencyKey: z.string(),
+  prompt: z.string(),
+  workspaceId: z.string(),
+  resume: z.object({ adapter: z.string(), token: z.string() }).strict().optional(),
+  sessionId: z.string(),
+  batchId: z.string(),
+  workerId: z.string(),
+  attribution: z.object({ agent: z.string(), task: z.string() }).strict(),
+}).strict();
 
 export interface LaunchFailpoints {
   afterReservation?(): void;
@@ -203,14 +215,15 @@ export class LaunchCoordinator {
   }
 
   static requestHash(request: AttributedLaunchRequest): string {
+    const normalized = attributedLaunchRequestSchema.parse(request);
     const canonical = canonicalJson({
-      sessionId: request.sessionId,
-      batchId: request.batchId,
-      workerId: request.workerId,
-      attribution: request.attribution,
-      prompt: request.prompt,
-      workspaceId: request.workspaceId,
-      resume: request.resume ?? null,
+      sessionId: normalized.sessionId,
+      batchId: normalized.batchId,
+      workerId: normalized.workerId,
+      attribution: normalized.attribution,
+      prompt: normalized.prompt,
+      workspaceId: normalized.workspaceId,
+      resume: normalized.resume ?? null,
     });
     return createHash("sha256").update("launch-request:v1\0").update(canonical).digest("hex");
   }
