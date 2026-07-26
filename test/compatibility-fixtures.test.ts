@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { copyFile, readFile } from "node:fs/promises";
+import { copyFile, readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import test from "node:test";
@@ -30,10 +30,12 @@ interface FixtureFile {
 }
 
 interface FixtureManifest {
+  version: 1;
   provenance: "synthetic";
   sourceRevision: string;
   sourceRevisionMeaning: string;
   sanitized: true;
+  hash: { algorithm: "sha256"; canonicalization: "canonical-json-v1" };
   files: Record<string, string>;
 }
 
@@ -43,20 +45,45 @@ async function loadFixture(name: string): Promise<FixtureFile> {
   return JSON.parse(await readFile(join(fixtureDirectory, name), "utf8")) as FixtureFile;
 }
 
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value === "boolean" || typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "number" && Number.isFinite(value)) return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, nested]) => `${JSON.stringify(key)}:${canonicalJson(nested)}`).join(",")}}`;
+  }
+  throw new Error(`Unsupported canonical JSON value: ${typeof value}`);
+}
+
+const fixtureDigest = (value: unknown): string => createHash("sha256").update(canonicalJson(value)).digest("hex");
+
 test("compatibility fixture manifest binds synthetic provenance and sanitization", async () => {
   const manifest = JSON.parse(await readFile(join(fixtureDirectory, "manifest.json"), "utf8")) as FixtureManifest;
+  assert.deepEqual(Object.keys(manifest).sort(), ["files", "hash", "provenance", "sanitized", "sourceRevision", "sourceRevisionMeaning", "version"]);
+  assert.equal(manifest.version, 1);
   assert.equal(manifest.provenance, "synthetic");
   assert.match(manifest.sourceRevision, /^[0-9a-f]{40}$/);
   assert.equal(manifest.sourceRevisionMeaning, "PER-346 commit that introduced these synthetic cases");
   assert.equal(manifest.sanitized, true);
-  assert.deepEqual(Object.keys(manifest.files).sort(), [
-    "codex-responses.json", "durable-state-legacy.json", "durable-state-preidentity.json", "opencode-responses.json",
-  ]);
+  assert.deepEqual(manifest.hash, { algorithm: "sha256", canonicalization: "canonical-json-v1" });
+  const fixtureFiles = (await readdir(fixtureDirectory))
+    .filter((name) => name.endsWith(".json") && name !== "manifest.json").sort();
+  assert.deepEqual(Object.keys(manifest.files).sort(), fixtureFiles, "every compatibility fixture must have provenance");
   for (const [name, digest] of Object.entries(manifest.files)) {
     assert.match(digest, /^[0-9a-f]{64}$/);
-    const bytes = await readFile(join(fixtureDirectory, name));
-    assert.equal(createHash("sha256").update(bytes).digest("hex"), digest, name);
+    const fixture: unknown = JSON.parse(await readFile(join(fixtureDirectory, name), "utf8"));
+    assert.equal(fixtureDigest(fixture), digest, name);
+    assert.equal(fixtureDigest(JSON.parse(JSON.stringify(fixture, null, 4))), digest, `${name} formatting independence`);
   }
+});
+
+test("canonical fixture hashes change only for semantic mutations", () => {
+  const first = { z: [1, { b: true, a: null }], a: "value" };
+  const reordered = { a: "value", z: [1, { a: null, b: true }] };
+  assert.equal(fixtureDigest(first), fixtureDigest(reordered));
+  assert.notEqual(fixtureDigest(first), fixtureDigest({ ...reordered, a: "changed" }));
 });
 
 function runFixture(

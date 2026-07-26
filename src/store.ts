@@ -184,7 +184,7 @@ const sessionSchema = z.strictObject({
 const batchSchema = z.strictObject({
   id: z.string().min(1), name: z.string().min(1), sessionId: z.string().min(1),
   createdAt: z.iso.datetime(), updatedAt: z.iso.datetime(), idempotencyKey: z.string().min(1).optional(),
-  clientId: z.string().min(1).optional(), requestFingerprint: z.string().min(1).optional(),
+  clientId: z.string().min(1).optional(), requestFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 });
 const workerSchema = z.strictObject({
   id: z.string().min(1), batchId: z.string().min(1), sessionId: z.string().min(1),
@@ -203,7 +203,7 @@ const diagnosticSchema = z.strictObject({
   workerId: z.string().min(1), message: z.string().min(1), detectedAt: z.iso.datetime(),
 });
 const assignmentSchema = z.strictObject({
-  id: z.string().min(1), idempotencyKey: z.string().min(1), requestFingerprint: z.string().min(1),
+  id: z.string().min(1), idempotencyKey: z.string().min(1), requestFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   batchId: z.string().min(1), sessionId: z.string().min(1),
   status: z.enum(["accepted", "launching", "launched", "failed"]), attribution: attributionSchema,
   prompt: z.string().min(1), workspaceId: z.string().min(1).optional(), workspacePath: z.string().min(1),
@@ -270,31 +270,74 @@ const stateSchema = z.strictObject({
     attempts.add(result.attemptId);
   }
   const sessionIds = new Set(state.sessions.map(({ id }) => id));
-  const batchIds = new Set(state.batches.map(({ id }) => id));
+  const batchById = new Map(state.batches.map((batch) => [batch.id, batch]));
+  const workerById = new Map(state.workers.map((worker) => [worker.id, worker]));
   const assignmentById = new Map(state.assignments.map((assignment) => [assignment.id, assignment]));
+  const batchKeys = new Set<string>();
   for (const batch of state.batches) {
     if (!sessionIds.has(batch.sessionId)) context.addIssue({ code: "custom", message: `Batch ${batch.id} references an unknown session` });
+    if ((batch.clientId === undefined) !== (batch.requestFingerprint === undefined)
+      || (batch.idempotencyKey !== undefined && batch.clientId === undefined)) {
+      context.addIssue({ code: "custom", message: `Batch ${batch.id} has an incomplete idempotency identity` });
+    }
+    if (batch.idempotencyKey !== undefined && batch.clientId !== undefined) {
+      const key = `${batch.clientId}\0${batch.idempotencyKey}`;
+      if (batchKeys.has(key)) context.addIssue({ code: "custom", message: `Duplicate batch idempotency identity: ${batch.clientId}/${batch.idempotencyKey}` });
+      batchKeys.add(key);
+    }
   }
-  // Workers may be orphaned by an interrupted older write; reconciliation
-  // classifies that explicit recovery state instead of rejecting the document.
+  for (const worker of state.workers) {
+    const batch = batchById.get(worker.batchId);
+    const hasSession = sessionIds.has(worker.sessionId);
+    // Fully orphaned historical workers remain recoverable. Partial or
+    // contradictory relationships are corruption rather than recovery state.
+    if ((batch === undefined) !== !hasSession || (batch !== undefined && batch.sessionId !== worker.sessionId)) {
+      context.addIssue({ code: "custom", message: `Worker ${worker.id} has contradictory batch or session identity` });
+    }
+  }
+  for (const diagnostic of state.diagnostics) {
+    if (!workerById.has(diagnostic.workerId) || diagnostic.id !== `${diagnostic.kind}:${diagnostic.workerId}`) {
+      context.addIssue({ code: "custom", message: `Diagnostic ${diagnostic.id} has invalid worker identity` });
+    }
+  }
   for (const assignment of state.assignments) {
-    if (!batchIds.has(assignment.batchId) || !sessionIds.has(assignment.sessionId)) {
+    const batch = batchById.get(assignment.batchId);
+    if (batch === undefined || !sessionIds.has(assignment.sessionId) || batch.sessionId !== assignment.sessionId) {
       context.addIssue({ code: "custom", message: `Assignment ${assignment.id} has invalid batch or session identity` });
     }
   }
   for (const event of state.auditEvents) {
-    if (!assignmentById.has(event.assignmentId)) context.addIssue({ code: "custom", message: `Audit event ${event.id} references an unknown assignment` });
+    const assignment = assignmentById.get(event.assignmentId);
+    if (assignment === undefined) context.addIssue({ code: "custom", message: `Audit event ${event.id} references an unknown assignment` });
+    if (event.type === "execution_started" && (event.runId === undefined || event.runId !== assignment?.runId)) {
+      context.addIssue({ code: "custom", message: `Audit event ${event.id} has invalid run identity` });
+    }
+  }
+  for (const intent of state.launchIntents) {
+    const batch = batchById.get(intent.batchId);
+    const worker = workerById.get(intent.workerId);
+    // Reservations may precede durable session creation, and historical bound
+    // intents may predate workers. Once either relation exists, all identities
+    // must agree rather than partially linking unrelated durable records.
+    if ((batch !== undefined && (!sessionIds.has(intent.sessionId) || batch.sessionId !== intent.sessionId))
+      || (worker !== undefined && (batch === undefined || worker.batchId !== intent.batchId || worker.sessionId !== intent.sessionId
+        || worker.attribution.agent !== intent.attribution.agent || worker.attribution.task !== intent.attribution.task))) {
+      context.addIssue({ code: "custom", message: `Launch intent ${intent.idempotencyKey} has invalid durable identity` });
+    }
   }
   for (const result of state.capturedResults) {
     const assignment = assignmentById.get(result.assignmentId);
     if (assignment === undefined
+      || assignment.status !== "launched"
       || result.batchId !== assignment.batchId
       || result.sessionId !== assignment.sessionId
       || result.runId !== assignment.runId
       || result.workspaceId !== assignment.workspaceId
       || result.workspacePath !== assignment.workspacePath
       || result.attemptId !== assignment.attemptId
-      || result.attempt !== assignment.attempt) {
+      || result.attempt !== assignment.attempt
+      || result.attribution.agent !== assignment.attribution.agent
+      || result.attribution.task !== assignment.attribution.task) {
       context.addIssue({ code: "custom", message: `Captured result ${result.deliveryId} does not match its assignment` });
     }
   }
