@@ -1035,12 +1035,16 @@ export class DurableStore {
       input.workers.forEach((worker) => workerSchema.parse(worker));
       batchSchema.parse(input.batch);
       input.events.forEach((auditEvent) => auditEventSchema.parse(auditEvent));
-      if (input.workers.length !== input.assignments.length
+      if (input.sessions.length !== input.assignments.length
+        || input.workers.length !== input.assignments.length
         || input.events.length !== input.assignments.length
         || input.securityAudits.length !== input.assignments.length
-        || input.workers.some((worker, index) => worker.sessionId !== input.assignments[index]?.sessionId)
-        || input.events.some((event, index) => event.assignmentId !== input.assignments[index]?.id)) {
-        throw new Error("Launch batch evidence must match assignments in order");
+        || input.assignments.some((assignment, index) => input.sessions[index]?.id !== assignment.sessionId
+          || input.workers[index]?.sessionId !== assignment.sessionId
+          || input.events[index]?.assignmentId !== assignment.id
+          || input.events[index]?.type !== "launch_accepted"
+          || input.securityAudits[index]?.assignmentId !== assignment.id)) {
+        throw new Error("Launch batch records must match assignments in order");
       }
       const existing = input.assignments.map((assignment) =>
         this.state.assignments.find(({ idempotencyKey }) => idempotencyKey === assignment.idempotencyKey));
@@ -1067,13 +1071,16 @@ export class DurableStore {
         this.state.assignments.push(...input.assignments);
         this.state.workers.push(...input.workers);
         this.state.auditEvents.push(...input.events);
-        input.securityAudits.forEach((audit, index) =>
-          this.appendSecurityAuditToState(audit, new Date(input.events[index]!.occurredAt)));
         this.rebuildIndexes();
+        input.securityAudits.forEach((audit, index) => {
+          this.appendSecurityAuditToState(audit, new Date(input.events[index]!.occurredAt));
+        });
         await this.persist();
       } catch (error) {
-        this.state = previousState;
-        this.rebuildIndexes();
+        await this.load().catch(() => {
+          this.state = previousState;
+          this.rebuildIndexes();
+        });
         throw error;
       }
       return { assignments: structuredClone(input.assignments), created: true };
@@ -1157,7 +1164,8 @@ export class DurableStore {
         || existingEvent.type !== event.type
         || existingEvent.occurredAt !== event.occurredAt
         || existingEvent.runId !== event.runId
-        || existingEvent.error !== event.error)) {
+        || existingEvent.error !== event.error
+        || existingEvent.errorCode !== event.errorCode)) {
         throw new Error(`Launch audit event ID ${JSON.stringify(event.id)} conflicts with existing evidence`);
       }
       const allowed = assignment.status === "accepted" && (status === "launching" || status === "failed")
