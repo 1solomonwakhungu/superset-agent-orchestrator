@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, constants, fchmodSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { createRepositories, type Repositories } from "./repositories.js";
@@ -82,6 +82,98 @@ const migrations: Migration[] = [
 const sqlTimestamp = (date: Date): string => date.toISOString();
 const cutoff = (now: Date, days: number): string => new Date(now.getTime() - days * 86_400_000).toISOString();
 const durableTables = ["schema_migrations", "batches", "assignments", "sessions", "results", "events", "workspace_leases", "idempotency_records"];
+const sqliteSidecarSuffixes = ["-wal", "-shm", "-journal"];
+
+function preparePrivateDirectory(path: string): void {
+  let created = false;
+  try { mkdirSync(path, { recursive: false, mode: 0o700 }); created = true; }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+  const descriptor = openSync(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  try {
+    const stat = fstatSync(descriptor);
+    if (!stat.isDirectory()) throw new Error(`Storage directory must be a real directory: ${path}`);
+    if (created) fchmodSync(descriptor, 0o700);
+    else if ((stat.mode & 0o077) !== 0) throw new Error(`Preexisting storage directory must already be owner-only (0700): ${path}`);
+  } finally { closeSync(descriptor); }
+}
+
+function pathExists(path: string): boolean {
+  try { lstatSync(path); return true; }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+function validateOwnerOnlyFile(path: string): void {
+  let descriptor: number;
+  try { descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW); }
+  catch (error) { throw new Error(`Storage path must be a regular non-symlink file: ${path}`, { cause: error }); }
+  try {
+    const stat = fstatSync(descriptor);
+    if (!stat.isFile()) throw new Error(`Storage path must be a regular file: ${path}`);
+    if (stat.nlink !== 1) throw new Error(`Storage path must not have multiple hard links: ${path}`);
+    if ((stat.mode & 0o077) !== 0) throw new Error(`Storage path must already be owner-only (0600): ${path}`);
+  } finally { closeSync(descriptor); }
+}
+
+function secureCreatedFile(path: string): void {
+  const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const stat = fstatSync(descriptor);
+    if (!stat.isFile()) throw new Error(`Storage path must be a regular file: ${path}`);
+    if (stat.nlink !== 1) throw new Error(`Storage path must not have multiple hard links: ${path}`);
+    fchmodSync(descriptor, 0o600);
+  } finally { closeSync(descriptor); }
+}
+
+function validateOwnerOnlyDirectory(path: string): void {
+  const descriptor = openSync(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  try {
+    const stat = fstatSync(descriptor);
+    if (!stat.isDirectory()) throw new Error(`Storage directory must be a real directory: ${path}`);
+    if ((stat.mode & 0o077) !== 0) throw new Error(`Storage directory must be owner-only (0700): ${path}`);
+  } finally { closeSync(descriptor); }
+}
+
+function prepareRegistryPath(path: string): void {
+  preparePrivateDirectory(dirname(path));
+  if (!pathExists(path)) closeSync(openSync(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600));
+  validateOwnerOnlyFile(path);
+  for (const suffix of sqliteSidecarSuffixes) if (pathExists(`${path}${suffix}`)) validateOwnerOnlyFile(`${path}${suffix}`);
+}
+
+function secureSqliteFiles(path: string): void {
+  validateOwnerOnlyDirectory(dirname(path));
+  validateOwnerOnlyFile(path);
+  for (const suffix of sqliteSidecarSuffixes) if (pathExists(`${path}${suffix}`)) secureCreatedFile(`${path}${suffix}`);
+}
+
+function validateSecureSqliteFiles(path: string): void {
+  validateOwnerOnlyDirectory(dirname(path));
+  validateOwnerOnlyFile(path);
+  for (const suffix of sqliteSidecarSuffixes) if (pathExists(`${path}${suffix}`)) validateOwnerOnlyFile(`${path}${suffix}`);
+}
+
+function rejectLiveDestination(livePath: string, destination: string): void {
+  const resolvedLive = resolve(livePath);
+  const resolvedDestination = resolve(destination);
+  if ([resolvedLive, ...sqliteSidecarSuffixes.map((suffix) => `${resolvedLive}${suffix}`)].includes(resolvedDestination)) {
+    throw new Error("Destination must differ from the live registry and its SQLite sidecars");
+  }
+  if (pathExists(destination) && pathExists(livePath)) {
+    const targetType = lstatSync(destination);
+    if (targetType.isSymbolicLink()) throw new Error(`Destination must be a regular non-symlink file: ${destination}`);
+    const target = statSync(destination);
+    for (const source of [livePath, ...sqliteSidecarSuffixes.map((suffix) => `${livePath}${suffix}`)]) {
+      if (!pathExists(source)) continue;
+      const live = statSync(source);
+      if (live.dev === target.dev && live.ino === target.ino) throw new Error("Destination aliases the live registry or a SQLite sidecar");
+    }
+  }
+}
 
 function applyMigrations(database: DatabaseSync, targetVersion: number): void {
   database.exec("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL) STRICT;");
@@ -170,7 +262,6 @@ export class OrchestratorStorage {
   private readonly idempotencyRetentionDays: number;
 
   constructor(readonly path: string, options: StorageOptions = {}) {
-    if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.resultRetentionDays = options.resultRetentionDays ?? 30;
     this.idempotencyRetentionDays = options.idempotencyRetentionDays ?? 7;
     if (!Number.isFinite(this.resultRetentionDays) || this.resultRetentionDays < 0) {
@@ -179,6 +270,7 @@ export class OrchestratorStorage {
     if (!Number.isFinite(this.idempotencyRetentionDays) || this.idempotencyRetentionDays < 0) {
       throw new Error("idempotencyRetentionDays must be a finite non-negative number");
     }
+    if (path !== ":memory:") prepareRegistryPath(path);
     this.database = new DatabaseSync(path);
     try {
       this.database.exec("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
@@ -201,6 +293,7 @@ export class OrchestratorStorage {
         }
       }
       if (path !== ":memory:") this.database.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;");
+      if (path !== ":memory:") secureSqliteFiles(path);
       this.migrate();
       const schemaReport: IntegrityReport = { ok: false, databaseErrors: [], foreignKeyErrors: [], schemaErrors: [] };
       validateSchema(this.database, schemaReport);
@@ -275,6 +368,7 @@ export class OrchestratorStorage {
   }
 
   exportJson(path: string): void {
+    if (this.path !== ":memory:") rejectLiveDestination(this.path, path);
     const output = this.transaction(() => ({ format: "superset-agent-orchestrator-export", formatVersion: 1,
       schemaVersion: this.schemaVersion(), exportedAt: new Date().toISOString(),
       tables: Object.fromEntries(durableTables.map((table) => [table, this.database.prepare(`SELECT * FROM ${table}`).all()])) }));
@@ -282,11 +376,15 @@ export class OrchestratorStorage {
   }
 
   static exportJson(path: string, outputPath: string): void {
+    rejectLiveDestination(path, outputPath);
+    validateSecureSqliteFiles(path);
+    preparePrivateDirectory(dirname(outputPath));
+    if (pathExists(outputPath)) throw new Error("Export destination already exists");
     const database = new DatabaseSync(path, { readOnly: true });
     try {
       database.exec("BEGIN");
       const report = inspectIntegrity(database);
-      if (!report.ok) throw new Error(`Cannot export invalid registry: ${[...report.databaseErrors, ...report.schemaErrors].join("; ")}`);
+      if (!report.ok) throw new Error(`Cannot export invalid registry: ${[...report.databaseErrors, ...report.schemaErrors, ...report.foreignKeyErrors.map((error) => JSON.stringify(error))].join("; ")}`);
       const output = { format: "superset-agent-orchestrator-export", formatVersion: 1,
         schemaVersion: report.schemaVersion, exportedAt: new Date().toISOString(),
         tables: Object.fromEntries(durableTables.map((table) => [table, database.prepare(`SELECT * FROM ${table}`).all()])) };
@@ -303,6 +401,7 @@ export class OrchestratorStorage {
   static checkIntegrity(path: string): IntegrityReport {
     let database: DatabaseSync | undefined;
     try {
+      validateSecureSqliteFiles(path);
       database = new DatabaseSync(path, { readOnly: true });
       return inspectIntegrity(database);
     } catch (error) {
@@ -315,15 +414,17 @@ export class OrchestratorStorage {
   backup(path: string): void {
     if (this.path === ":memory:") throw new Error("File backup is unavailable for an in-memory registry");
     const destination = resolve(path);
-    if (destination === resolve(this.path)) throw new Error("Backup path must differ from the live registry");
-    mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
+    rejectLiveDestination(this.path, destination);
+    preparePrivateDirectory(dirname(destination));
+    if (pathExists(destination)) throw new Error("Backup destination already exists");
     this.database.exec("PRAGMA wal_checkpoint(FULL)");
     this.database.exec(`VACUUM INTO '${destination.replaceAll("'", "''")}'`);
+    secureCreatedFile(destination);
     const verification = new DatabaseSync(destination, { readOnly: true });
     try {
       const report = inspectIntegrity(verification);
       if (!report.ok) {
-        throw new Error(`Backup integrity check failed: ${[...report.databaseErrors, ...report.schemaErrors].join("; ")}`);
+        throw new Error(`Backup integrity check failed: ${[...report.databaseErrors, ...report.schemaErrors, ...report.foreignKeyErrors.map((error) => JSON.stringify(error))].join("; ")}`);
       }
     } finally { verification.close(); }
   }
@@ -339,11 +440,13 @@ export class OrchestratorStorage {
   }
 
   private static writeFileAtomically(path: string, contents: string): void {
-    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    preparePrivateDirectory(dirname(path));
+    if (pathExists(path)) throw new Error("Export destination already exists");
     const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
     try {
       writeFileSync(temporaryPath, contents, { encoding: "utf8", mode: 0o600, flag: "wx" });
-      renameSync(temporaryPath, path);
+      linkSync(temporaryPath, path);
+      rmSync(temporaryPath);
     } catch (error) { rmSync(temporaryPath, { force: true }); throw error; }
   }
 }

@@ -13,9 +13,13 @@ import {
   resolveSupersetExecutable,
 } from "./superset-executable.js";
 
+const FIXTURE_NOTE = "Recorded from a real local Superset CLI by scripts/record-discovery-fixture.mjs. Field names, types, and null/absent distinctions are verbatim; live values follow the strict privacy classification documented in docs/configuration-and-discovery.md.";
+const FIXTURE_RECORDED_AT = "2000-01-01T00:00:00.000Z";
+
 interface RecordedFixture {
   recordedAt: string;
   recordedFromVersion: string;
+  note: string;
   responses: Record<string, unknown>;
 }
 
@@ -70,6 +74,45 @@ test("recorded Superset CLI responses match supported discovery schemas", async 
   const result = await new SupersetDiscoveryAdapter({ runner }).discover();
   assertSupportedDiscovery(result, "recorded");
   assert.equal(result.version, fixture.recordedFromVersion);
+});
+
+test("recorded discovery fixture contains only pseudonymized execution values", () => {
+  const presets = fixture.responses["agents list --local --json"] as Array<{
+    command: string;
+    args?: string[];
+    promptArgs?: string[];
+    env?: Record<string, string>;
+  }>;
+  for (const preset of presets) {
+    assert.match(preset.command, /^recorded-command-\d+$/);
+    for (const argument of [...(preset.args ?? []), ...(preset.promptArgs ?? [])]) {
+      assert.match(argument, /^recorded-arg-\d+$/);
+    }
+    for (const value of Object.values(preset.env ?? {})) assert.match(value, /^recorded-value-\d+$/);
+  }
+  const executionValues = presets.flatMap(({ command, args = [], promptArgs = [], env = {} }) => [
+    command, ...args, ...promptArgs, ...Object.values(env),
+  ]);
+  assert.doesNotMatch(JSON.stringify(executionValues), /(?:\/Users\/|\/home\/|claude|opencode|dangerously|approval-mode)/i);
+});
+
+test("recorded discovery fixture satisfies the strict whole-tree privacy contract", () => {
+  assert.equal(fixture.recordedAt, FIXTURE_RECORDED_AT);
+  assert.equal(fixture.note, FIXTURE_NOTE);
+  assert.match(fixture.recordedFromVersion, /^\d+\.\d+\.\d+$/);
+  assert.equal(fixture.responses["--version"], `${fixture.recordedFromVersion}\n`);
+  const serialized = JSON.stringify(fixture);
+  assert.doesNotMatch(serialized, /(?:\/Users\/|\/home\/|@|\?.*=|claude|opencode|codex|github\.com\/(?!recorded-org)|48707|2026-07-(?:0[1-9]|[12]\d|3[01])T)/i);
+  const presets = fixture.responses["agents list --local --json"] as Array<Record<string, unknown>>;
+  for (const preset of presets) {
+    assert.match(String(preset.presetId), /^recorded-presetid-\d+$/);
+    assert.match(String(preset.label), /^recorded-label-\d+$/);
+  }
+  const host = fixture.responses["status --json"] as Record<string, unknown>;
+  assert.equal(host.endpoint, "http://127.0.0.1:40001");
+  assert.equal(host.pid, 1);
+  assert.equal(host.port, 40001);
+  assert.equal(host.uptimeSec, 1);
 });
 
 const executablePath = resolveSupersetExecutable();
