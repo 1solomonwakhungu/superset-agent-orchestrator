@@ -31,10 +31,10 @@ uv run --frozen python scripts/diff_results.py \
 ```
 
 The fingerprint is SHA-256 over canonical JSON containing the schema version,
-complete provenance, and normalized results. Object key order and formatting do
+selected float precision, exact complete provenance, and normalized results. Object key order and formatting do
 not affect it. Finite floats are rounded to eight decimal places by default so
 insignificant backend noise does not masquerade as a quality change; use
-`--float-precision` to record a different declared tolerance. Changes to the
+`--float-precision` to select and sign a different declared tolerance. Changes to the
 checkpoint, environment, corpus, harness commit, decode configuration, or
 normalized metrics necessarily change the fingerprint. The generated Markdown
 embeds the same provenance and results, so it is reproducible without external
