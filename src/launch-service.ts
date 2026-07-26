@@ -238,6 +238,7 @@ export class LaunchService {
           event(assignment.id, "launch_reserved", startedAt),
         );
         if (!reserved.transitioned) return;
+        assignment = reserved.assignment;
       }
       this.injectCrash("after_launch_started");
       this.injectCrash("before_adapter_launch");
