@@ -116,15 +116,15 @@ node --test test/configuration-contract.test.mjs
 - [Local control-plane threat model](docs/security/local-control-plane-threat-model.md)
 - [Idempotency and reconciliation contract](docs/idempotency-and-reconciliation.md)
 - [Workspace lease and writer-safety policy](docs/workspace-lease-and-writer-safety.md)
-- [Testing strategy and coverage thresholds](docs/testing-strategy.md)
-- [Flaky-test policy](docs/flaky-test-policy.md)
 
 The MCP contract publishes typed TypeScript/Zod schemas and a client-neutral JSON
 Schema catalog. It defines asynchronous launch, stable IDs, batches of 100
 sessions, pagination, bounded wait, cancellation, deadlines, results, and restart
 recovery. The versioned lifecycle tools listed above are registered runtime
 handlers; other normative tools remain contract-only until their implementations
-land.
+land. The disabled-by-default `provider_*` tools are an internal integration-test
+surface, enabled only by `SUPERSET_ORCHESTRATOR_ENABLE_PROVIDER_TEST_TOOLS=1`, and
+are not part of that published contract.
 
 ## Agent adapter boundary
 
@@ -137,6 +137,19 @@ before they reach core domain code.
 Integration tests can therefore drive queued, running, succeeded, failed, and
 cancelled paths without timing or network dependencies.
 
+`SupersetProcessAdapter` exercises the provider process boundary with strict JSON
+response validation. Its scriptable fake-Superset fixture persists run state
+across process restarts and covers completion, failure, timeout, cancellation,
+restart recovery, malformed output, and 100-run attribution without a real coding
+agent. An exact invocation ledger proves that failing operations are not retried.
+Run that suite independently with:
+
+```sh
+npx tsx --test test/fake-superset.integration.test.ts
+```
+
+Run `npm run verify` to type-check the complete implementation and execute all
+tests.
 Run `npm run verify` to build, type-check, run the full suite with enforced
 coverage thresholds, and repeat the concurrency-sensitive suites.
 
@@ -158,6 +171,9 @@ triaged and when quarantine is permitted.
 Synthetic provider and durable-state compatibility cases live in
 `test/fixtures/compat/`, with provenance and sanitization metadata in that
 directory's manifest. Changing an expectation there is a contract change.
+
+The real Superset discovery smoke test is intentionally opt-in through
+`npm run test:real-superset`; the default suite is hermetic.
 
 Real Superset and Codex verification is opt-in because it launches an agent in an exact isolated worktree. See [the real-system harness guide](docs/real-superset-codex-e2e.md) for safety gates, commands, evidence, and currently unsupported lifecycle operations.
 
