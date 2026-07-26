@@ -14,13 +14,10 @@ const fixture = resolve("test/fixtures/fake-superset.mjs");
 const now = () => new Date("2000-01-01T00:00:00.000Z");
 const authorizer: WorkspaceAuthorizer = {
   authorize: async (workspaceId) => ({
-    workspaceId,
-    projectId: "fake-project",
-    canonicalPath: `/workspaces/${workspaceId}`,
+    workspaceId, projectId: "fake-project", canonicalPath: `/workspaces/${workspaceId.slice("workspace-".length)}`,
     revalidate: async () => undefined,
   }),
 };
-
 test("fake Superset proves completion, failure, cancellation, restart recovery, and exact attribution", async () => {
   await withHarness({
     scripts: [
@@ -65,7 +62,7 @@ test("fake Superset proves completion, failure, cancellation, restart recovery, 
       assert.equal(result.batchId, acceptedLaunch.batchId);
       assert.equal(result.sessionId, acceptedLaunch.sessionId);
       assert.equal(result.workspaceId, `workspace-${index}`);
-      assert.equal(result.workspacePath, `/workspaces/${index}`);
+      assert.equal(result.workspacePath, `/workspaces/workspace-${index}`);
       assert.equal(result.attempt, 1);
       assert.match(result.attemptId, /^attempt_/);
       assert.match(result.runId, /^fake-/);
@@ -109,9 +106,9 @@ test("accepted launches recover after one-shot timeout and malformed responses w
       assert.equal(assignment.runId, "fake-001");
 
       const ledger = await calls();
-      assert.deepEqual(ledger.map(({ command }) => command), ["find", "launch", "find"]);
-      assert.deepEqual(ledger[1]?.fault, { id: `first-launch-${action}`, action });
-      assert.deepEqual(ledger[1]?.response, { runId: "fake-001" });
+      assert.deepEqual(ledger.map(({ command }) => command), ["launch", "find"]);
+      assert.deepEqual(ledger[0]?.fault, { id: `first-launch-${action}`, action });
+      assert.deepEqual(ledger[0]?.response, { runId: "fake-001" });
       assert.equal(Object.keys((await fakeState()).runs).length, 1);
     }, action === "hang" ? 250 : 10_000);
   }

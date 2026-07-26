@@ -1,17 +1,18 @@
 #!/usr/bin/env node
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { realpath } from "node:fs/promises";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { RedactionPolicy, RegisteredWorkspaceAuthorizer } from "./security.js";
+import { assertDataOperand, RegisteredWorkspaceAuthorizer, RedactionPolicy, type WorkspaceAuthorizer } from "./security.js";
 import { BatchQueryError, DurableStore } from "./store.js";
 import { LaunchService } from "./launch-service.js";
 import { ResultCaptureService } from "./result-capture.js";
 import { SupersetProcessAdapter, SupersetProcessError } from "./superset-process-adapter.js";
-import { SupersetDiscoveryAdapter } from "./superset-discovery.js";
 import { assertRegisteredToolNames, assertSafeToolNames } from "./tool-security.js";
+import { SupersetDiscoveryAdapter } from "./superset-discovery.js";
 import type { AgentAdapter } from "./agent-adapter.js";
 import { LifecycleService } from "./lifecycle-service.js";
 import {
@@ -85,6 +86,7 @@ async function main(): Promise<void> {
       `Unsupported platform ${process.platform}; supported platforms are darwin and linux. See docs/compatibility.md.`,
     );
   }
+  await store.recoverLifecycleDeliveryClaims();
   const reconciliation = await store.reconcile();
   console.error(`Startup reconciliation complete: ${JSON.stringify(reconciliation)}`);
   const reconciliationTimer = setInterval(() => {
@@ -117,8 +119,24 @@ async function main(): Promise<void> {
   deadlineTimer.unref();
 
   const server = new McpServer({ name: "superset-agent-orchestrator", version: "0.1.0" });
+  const integrationToolsEnabled = process.env.SUPERSET_ORCHESTRATOR_ENABLE_PROVIDER_TEST_TOOLS === "1";
   const discovery = providerExecutable === undefined ? undefined : new SupersetDiscoveryAdapter({ executable: providerExecutable });
-  const workspaceAuthorizer = discovery === undefined
+  const integrationWorkspaceRoot = process.env.SUPERSET_ORCHESTRATOR_PROVIDER_TEST_WORKSPACE_ROOT;
+  const workspaceAuthorizer: WorkspaceAuthorizer | undefined = integrationToolsEnabled && integrationWorkspaceRoot !== undefined
+    ? {
+        authorize: async (workspaceId) => {
+          const canonicalPath = assertDataOperand(await realpath(join(integrationWorkspaceRoot, workspaceId)), "workspace path");
+          return {
+            workspaceId, projectId: "provider-integration", canonicalPath,
+            revalidate: async () => {
+              if (await realpath(join(integrationWorkspaceRoot, workspaceId)) !== canonicalPath) {
+                throw new Error("Integration workspace identity changed before launch");
+              }
+            },
+          };
+        },
+      }
+    : discovery === undefined
     ? undefined
     : new RegisteredWorkspaceAuthorizer(() => discovery.inventory());
   const launches = provider === undefined || workspaceAuthorizer === undefined
@@ -127,13 +145,12 @@ async function main(): Promise<void> {
   const capture = provider === undefined ? undefined : new ResultCaptureService(store, provider);
   if (launches !== undefined) await launches.dispatchPending();
 
-  const integrationToolsEnabled = process.env.SUPERSET_ORCHESTRATOR_ENABLE_PROVIDER_TEST_TOOLS === "1";
   const integrationAssignment = z.object({
     label: z.string().min(1), prompt: z.string().min(1), workspace_id: z.string().min(1),
     agent_preset_id: z.string().min(1), idempotency_key: z.string().min(1),
   }).strict();
   server.registerTool(
-    "provider_batches_launch",
+    tool("provider_batches_launch"),
     {
       description: "Durably launch one real batch through the configured Superset provider",
       inputSchema: {
@@ -152,7 +169,6 @@ async function main(): Promise<void> {
             idempotencyKey: assignment.idempotency_key,
             attribution: { agent: assignment.agent_preset_id, task: assignment.label },
             prompt: assignment.prompt, workspaceId: assignment.workspace_id,
-            workspacePath: assignment.workspace_id,
           })),
         });
         await launches.dispatchPending();
@@ -163,7 +179,7 @@ async function main(): Promise<void> {
     },
   );
   server.registerTool(
-    "provider_sessions_results",
+    tool("provider_sessions_results"),
     {
       description: "Refresh and return exact attributed results for up to 100 sessions",
       inputSchema: { request_id: z.string().min(1), session_ids: z.array(z.string().min(1)).min(1).max(100) },
@@ -206,7 +222,7 @@ async function main(): Promise<void> {
     },
   );
   server.registerTool(
-    "provider_sessions_cancel",
+    tool("provider_sessions_cancel"),
     {
       description: "Cancel configured Superset provider sessions without retries",
       inputSchema: {
@@ -393,8 +409,12 @@ async function main(): Promise<void> {
           items.push({
             session_id: id,
             error: contractError(
-              error instanceof BatchQueryError && error.code === "not_found" ? "SESSION_NOT_FOUND" : "STATE_UNAVAILABLE",
-              error instanceof BatchQueryError && error.code === "not_found" ? error.message : "Unable to persist the session deadline",
+              error instanceof BatchQueryError && error.code === "not_found"
+                ? "SESSION_NOT_FOUND"
+                : error instanceof BatchQueryError && error.code === "invalid_request"
+                  ? "INVALID_TRANSITION"
+                  : "STATE_UNAVAILABLE",
+              error instanceof BatchQueryError ? error.message : "Unable to persist the session deadline",
             ),
           });
         }
@@ -405,17 +425,22 @@ async function main(): Promise<void> {
   server.registerTool(
     tool("deadlines_enforce"),
     {
-      description: "Expire every nonterminal session whose deadline has passed and report the exact expirations",
+      description: "Expire up to 250 overdue nonterminal sessions and report whether another bounded sweep is needed",
       inputSchema: enforceDeadlinesRequestSchema.shape,
     },
-    async () => result(enforceDeadlinesResultSchema.parse(contractEnvelope({
-      expired: (await lifecycle.enforceDeadlines()).map((worker) => ({
+    async () => {
+      const expired = await lifecycle.enforceDeadlines();
+      const hasMore = await lifecycle.hasOverdueDeadlines();
+      return result(enforceDeadlinesResultSchema.parse(contractEnvelope({
+        expired: expired.map((worker) => ({
         session_id: worker.sessionId,
         deadline_at: worker.deadlineAt,
         state: "failed" as const,
         ...(worker.providerStopError === undefined ? {} : { provider_stop_error: worker.providerStopError }),
       })),
-    }))),
+        has_more: hasMore,
+      })));
+    },
   );
   server.registerTool(
     tool("recent_sessions"),
@@ -454,7 +479,7 @@ async function main(): Promise<void> {
 }
 
 function providerError(requestId: string, code: ErrorCode, message: string) {
-  return { ...result({ request_id: requestId, error: contractError(code, message) }), isError: true };
+  return { ...result({ request_id: requestId, error: contractError(code, store.redactText(message)) }), isError: true };
 }
 
 function processFailure(requestId: string, error: unknown) {
