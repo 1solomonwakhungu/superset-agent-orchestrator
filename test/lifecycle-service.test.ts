@@ -290,7 +290,9 @@ test("a terminal outcome racing a cancel produces exactly one winner", async () 
   const worker = await store.worker(id);
   assert.equal(worker!.status, "succeeded");
   assert.deepEqual(worker!.result, { output: "won the race" });
-  assert.equal(worker!.lateObservations, undefined);
+  assert.deepEqual(worker!.lateObservations?.map(({ status, retainedResult }) => ({ status, retainedResult })), [
+    { status: "canceled", retainedResult: false },
+  ]);
 }));
 
 test("concurrent deadline sweeps expire each session exactly once", async () => harness(async (store) => {
@@ -472,8 +474,8 @@ test("deadline reconciliation retains a later provider result without regressing
   assert.equal(worker!.stopReason, "deadline_exceeded");
   assert.equal((worker!.result as AgentResultClaim).output, "arrived after timeout");
   assert.equal(worker!.lateObservations?.length, 1);
-  assert.equal(worker!.lateObservations![0]!.status, "succeeded");
-  assert.equal(worker!.lateObservations![0]!.retainedResult, true);
+  assert.equal(worker!.lateObservations[0]!.status, "succeeded");
+  assert.equal(worker!.lateObservations[0]!.retainedResult, true);
   assert.equal(worker!.lifecycleReconcilePending, undefined);
 }));
 
@@ -488,8 +490,29 @@ test("provider execution identity mismatch cannot settle a session", async () =>
   }));
 
   const outcome = refused(await service.cancelSession(id));
-  assert.equal(outcome.error, "PROVIDER_UNAVAILABLE");
+  assert.equal(outcome.error, "PROVIDER_PROTOCOL_ERROR");
   assert.equal((await store.worker(id))!.status, "canceling");
+}));
+
+test("a provider call that never settles is aborted within the configured bound", async () => harness(async (store) => {
+  const created = await store.createBatch("provider-timeout", "client", [{ agent: "codex", task: "work" }]);
+  const id = created.sessions[0]!.id;
+  await store.bindWorkerRun(id, "run-1");
+  let aborted = false;
+  const service = new LifecycleService(store, stub({
+    cancellation: "supported",
+    cancel: async (_handle, _reason, signal) => new Promise((_resolve, reject) => {
+      signal?.addEventListener("abort", () => {
+        aborted = true;
+        reject(new Error("aborted"));
+      }, { once: true });
+    }),
+  }), undefined, undefined, undefined, 5);
+
+  const outcome = refused(await service.cancelSession(id));
+  assert.equal(outcome.error, "PROVIDER_UNAVAILABLE");
+  assert.equal(outcome.status, "canceling");
+  assert.equal(aborted, true);
 }));
 
 test("a late observation never overwrites the result the winning outcome already captured", async () => harness(async (store) => {

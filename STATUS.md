@@ -46,6 +46,16 @@
   live-CLI skip; focused lifecycle/MCP tests passed 42/42 across 10 runs (420
   checks); typecheck, schema generation/diff, strict routing, and diff checks
   passed.
+- Integrated signed quality-gate baseline `cbd44e1` and connected asynchronous
+  launch acceptance/binding to lifecycle workers, including cancellation while
+  provider launch is in flight. Added versioned deadline contracts, bounded
+  provider abort coverage, limited batch cancellation concurrency, sequential
+  reconciliation phases, protocol-identity errors, and pre-persist validation.
+- Post-integration verification: `npm ci` passed; `npm run check` passed 153/154
+  tests with 1 declared live smoke skip, 3/3 Python tests, schema no-diff, and
+  94.78% statement / 87.47% branch / 92.47% function coverage. Focused
+  launch/lifecycle/MCP tests passed 52/52 across 10 runs (520 checks), and
+  `git diff --check` passed.
 
 ## PER-352 cross-platform compatibility CI
 

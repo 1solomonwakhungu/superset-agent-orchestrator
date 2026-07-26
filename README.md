@@ -47,12 +47,12 @@ Recovery tools:
 
 Lifecycle tools:
 
-* `sessions_cancel` and `batches_cancel` persist cancellation intent before the
+- `sessions_cancel` and `batches_cancel` persist cancellation intent before the
   provider call. Repeated and concurrent requests issue exactly one stop command.
   Unsupported backends return `CANCEL_UNSUPPORTED` without changing state.
-* `batches_wait` waits at most 30 seconds and returns exact partial counts on
+- `batches_wait` waits at most 30 seconds and returns exact partial counts on
   timeout rather than an error.
-* `sessions_set_deadline` and `deadlines_enforce` expire overdue nonterminal
+- `sessions_set_deadline` and `deadlines_enforce` expire overdue nonterminal
   sessions as `failed` with stop reason `deadline_exceeded`. The server also
   sweeps deadlines on a background interval.
 
@@ -84,7 +84,7 @@ node --test test/configuration-contract.test.mjs
 - [Idempotency and reconciliation contract](docs/idempotency-and-reconciliation.md)
 - [Workspace lease and writer-safety policy](docs/workspace-lease-and-writer-safety.md)
 
-The MCP contract publishes typed TypeScript/Zod schemas and a client-neutral JSON Schema catalog. It defines asynchronous launch, stable IDs, batches of 100 sessions, pagination, bounded wait, cancellation, results, and restart recovery. The contract is normative; tools not listed under Recovery above are not yet registered runtime handlers.
+The MCP contract publishes typed TypeScript/Zod schemas and a client-neutral JSON Schema catalog. It defines asynchronous launch, stable IDs, batches of 100 sessions, pagination, bounded wait, cancellation, deadlines, results, and restart recovery. The versioned lifecycle tools listed above are registered runtime handlers; other normative tools remain contract-only until their implementations land.
 
 ## Agent adapter boundary
 

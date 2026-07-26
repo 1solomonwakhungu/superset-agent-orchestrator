@@ -57,6 +57,7 @@ export interface Worker {
   preCancelStatus?: WorkerStatus;
   deadlineAt?: string;
   lifecycleReconcilePending?: boolean;
+  cancellationDeliveryPending?: boolean;
   lateObservations?: LateObservation[];
 }
 
@@ -232,6 +233,7 @@ const workerSchema = z.object({
   cancelRequestedAt: z.iso.datetime().optional(), preCancelStatus: workerStatusSchema.optional(),
   deadlineAt: z.iso.datetime().optional(),
   lifecycleReconcilePending: z.boolean().optional(),
+  cancellationDeliveryPending: z.boolean().optional(),
   lateObservations: z.array(z.object({
     observedAt: z.iso.datetime(), status: z.string().min(1), retainedResult: z.boolean(),
   })).optional(),
@@ -510,7 +512,8 @@ export class DurableStore {
     const worker = await this.updateWorker(workerId, (candidate) => {
       if (DurableStore.isTerminal(candidate.status) || candidate.status === "canceling") return;
       claimed = true;
-      if (candidate.runId === undefined) {
+      const launch = this.state.assignments.find(({ sessionId }) => sessionId === candidate.id);
+      if (candidate.runId === undefined && launch?.status !== "launching") {
         local = true;
         candidate.status = "canceled";
         candidate.completedAt = at.toISOString();
@@ -520,6 +523,7 @@ export class DurableStore {
       }
       candidate.preCancelStatus = candidate.status;
       candidate.status = "canceling";
+      candidate.cancellationDeliveryPending = true;
       candidate.cancelRequestedAt = at.toISOString();
       candidate.stopReason = reason;
       if (options.detail !== undefined) candidate.stopDetail = options.detail;
@@ -531,6 +535,12 @@ export class DurableStore {
   async cancelingWorkers(): Promise<Worker[]> {
     return this.withFreshState(() => structuredClone(this.state.workers
       .filter((worker) => worker.status === "canceling" && worker.runId !== undefined)));
+  }
+
+  async markCancellationDelivered(workerId: string): Promise<Worker> {
+    return this.updateWorker(workerId, (worker) => {
+      delete worker.cancellationDeliveryPending;
+    });
   }
 
   /** Returns timed-out executions whose eventual provider result has not yet been observed. */
@@ -549,6 +559,7 @@ export class DurableStore {
       worker.status = worker.preCancelStatus ?? "requested";
       delete worker.preCancelStatus;
       delete worker.cancelRequestedAt;
+      delete worker.cancellationDeliveryPending;
       delete worker.stopReason;
       delete worker.stopDetail;
     });
@@ -563,6 +574,7 @@ export class DurableStore {
     status: TerminalWorkerStatus,
     options: { result?: unknown; stopReason?: string; at?: Date } = {},
   ): Promise<Worker> {
+    validateStopReason(status, options.stopReason);
     const at = options.at ?? new Date();
     return this.updateWorker(workerId, (worker) => {
       if (DurableStore.isTerminal(worker.status)) {
@@ -576,6 +588,7 @@ export class DurableStore {
       worker.status = status;
       worker.completedAt = at.toISOString();
       delete worker.lifecycleReconcilePending;
+      delete worker.cancellationDeliveryPending;
       if (options.result !== undefined) worker.result = options.result;
       delete worker.preCancelStatus;
       const stopReason = options.stopReason
@@ -593,22 +606,24 @@ export class DurableStore {
     status: TerminalWorkerStatus,
     options: { result?: unknown; stopReason?: string; at?: Date } = {},
   ): Promise<{ worker: Worker; claimed: boolean }> {
+    validateStopReason(status, options.stopReason);
     const at = options.at ?? new Date();
     let claimed = false;
     const worker = await this.updateWorker(workerId, (candidate) => {
-      if (DurableStore.isTerminal(candidate.status) && candidate.lifecycleReconcilePending === true) {
+      if (DurableStore.isTerminal(candidate.status)) {
         const retainedResult = options.result !== undefined && candidate.result === undefined;
         if (retainedResult) candidate.result = options.result;
         (candidate.lateObservations ??= []).push({ observedAt: at.toISOString(), status, retainedResult });
         delete candidate.lifecycleReconcilePending;
+        delete candidate.cancellationDeliveryPending;
         return;
       }
-      if (DurableStore.isTerminal(candidate.status)) return;
       if (candidate.status !== "canceling") return;
       claimed = true;
       candidate.status = status;
       candidate.completedAt = at.toISOString();
       delete candidate.lifecycleReconcilePending;
+      delete candidate.cancellationDeliveryPending;
       if (options.result !== undefined) candidate.result = options.result;
       delete candidate.preCancelStatus;
       const stopReason = options.stopReason
@@ -779,6 +794,7 @@ export class DurableStore {
     session: Session;
     batch: Batch;
     event: LaunchAuditEvent;
+    worker: Worker;
   }): Promise<{ assignment: Assignment; created: boolean }> {
     return this.withLock(async () => {
       await this.load();
@@ -786,6 +802,7 @@ export class DurableStore {
       sessionSchema.parse(input.session);
       batchSchema.parse(input.batch);
       auditEventSchema.parse(input.event);
+      workerSchema.parse(input.worker);
       const existing = this.state.assignments.find(({ idempotencyKey }) => idempotencyKey === input.assignment.idempotencyKey);
       if (existing !== undefined) {
         if (existing.requestFingerprint !== input.assignment.requestFingerprint) {
@@ -796,7 +813,9 @@ export class DurableStore {
       this.state.sessions.push(input.session);
       this.state.batches.push(input.batch);
       this.state.assignments.push(input.assignment);
+      this.state.workers.push(input.worker);
       this.state.auditEvents.push(input.event);
+      this.rebuildIndexes();
       await this.persist();
       return { assignment: structuredClone(input.assignment), created: true };
     });
@@ -822,6 +841,12 @@ export class DurableStore {
       assignment.status = status;
       assignment.updatedAt = event.occurredAt;
       if (event.runId !== undefined) assignment.runId = event.runId;
+      if (event.runId !== undefined) {
+        const worker = this.state.workers.find(({ id }) => id === assignment.sessionId);
+        if (worker === undefined) throw new Error(`Missing lifecycle worker for assignment: ${assignmentId}`);
+        if (worker.runId !== undefined && worker.runId !== event.runId) throw new Error("Worker is already bound to another run");
+        worker.runId = event.runId;
+      }
       if (event.error !== undefined) assignment.error = event.error;
       if (!this.state.auditEvents.some(({ id }) => id === event.id)) this.state.auditEvents.push(event);
       await this.persist();
@@ -985,6 +1010,7 @@ export class DurableStore {
   }
 
   private async persist(): Promise<void> {
+    stateSchema.parse(this.state);
     await mkdir(dirname(this.path), { recursive: true });
     const temporaryPath = `${this.path}.${process.pid}.${randomUUID()}.tmp`;
     const file = await open(temporaryPath, "wx", 0o600);
@@ -1069,5 +1095,11 @@ export class DurableStore {
     } catch (error) {
       return (error as NodeJS.ErrnoException).code === "EPERM";
     }
+  }
+}
+
+function validateStopReason(status: TerminalWorkerStatus, reason: string | undefined): void {
+  if (reason !== undefined && status !== "unknown_outcome" && !STOP_REASONS_BY_STATUS[status].has(reason)) {
+    throw new BatchQueryError("invalid_request", `${status} cannot use stop reason ${JSON.stringify(reason)}`);
   }
 }

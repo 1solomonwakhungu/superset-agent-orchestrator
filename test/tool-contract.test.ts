@@ -61,6 +61,8 @@ test("publishes the complete versioned tool surface", async () => {
     "batches_cancel",
     "batches_get",
     "batches_wait",
+    "sessions_set_deadline",
+    "deadlines_enforce",
     "batches_recover",
   ]);
 

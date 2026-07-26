@@ -3248,6 +3248,545 @@
         "data.items[].batch_id MUST be unique"
       ]
     },
+    "sessions_set_deadline": {
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "contract_version": {
+            "type": "string",
+            "const": "1.0"
+          },
+          "session_ids": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "deadline_ms": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 2147483647
+          }
+        },
+        "required": [
+          "contract_version",
+          "session_ids",
+          "deadline_ms"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "contract_version": {
+                "type": "string",
+                "const": "1.0"
+              },
+              "request_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "warnings": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "data": {
+                "type": "object",
+                "properties": {
+                  "items": {
+                    "minItems": 1,
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "session_id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "deadline_at": {
+                              "type": "string",
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                            },
+                            "state": {
+                              "type": "string",
+                              "enum": [
+                                "requested",
+                                "launching",
+                                "running",
+                                "canceling",
+                                "lost",
+                                "completed",
+                                "failed",
+                                "canceled"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "session_id",
+                            "deadline_at",
+                            "state"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "session_id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "error": {
+                              "type": "object",
+                              "properties": {
+                                "code": {
+                                  "type": "string",
+                                  "enum": [
+                                    "INVALID_ARGUMENT",
+                                    "LIMIT_EXCEEDED",
+                                    "DUPLICATE_ID",
+                                    "UNSUPPORTED_CONTRACT_VERSION",
+                                    "CONFIGURATION_INVALID",
+                                    "EXECUTABLE_NOT_FOUND",
+                                    "EXECUTABLE_CONFLICT",
+                                    "HOST_STATE_NOT_FOUND",
+                                    "AMBIGUOUS_WORKSPACE",
+                                    "REMOTE_WORKSPACE",
+                                    "DUPLICATE_WORKSPACE",
+                                    "WORKSPACE_UNAVAILABLE",
+                                    "WORKSPACE_WRITE_CONFLICT",
+                                    "POLICY_DENIED",
+                                    "CONCURRENCY_LIMIT",
+                                    "SESSION_NOT_FOUND",
+                                    "BATCH_NOT_FOUND",
+                                    "PROVIDER_UNAVAILABLE",
+                                    "PROVIDER_PROTOCOL_ERROR",
+                                    "LAUNCH_REJECTED",
+                                    "CANCEL_UNSUPPORTED",
+                                    "INVALID_TRANSITION",
+                                    "VERSION_CONFLICT",
+                                    "EXECUTION_IDENTITY_CONFLICT",
+                                    "SESSION_LOST",
+                                    "STATE_UNAVAILABLE",
+                                    "STATE_CORRUPT",
+                                    "ARTIFACT_MISSING",
+                                    "INTEGRITY_FAILURE"
+                                  ]
+                                },
+                                "layer": {
+                                  "type": "string",
+                                  "enum": [
+                                    "validation",
+                                    "configuration",
+                                    "discovery",
+                                    "routing",
+                                    "policy",
+                                    "transport",
+                                    "provider",
+                                    "orchestration",
+                                    "storage",
+                                    "integrity"
+                                  ]
+                                },
+                                "message": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "retryable": {
+                                  "type": "boolean"
+                                },
+                                "details": {
+                                  "type": "object",
+                                  "propertyNames": {
+                                    "type": "string"
+                                  },
+                                  "additionalProperties": {}
+                                },
+                                "cause_id": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                }
+                              },
+                              "required": [
+                                "code",
+                                "layer",
+                                "message",
+                                "retryable"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "session_id",
+                            "error"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "items"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "contract_version",
+              "request_id",
+              "warnings",
+              "data"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "contract_version": {
+                "type": "string",
+                "const": "1.0"
+              },
+              "request_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "error": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "enum": [
+                      "INVALID_ARGUMENT",
+                      "LIMIT_EXCEEDED",
+                      "DUPLICATE_ID",
+                      "UNSUPPORTED_CONTRACT_VERSION",
+                      "CONFIGURATION_INVALID",
+                      "EXECUTABLE_NOT_FOUND",
+                      "EXECUTABLE_CONFLICT",
+                      "HOST_STATE_NOT_FOUND",
+                      "AMBIGUOUS_WORKSPACE",
+                      "REMOTE_WORKSPACE",
+                      "DUPLICATE_WORKSPACE",
+                      "WORKSPACE_UNAVAILABLE",
+                      "WORKSPACE_WRITE_CONFLICT",
+                      "POLICY_DENIED",
+                      "CONCURRENCY_LIMIT",
+                      "SESSION_NOT_FOUND",
+                      "BATCH_NOT_FOUND",
+                      "PROVIDER_UNAVAILABLE",
+                      "PROVIDER_PROTOCOL_ERROR",
+                      "LAUNCH_REJECTED",
+                      "CANCEL_UNSUPPORTED",
+                      "INVALID_TRANSITION",
+                      "VERSION_CONFLICT",
+                      "EXECUTION_IDENTITY_CONFLICT",
+                      "SESSION_LOST",
+                      "STATE_UNAVAILABLE",
+                      "STATE_CORRUPT",
+                      "ARTIFACT_MISSING",
+                      "INTEGRITY_FAILURE"
+                    ]
+                  },
+                  "layer": {
+                    "type": "string",
+                    "enum": [
+                      "validation",
+                      "configuration",
+                      "discovery",
+                      "routing",
+                      "policy",
+                      "transport",
+                      "provider",
+                      "orchestration",
+                      "storage",
+                      "integrity"
+                    ]
+                  },
+                  "message": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "retryable": {
+                    "type": "boolean"
+                  },
+                  "details": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "cause_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "code",
+                  "layer",
+                  "message",
+                  "retryable"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "contract_version",
+              "request_id",
+              "error"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "x-semantic-rules": [
+        "session_ids MUST be unique",
+        "data.items[].session_id MUST be unique"
+      ]
+    },
+    "deadlines_enforce": {
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "contract_version": {
+            "type": "string",
+            "const": "1.0"
+          }
+        },
+        "required": [
+          "contract_version"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "contract_version": {
+                "type": "string",
+                "const": "1.0"
+              },
+              "request_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "warnings": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "data": {
+                "type": "object",
+                "properties": {
+                  "expired": {
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "session_id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "deadline_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                        },
+                        "state": {
+                          "type": "string",
+                          "const": "failed"
+                        },
+                        "provider_stop_error": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "session_id",
+                        "deadline_at",
+                        "state"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "expired"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "contract_version",
+              "request_id",
+              "warnings",
+              "data"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "contract_version": {
+                "type": "string",
+                "const": "1.0"
+              },
+              "request_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "error": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "enum": [
+                      "INVALID_ARGUMENT",
+                      "LIMIT_EXCEEDED",
+                      "DUPLICATE_ID",
+                      "UNSUPPORTED_CONTRACT_VERSION",
+                      "CONFIGURATION_INVALID",
+                      "EXECUTABLE_NOT_FOUND",
+                      "EXECUTABLE_CONFLICT",
+                      "HOST_STATE_NOT_FOUND",
+                      "AMBIGUOUS_WORKSPACE",
+                      "REMOTE_WORKSPACE",
+                      "DUPLICATE_WORKSPACE",
+                      "WORKSPACE_UNAVAILABLE",
+                      "WORKSPACE_WRITE_CONFLICT",
+                      "POLICY_DENIED",
+                      "CONCURRENCY_LIMIT",
+                      "SESSION_NOT_FOUND",
+                      "BATCH_NOT_FOUND",
+                      "PROVIDER_UNAVAILABLE",
+                      "PROVIDER_PROTOCOL_ERROR",
+                      "LAUNCH_REJECTED",
+                      "CANCEL_UNSUPPORTED",
+                      "INVALID_TRANSITION",
+                      "VERSION_CONFLICT",
+                      "EXECUTION_IDENTITY_CONFLICT",
+                      "SESSION_LOST",
+                      "STATE_UNAVAILABLE",
+                      "STATE_CORRUPT",
+                      "ARTIFACT_MISSING",
+                      "INTEGRITY_FAILURE"
+                    ]
+                  },
+                  "layer": {
+                    "type": "string",
+                    "enum": [
+                      "validation",
+                      "configuration",
+                      "discovery",
+                      "routing",
+                      "policy",
+                      "transport",
+                      "provider",
+                      "orchestration",
+                      "storage",
+                      "integrity"
+                    ]
+                  },
+                  "message": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "retryable": {
+                    "type": "boolean"
+                  },
+                  "details": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "cause_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "code",
+                  "layer",
+                  "message",
+                  "retryable"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "contract_version",
+              "request_id",
+              "error"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "x-semantic-rules": []
+    },
     "batches_recover": {
       "input": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",

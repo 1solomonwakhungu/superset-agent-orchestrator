@@ -18,7 +18,8 @@ export type LifecycleErrorCode =
   | "SESSION_NOT_FOUND"
   | "BATCH_NOT_FOUND"
   | "CANCEL_UNSUPPORTED"
-  | "PROVIDER_UNAVAILABLE";
+  | "PROVIDER_UNAVAILABLE"
+  | "PROVIDER_PROTOCOL_ERROR";
 
 export interface CancellationAccepted {
   sessionId: string;
@@ -83,6 +84,7 @@ export class LifecycleService {
       (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
     private readonly monotonicNow: () => number = performance.now.bind(performance),
     private readonly wallClockNow: () => Date = () => new Date(),
+    private readonly providerOperationTimeoutMs = PROVIDER_OPERATION_TIMEOUT_MS,
   ) {}
 
   /**
@@ -143,7 +145,15 @@ export class LifecycleService {
         changed: true,
       };
     }
-    const handle = { runId: intent.worker.runId! };
+    if (intent.worker.runId === undefined) {
+      return {
+        sessionId,
+        status: "canceling",
+        ...(intent.worker.stopReason === undefined ? {} : { stopReason: intent.worker.stopReason }),
+        changed: true,
+      };
+    }
+    const handle = { runId: intent.worker.runId };
     try {
       const outcome = await this.providerCall((signal) => this.adapter.cancel(handle, detail ?? reason, signal));
       if (outcome !== undefined && outcome.status === "unsupported") {
@@ -155,25 +165,23 @@ export class LifecycleService {
           status: restored.status,
         };
       }
+      await this.store.markCancellationDelivered(sessionId);
       return await this.settleFromProvider(sessionId, handle, true);
     } catch (error) {
       // Delivery is unknown, so cancellation intent stays recorded and the session remains canceling.
       return {
         sessionId,
-        error: "PROVIDER_UNAVAILABLE",
-        message: PROVIDER_UNAVAILABLE_MESSAGE,
+        error: error instanceof ProviderProtocolError ? "PROVIDER_PROTOCOL_ERROR" : "PROVIDER_UNAVAILABLE",
+        message: error instanceof ProviderProtocolError ? error.message : PROVIDER_UNAVAILABLE_MESSAGE,
         status: "canceling",
       };
     }
   }
 
-  /**
-   * Cancels every session in a batch. Sessions are processed serially so the durable single-writer
-   * lock is never contended by this service against itself, and the returned order matches batch order.
-   */
+  /** Cancels every session concurrently while preserving the durable batch order in the response. */
   async cancelBatch(batchId: string, reason: CancellationReason = "user_requested", detail?: string): Promise<CancellationResult[]> {
     const workers = await this.store.workersInBatch(batchId);
-    return Promise.all(workers.map((worker) => this.cancelSession(worker.id, reason, detail)));
+    return mapConcurrent(workers, 8, (worker) => this.cancelSession(worker.id, reason, detail));
   }
 
   /**
@@ -192,7 +200,7 @@ export class LifecycleService {
         try {
           await this.providerCall((signal) => this.adapter.cancel({ runId: settled.runId! }, "deadline_exceeded", signal));
           await this.settleFromProvider(worker.id, { runId: settled.runId });
-        } catch (error) {
+        } catch {
           providerStopError = PROVIDER_UNAVAILABLE_MESSAGE;
         }
       }
@@ -210,12 +218,33 @@ export class LifecycleService {
   async reconcileCancellations(): Promise<CancellationResult[]> {
     return Promise.all((await this.store.cancelingWorkers()).map(async (worker): Promise<CancellationResult> => {
       try {
+        if (worker.cancellationDeliveryPending) {
+          try {
+            const outcome = await this.providerCall((signal) => this.adapter.cancel(
+              { runId: worker.runId! },
+              worker.stopDetail ?? worker.stopReason,
+              signal,
+            ));
+            if (outcome?.status === "unsupported") {
+              const restored = await this.store.clearWorkerCancellation(worker.id);
+              return {
+                sessionId: worker.id,
+                error: "CANCEL_UNSUPPORTED",
+                message: "The backend rejected cancellation as unsupported",
+                status: restored.status,
+              };
+            }
+            await this.store.markCancellationDelivered(worker.id);
+          } catch {
+            // Status may still provide terminal evidence when stop delivery is uncertain.
+          }
+        }
         return await this.settleFromProvider(worker.id, { runId: worker.runId! });
       } catch (error) {
         return {
           sessionId: worker.id,
-          error: "PROVIDER_UNAVAILABLE",
-          message: PROVIDER_UNAVAILABLE_MESSAGE,
+          error: error instanceof ProviderProtocolError ? "PROVIDER_PROTOCOL_ERROR" : "PROVIDER_UNAVAILABLE",
+          message: error instanceof ProviderProtocolError ? error.message : PROVIDER_UNAVAILABLE_MESSAGE,
           status: "canceling",
         };
       }
@@ -284,7 +313,7 @@ export class LifecycleService {
   ): Promise<CancellationResult> {
     const observed = await this.providerCall((signal) => this.adapter.status(handle, signal));
     if (observed.runId !== handle.runId) {
-      throw new Error("Provider returned a different execution identity");
+      throw new ProviderProtocolError("Provider returned a different execution identity");
     }
     if (observed.status === "queued" || observed.status === "running") {
       const worker = await this.store.worker(sessionId);
@@ -325,8 +354,7 @@ export class LifecycleService {
 
   private async providerCall<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), PROVIDER_OPERATION_TIMEOUT_MS);
-    timeout.unref();
+    const timeout = setTimeout(() => controller.abort(), this.providerOperationTimeoutMs);
     try {
       return await Promise.race([
         operation(controller.signal),
@@ -338,6 +366,21 @@ export class LifecycleService {
       clearTimeout(timeout);
     }
   }
+}
+
+class ProviderProtocolError extends Error {}
+
+async function mapConcurrent<T, R>(items: T[], limit: number, operation: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      results[index] = await operation(items[index]!);
+    }
+  }));
+  return results;
 }
 
 function terminalStatusFor(status: "succeeded" | "failed" | "cancelled"): TerminalWorkerStatus {
