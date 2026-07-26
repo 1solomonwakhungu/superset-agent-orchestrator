@@ -3,6 +3,9 @@
 Local-first MCP server for durable orchestration of parallel coding agents through
 Superset.
 
+Performance benchmarks and the safe-default controlled load runner are documented
+in [performance and load testing](docs/performance-and-load-testing.md).
+
 ## Product status
 
 The backend-neutral core and fake adapter exercise complete lifecycle semantics,
@@ -34,10 +37,11 @@ stale.
 
 ## Recovery
 
-The server reconciles its durable JSON state before accepting MCP requests and periodically while
-it runs. Existing worker processes remain tracked by PID and process start token; vanished processes
-are marked `unknown_outcome` and are never relaunched merely because a server or client restarted.
-State writes are locked, synced, and atomically renamed. A corrupt state file is left untouched.
+The server reconciles its durable JSON state before accepting MCP requests and
+periodically while it runs. Existing worker processes remain tracked by PID and
+process start token; vanished processes are marked `unknown_outcome` and are
+never relaunched merely because a server or client restarted. State writes are
+locked, synced, and atomically renamed. A corrupt state file is left untouched.
 
 Writer admission uses two independent layers: an exclusive cross-process
 operating-system lock on a key derived from the workspace, and a transactional
@@ -62,14 +66,18 @@ read-only sandbox enforcement are still outstanding. See
 
 Recovery tools:
 
-- `recent_sessions` lists durable sessions independently of the connected client.
-- `reopen_batch` restores the newest exact-name batch with sessions, workers, results, and attribution.
-- `batches_create` durably accepts up to 250 attributed sessions and returns stable IDs immediately.
-- `batches_get`, `batches_status`, and `batches_results` provide indexed, ordered pagination without per-agent polling.
+- `recent_sessions` lists durable sessions independently of the connected
+  client.
+- `reopen_batch` restores the newest exact-name batch with sessions, workers,
+  results, and attribution.
+- `batches_create` durably accepts up to 250 attributed sessions and returns
+  stable IDs immediately.
+- `batches_get`, `batches_status`, and `batches_results` provide indexed, ordered
+  pagination without per-agent polling.
 - `recovery_diagnostics` reports orphan, unknown-outcome, and missing-result records.
 
-Set `SUPERSET_ORCHESTRATOR_STATE` to choose the state file. By default it is stored at
-`~/.local/share/superset-agent-orchestrator/state.json`.
+Set `SUPERSET_ORCHESTRATOR_STATE` to choose the state file. By default it is
+stored at `~/.local/share/superset-agent-orchestrator/state.json`.
 
 ## Configuration contract
 
@@ -96,13 +104,22 @@ node --test test/configuration-contract.test.mjs
 - [Testing strategy and coverage thresholds](docs/testing-strategy.md)
 - [Flaky-test policy](docs/flaky-test-policy.md)
 
-The MCP contract publishes typed TypeScript/Zod schemas and a client-neutral JSON Schema catalog. It defines asynchronous launch, stable IDs, batches of 100 sessions, pagination, bounded wait, cancellation, results, and restart recovery. The contract is normative; tools not listed under Recovery above are not yet registered runtime handlers.
+The MCP contract publishes typed TypeScript/Zod schemas and a client-neutral JSON
+Schema catalog. It defines asynchronous launch, stable IDs, batches of 100
+sessions, pagination, bounded wait, cancellation, results, and restart recovery.
+The contract is normative; tools not listed under Recovery above are not yet
+registered runtime handlers.
 
 ## Agent adapter boundary
 
-`AgentAdapter` isolates core orchestration from coding-agent lifecycle APIs. It provides launch, status, terminal result, cancellation, and resume metadata operations. Provider-specific response formats are normalized in adapter modules before they reach core domain code.
+`AgentAdapter` isolates core orchestration from coding-agent lifecycle APIs. It
+provides launch, status, terminal result, cancellation, and resume metadata
+operations. Provider-specific response formats are normalized in adapter modules
+before they reach core domain code.
 
-`FakeAgentAdapter` accepts ordered run scripts and a caller-controlled clock. Integration tests can therefore drive queued, running, succeeded, failed, and cancelled paths without timing or network dependencies.
+`FakeAgentAdapter` accepts ordered run scripts and a caller-controlled clock.
+Integration tests can therefore drive queued, running, succeeded, failed, and
+cancelled paths without timing or network dependencies.
 
 Run `npm run verify` to build, type-check, run the full suite with enforced
 coverage thresholds, and repeat the concurrency-sensitive suites.

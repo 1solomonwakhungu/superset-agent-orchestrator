@@ -152,7 +152,7 @@ test("resource and rate-limit hooks back off the FIFO head without bypass", asyn
       if (checks === 1) {
         return {
           ready: false,
-          retryAfterMs: 5,
+          retryAfterMs: 100,
           get reason() {
             queueMicrotask(() => markBlocked?.());
             return "provider_rate_limit";
