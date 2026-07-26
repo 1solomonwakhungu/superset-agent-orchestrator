@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, mkdirSync, openSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import lockfile from "proper-lockfile";
@@ -134,11 +134,13 @@ export class WorkspaceSafetyTool {
   }
 
   heartbeat(authority: LeaseAuthority, ttlMs: number, now = new Date()): LeaseAuthority {
+    this.assertLockHeld(authority.leaseId);
     return this.storage.heartbeatWriterLease(authority, ttlMs, now);
   }
 
   /** Binds the spawned owner process so recovery can later prove it is gone. */
   bindProcess(authority: LeaseAuthority, processId: number, now = new Date()): LeaseAuthority {
+    this.assertLockHeld(authority.leaseId);
     const startToken = this.probe.startToken(processId);
     if (startToken === undefined) {
       throw new LeaseRecoveryAmbiguousError("Owner process identity could not be captured");
@@ -148,6 +150,14 @@ export class WorkspaceSafetyTool {
 
   /** Two-phase durable release first, then the OS lock. */
   releaseWriter(authority: LeaseAuthority, now = new Date()): void {
+    this.assertLockHeld(authority.leaseId);
+    if (authority.processId !== null && this.ownerProcessState({
+      ...this.storage.workspaceLeaseById(authority.leaseId)!,
+      processId: authority.processId,
+      processStartToken: authority.processStartToken,
+    }) !== "absent") {
+      throw new LeaseRecoveryAmbiguousError("Writer process must be authoritatively absent before release");
+    }
     this.storage.releaseWriterLease(authority, now);
     this.dropLock(authority.leaseId);
   }
@@ -164,23 +174,35 @@ export class WorkspaceSafetyTool {
     }
     // This instance is the live owner: an owner releases its lease, never recovers it.
     if (this.heldLocks.has(lease.leaseId)) return this.inspect(workspaceId, now);
-    if (this.lockHeldElsewhere(workspaceId)) {
-      throw new LeaseRecoveryAmbiguousError("Another process may still hold the workspace lock");
+    let releaseLock: () => void;
+    try {
+      releaseLock = this.lock(workspaceId);
+    } catch (error) {
+      if (error instanceof WorkspaceWriterBusyError) {
+        throw new LeaseRecoveryAmbiguousError("Another process may still hold the workspace lock");
+      }
+      throw error;
     }
-    const ownerProcess = this.ownerProcessState(lease);
-    if (ownerProcess !== "absent") {
-      this.storage.quarantineWriterLease(lease.leaseId,
-        ownerProcess === "alive" ? "owner process is still alive" : "owner process identity is unverifiable",
+    try {
+      const ownerProcess = this.ownerProcessState(lease);
+      if (ownerProcess !== "absent") {
+        this.storage.quarantineWriterLease(lease.leaseId,
+          ownerProcess === "alive" ? "owner process is still alive" : "owner process identity is unverifiable",
+          actor, now);
+        this.heldLocks.set(lease.leaseId, releaseLock);
+        throw new LeaseRecoveryAmbiguousError(ownerProcess === "alive"
+          ? "Owner process is still alive, so the live writer is preserved"
+          : "Owner process identity is unverifiable");
+      }
+      this.storage.recoverExpiredWriterLease(lease.leaseId,
+        { ownerProcessAbsent: true, detail: "owner pid and start token authoritatively absent while lock held" },
         actor, now);
-      throw new LeaseRecoveryAmbiguousError(ownerProcess === "alive"
-        ? "Owner process is still alive, so the live writer is preserved"
-        : "Owner process identity is unverifiable");
+      releaseLock();
+      return this.inspect(workspaceId, now);
+    } catch (error) {
+      if (!this.heldLocks.has(lease.leaseId)) releaseLock();
+      throw error;
     }
-    this.storage.recoverExpiredWriterLease(lease.leaseId,
-      { ownerProcessAbsent: true, detail: "owner pid and start token authoritatively absent" },
-      actor, now);
-    this.dropLock(lease.leaseId);
-    return this.inspect(workspaceId, now);
   }
 
   /** The one repair flow: independently prove absence, then retire the generation. */
@@ -189,16 +211,31 @@ export class WorkspaceSafetyTool {
     if (!lease || lease.state !== "quarantined") {
       throw new LeaseRecoveryAmbiguousError("Repair requires an existing quarantined lease");
     }
-    if (this.lockHeldElsewhere(lease.workspaceId)) {
-      throw new LeaseRecoveryAmbiguousError("Another process may still hold the workspace lock");
+    const heldRelease = this.heldLocks.get(leaseId);
+    let releaseLock = heldRelease;
+    if (!releaseLock) {
+      try {
+        releaseLock = this.lock(lease.workspaceId);
+      } catch (error) {
+        if (error instanceof WorkspaceWriterBusyError) {
+          throw new LeaseRecoveryAmbiguousError("Another process may still hold the workspace lock");
+        }
+        throw error;
+      }
     }
-    if (this.ownerProcessState(lease) !== "absent") {
-      throw new LeaseRecoveryAmbiguousError("Repair refused without verified owner-process absence");
+    try {
+      if (this.ownerProcessState(lease) !== "absent") {
+        throw new LeaseRecoveryAmbiguousError("Repair refused without verified owner-process absence");
+      }
+      this.storage.repairQuarantinedWriterLease(leaseId,
+        { ownerProcessAbsent: true, detail: "local host, pid, start token, and exclusive lock verified" },
+        actor, now);
+      if (heldRelease) this.dropLock(leaseId);
+      else releaseLock();
+    } catch (error) {
+      if (!heldRelease) releaseLock();
+      throw error;
     }
-    this.storage.repairQuarantinedWriterLease(leaseId,
-      { ownerProcessAbsent: true, detail: "local host, pid, start token, and lock independently verified absent" },
-      actor, now);
-    this.dropLock(leaseId);
   }
 
   /** Drops every lock this instance holds without changing durable authority. */
@@ -218,9 +255,22 @@ export class WorkspaceSafetyTool {
   /** Owner-only lock file derived from the workspace key, never from a raw path. */
   private lockPath(workspaceId: string): string {
     mkdirSync(this.lockDirectory, { recursive: true, mode: 0o700 });
+    const directory = lstatSync(this.lockDirectory);
+    if (!directory.isDirectory() || directory.isSymbolicLink()
+      || (directory.mode & 0o077) !== 0 || directory.uid !== process.geteuid?.()) {
+      throw new LeaseRecoveryAmbiguousError("Workspace lock directory is not owner-only");
+    }
     const key = createHash("sha256").update(workspaceId, "utf8").digest("hex");
     const path = join(this.lockDirectory, `${key}.lease`);
-    closeSync(openSync(path, "a", 0o600));
+    const descriptor = openSync(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
+    try {
+      const file = fstatSync(descriptor);
+      if (!file.isFile() || file.nlink !== 1 || (file.mode & 0o077) !== 0 || file.uid !== process.geteuid?.()) {
+        throw new LeaseRecoveryAmbiguousError("Workspace lock file is not a private regular file");
+      }
+    } finally {
+      closeSync(descriptor);
+    }
     return path;
   }
 
@@ -248,5 +298,11 @@ export class WorkspaceSafetyTool {
     if (!release) return;
     this.heldLocks.delete(leaseId);
     release();
+  }
+
+  private assertLockHeld(leaseId: string): void {
+    if (!this.heldLocks.has(leaseId)) {
+      throw new LeaseRecoveryAmbiguousError("Writer no longer holds the workspace lock");
+    }
   }
 }

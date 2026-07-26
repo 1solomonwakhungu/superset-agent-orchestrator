@@ -130,6 +130,29 @@ test("heartbeat and release require the current token, owner, and row version", 
   });
 });
 
+test("lease actions fail after the owning tool loses its OS lock", async () => {
+  await withWorkspace(({ storage, tool }) => {
+    const owner = tool("server-a");
+    const lease = owner.acquireWriter({ workspaceId: "ws", ownerBatchId: "batch-1", ttlMs: 30_000 });
+    owner.close();
+    assert.throws(() => owner.heartbeat(lease, 30_000), LeaseRecoveryAmbiguousError);
+    assert.throws(() => owner.bindProcess(lease, process.pid), LeaseRecoveryAmbiguousError);
+    assert.throws(() => owner.releaseWriter(lease), LeaseRecoveryAmbiguousError);
+    assert.equal(storage.workspaceLeaseStatus("ws")?.state, "active");
+  });
+});
+
+test("a bound live process cannot release writer authority", async () => {
+  await withWorkspace(({ storage, probe, tool }) => {
+    probe.running.set(4_242, "start-token-1");
+    const owner = tool("server-a");
+    const lease = owner.bindProcess(
+      owner.acquireWriter({ workspaceId: "ws", ownerBatchId: "batch-1", ttlMs: 30_000 }), 4_242);
+    assert.throws(() => owner.releaseWriter(lease), LeaseRecoveryAmbiguousError);
+    assert.equal(storage.workspaceLeaseStatus("ws")?.state, "active");
+  });
+});
+
 test("expiry alone never releases a lease and recovery needs owner-process proof", async () => {
   await withWorkspace(({ storage, probe, tool }) => {
     const owner = tool("server-a");
