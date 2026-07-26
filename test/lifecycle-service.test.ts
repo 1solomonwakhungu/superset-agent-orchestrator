@@ -38,7 +38,10 @@ const refused = (result: CancellationResult) => {
 };
 
 async function launchedRun(adapter: FakeAgentAdapter, key: string): Promise<RunHandle> {
-  return adapter.launch({ idempotencyKey: key, prompt: "work", workspacePath: "/tmp/workspace" });
+  return adapter.launch({
+    idempotencyKey: key, prompt: "work", workspacePath: "/tmp/workspace",
+    environment: {}, revalidateWorkspace: async () => undefined,
+  });
 }
 
 test("unsupported cancellation is refused honestly and leaves durable state untouched", async () => harness(async (store) => {

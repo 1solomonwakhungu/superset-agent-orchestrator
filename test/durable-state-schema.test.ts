@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
@@ -18,6 +19,18 @@ type JsonState = Record<string, unknown>;
 
 /** A structurally complete state exercising every record kind the schema knows. */
 function validState(): JsonState {
+  const securityAudit = {
+    id: "security-1", sequence: 1, occurredAt: AT, requesterId: "client-1",
+    operation: "sessions_launch", decision: "allowed", reasonCode: "launch_accepted",
+    correlationId: "key-1", policyVersion: "2026-07-24.v1", workspaceId: "workspace-1",
+    projectId: "project-1", assignmentId: "assignment-1", previousEventHash: "0".repeat(64),
+  };
+  const securityAuditHash = createHash("sha256").update(JSON.stringify([
+    securityAudit.id, securityAudit.sequence, securityAudit.occurredAt, securityAudit.requesterId,
+    securityAudit.operation, securityAudit.decision, securityAudit.reasonCode, securityAudit.correlationId,
+    securityAudit.policyVersion, securityAudit.workspaceId, securityAudit.projectId,
+    securityAudit.assignmentId, securityAudit.previousEventHash,
+  ])).digest("hex");
   return {
     version: 1,
     sessions: [{ id: "session-1", clientId: "client-1", createdAt: AT, lastSeenAt: AT }],
@@ -65,6 +78,8 @@ function validState(): JsonState {
       claim: { status: "succeeded", completeness: "complete", output: "done" },
       verifiedArtifacts: [], capturedAt: AT,
     }],
+    securityAuditEvents: [{ ...securityAudit, eventHash: securityAuditHash }],
+    securityAuditHead: { sequence: 1, eventHash: securityAuditHash },
     reconciledAt: AT,
   };
 }
@@ -171,7 +186,7 @@ const rejectedStates: Array<[string, unknown]> = [
 test("valid durable state loads with every record kind intact", async () => {
   await withTemporaryDirectory("orchestrator-schema", async (directory) => {
     const path = join(directory, "state.json");
-    await writeFile(path, JSON.stringify(validState()));
+    await writeFile(path, JSON.stringify(validState()), { mode: 0o600 });
     const store = new DurableStore(path, () => true);
     const summary = await store.reconcile(new Date(AT));
 
@@ -195,7 +210,7 @@ test("malformed durable state is rejected without discarding the file", async ()
     for (const [description, state] of rejectedStates) {
       const path = join(directory, `${description.replaceAll(/[^a-z0-9]+/gi, "-")}.json`);
       const bytes = JSON.stringify(state, null, 2);
-      await writeFile(path, bytes);
+      await writeFile(path, bytes, { mode: 0o600 });
       const store = new DurableStore(path, () => true);
 
       await assert.rejects(
@@ -216,7 +231,7 @@ test("unreadable and truncated state documents fail closed", async () => {
       ["binary noise", "  not json"],
     ] as const) {
       const path = join(directory, `${description.replaceAll(" ", "-")}.json`);
-      await writeFile(path, bytes);
+      await writeFile(path, bytes, { mode: 0o600 });
       await assert.rejects(
         () => new DurableStore(path).reconcile(),
         (error: unknown) => error instanceof Error && /Cannot load orchestrator state/.test(error.message),
@@ -244,7 +259,7 @@ test("prototype-polluting payloads cannot escape the parser", async () => {
       ...validState(),
       ["__proto__"]: { polluted: "yes" },
       constructor: { prototype: { polluted: "yes" } },
-    }));
+    }), { mode: 0o600 });
 
     const store = new DurableStore(path, () => true);
     await assert.rejects(() => store.reconcile(new Date(AT)), /Cannot load orchestrator state/);
@@ -264,5 +279,7 @@ function emptyState(): Record<string, unknown> {
     auditEvents: [],
     launchIntents: [],
     capturedResults: [],
+    securityAuditEvents: [],
+    securityAuditHead: { sequence: 0, eventHash: "0".repeat(64) },
   };
 }

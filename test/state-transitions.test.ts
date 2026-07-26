@@ -20,6 +20,11 @@ import { steadyClock, withTemporaryDirectory } from "./support/deterministic.js"
 const ATTRIBUTION = { agent: "codex", task: "migrate" } as const;
 const HEX64 = "b".repeat(64);
 const LAUNCH_STATES: LaunchStatus[] = ["reserved", "dispatching", "unknown_outcome", "bound"];
+const authorizer = {
+  authorize: async (workspaceId: string) => ({
+    workspaceId, projectId: "project-test", canonicalPath: `/tmp/${workspaceId}`, revalidate: async () => undefined,
+  }),
+};
 
 function intentInput(key: string) {
   return {
@@ -39,15 +44,14 @@ function auditEvent(assignmentId: string, type: LaunchAuditEvent["type"], occurr
 async function launchedAssignment(directory: string, name: string) {
   const store = new DurableStore(join(directory, `${name}.json`));
   const clock = steadyClock();
-  const service = new LaunchService(store, new FakeAgentAdapter([]), clock);
+  const service = new LaunchService(store, new FakeAgentAdapter([]), authorizer, clock);
   const accepted = await service.accept({
     idempotencyKey: `${name}-key`,
     clientId: "client-1",
     batchName: name,
     attribution: ATTRIBUTION,
     prompt: "Do the work",
-    workspaceId: "workspace-1",
-    workspacePath: `/tmp/${name}`,
+    workspaceId: name,
   });
   await store.recordLaunchEvent(accepted.assignmentId, "launching", auditEvent(accepted.assignmentId, "launch_reserved", clock().toISOString()));
   const { assignment: launched } = await store.recordLaunchEvent(
@@ -164,15 +168,14 @@ test("a failed launch is terminal and never silently relaunches", async () => {
   await withTemporaryDirectory("orchestrator-transitions", async (directory) => {
     const store = new DurableStore(join(directory, "failed.json"));
     const clock = steadyClock();
-    const service = new LaunchService(store, new FakeAgentAdapter([]), clock);
+    const service = new LaunchService(store, new FakeAgentAdapter([]), authorizer, clock);
     const accepted = await service.accept({
       idempotencyKey: "failed-key",
       clientId: "client-1",
       batchName: "failed",
       attribution: ATTRIBUTION,
       prompt: "Do the work",
-      workspaceId: "workspace-1",
-      workspacePath: "/tmp/failed",
+      workspaceId: "failed",
     });
     await store.recordLaunchEvent(
       accepted.assignmentId,
@@ -259,15 +262,14 @@ test("results are refused before an assignment reaches launched", async () => {
   await withTemporaryDirectory("orchestrator-transitions", async (directory) => {
     const store = new DurableStore(join(directory, "premature.json"));
     const clock = steadyClock();
-    const service = new LaunchService(store, new FakeAgentAdapter([]), clock);
+    const service = new LaunchService(store, new FakeAgentAdapter([]), authorizer, clock);
     const accepted = await service.accept({
       idempotencyKey: "premature-key",
       clientId: "client-1",
       batchName: "premature",
       attribution: ATTRIBUTION,
       prompt: "Do the work",
-      workspaceId: "workspace-1",
-      workspacePath: "/tmp/premature",
+      workspaceId: "premature",
     });
     // Bind a run ID while the assignment is still only launching, so identity
     // matches and the status guard is the assertion under test.

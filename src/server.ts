@@ -5,7 +5,9 @@ import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { RedactionPolicy } from "./security.js";
 import { BatchQueryError, DurableStore } from "./store.js";
+import { assertRegisteredToolNames, assertSafeToolNames } from "./tool-security.js";
 import type { AgentAdapter } from "./agent-adapter.js";
 import { LifecycleService } from "./lifecycle-service.js";
 import {
@@ -26,9 +28,11 @@ import {
 
 const statePath = process.env.SUPERSET_ORCHESTRATOR_STATE
   ?? join(homedir(), ".local", "share", "superset-agent-orchestrator", "state.json");
+const redaction = new RedactionPolicy((process.env.SUPERSET_ORCHESTRATOR_REDACTION_CANARIES ?? "")
+  .split(",").map((value) => value.trim()).filter(Boolean));
 const store = new DurableStore(statePath, undefined, (measurement) => {
   console.error(`Batch query: ${JSON.stringify(measurement)}`);
-});
+}, undefined, redaction);
 /**
  * The stable Superset surface exposes no supported cancellation or status query today, so the default
  * backend refuses honestly instead of pretending. Swapping in a capable adapter enables the full path.
@@ -45,18 +49,28 @@ const unsupportedBackend: AgentAdapter = {
 const lifecycle = new LifecycleService(store, unsupportedBackend);
 
 function result(value: unknown) {
+  const safe = store.redactValue(value);
   return {
-    content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
-    structuredContent: value as Record<string, unknown>,
+    content: [{ type: "text" as const, text: JSON.stringify(safe, null, 2) }],
+    structuredContent: safe as Record<string, unknown>,
   };
 }
 
 function batchError(error: unknown) {
   const typed = error instanceof BatchQueryError;
   const value = {
-    error: { code: typed ? error.code : "internal_error", message: error instanceof Error ? error.message : String(error) },
+    error: { code: typed ? error.code : "internal_error", message: store.safeError(error) },
   };
   return { ...result(value), isError: true };
+}
+
+const registeredToolNames: string[] = [];
+
+/** Records a tool name and refuses a destructive or generic capability at registration. */
+function tool(name: string): string {
+  assertSafeToolNames([name]);
+  registeredToolNames.push(name);
+  return name;
 }
 
 function contractError(code: ErrorCode, message: string) {
@@ -73,7 +87,7 @@ async function main(): Promise<void> {
   console.error(`Startup reconciliation complete: ${JSON.stringify(reconciliation)}`);
   const reconciliationTimer = setInterval(() => {
     store.reconcile().catch((error: unknown) => {
-      console.error("Background reconciliation failed:", error);
+      console.error("Background reconciliation failed:", store.safeError(error));
     });
   }, Number(process.env.SUPERSET_ORCHESTRATOR_RECONCILE_MS ?? 30_000));
   reconciliationTimer.unref();
@@ -101,7 +115,7 @@ async function main(): Promise<void> {
     cursor: z.string().min(1).optional(),
   };
   server.registerTool(
-    "batches_create",
+    tool("batches_create"),
     {
       description: "Durably accept up to 250 attributed sessions and return stable IDs without waiting for execution",
       inputSchema: {
@@ -127,7 +141,7 @@ async function main(): Promise<void> {
     ["batches_status", "Get persisted mixed-state status without polling each agent", store.batchStatus.bind(store)],
     ["batches_results", "Get completed results independently while the rest of a batch continues", store.batchResults.bind(store)],
   ] as const) {
-    server.registerTool(name, { description, inputSchema: pageSchema }, async ({ batchId, sessionIds, limit, cursor }) => {
+    server.registerTool(tool(name), { description, inputSchema: pageSchema }, async ({ batchId, sessionIds, limit, cursor }) => {
       try {
         return result(await query(batchId, { limit, ...(sessionIds === undefined ? {} : { ids: sessionIds }), ...(cursor === undefined ? {} : { cursor }) }));
       } catch (error) {
@@ -136,7 +150,7 @@ async function main(): Promise<void> {
     });
   }
   server.registerTool(
-    "sessions_cancel",
+    tool("sessions_cancel"),
     {
       description: "Request cancellation for sessions; unsupported backends return CANCEL_UNSUPPORTED without changing state",
       inputSchema: cancelRequestSchema.shape,
@@ -158,7 +172,7 @@ async function main(): Promise<void> {
     },
   );
   server.registerTool(
-    "batches_cancel",
+    tool("batches_cancel"),
     {
       description: "Request cancellation for every nonterminal session in a batch and return item-level outcomes",
       inputSchema: batchCancelRequestSchema.shape,
@@ -193,7 +207,7 @@ async function main(): Promise<void> {
     },
   );
   server.registerTool(
-    "batches_wait",
+    tool("batches_wait"),
     {
       description: "Wait at most 30 seconds for aggregate batch progress and return exact partial counts on timeout",
       inputSchema: waitRequestSchema.shape,
@@ -207,7 +221,7 @@ async function main(): Promise<void> {
     },
   );
   server.registerTool(
-    "sessions_set_deadline",
+    tool("sessions_set_deadline"),
     {
       description: "Set an absolute deadline after which nonterminal sessions are expired as failed/deadline_exceeded",
       inputSchema: setDeadlineRequestSchema.shape,
@@ -233,7 +247,7 @@ async function main(): Promise<void> {
     },
   );
   server.registerTool(
-    "deadlines_enforce",
+    tool("deadlines_enforce"),
     {
       description: "Expire every nonterminal session whose deadline has passed and report the exact expirations",
       inputSchema: enforceDeadlinesRequestSchema.shape,
@@ -248,7 +262,7 @@ async function main(): Promise<void> {
     }))),
   );
   server.registerTool(
-    "recent_sessions",
+    tool("recent_sessions"),
     {
       description: "List durable orchestration sessions after a server or client restart",
       inputSchema: { limit: z.number().int().min(1).max(100).default(20) },
@@ -256,7 +270,7 @@ async function main(): Promise<void> {
     ({ limit }) => result({ sessions: store.recentSessions(limit) }),
   );
   server.registerTool(
-    "reopen_batch",
+    tool("reopen_batch"),
     {
       description: "Reopen the newest durable batch with an exact name, including attributed worker results",
       inputSchema: { name: z.string().min(1) },
@@ -265,11 +279,11 @@ async function main(): Promise<void> {
       const recovered = store.reopenBatch(name);
       return recovered
         ? result(recovered)
-        : { content: [{ type: "text", text: `No durable batch named ${JSON.stringify(name)}` }], isError: true };
+        : { ...result({ error: { code: "not_found", message: `No durable batch named ${JSON.stringify(name)}` } }), isError: true };
     },
   );
   server.registerTool(
-    "recovery_diagnostics",
+    tool("recovery_diagnostics"),
     {
       description: "List orphan, unknown-outcome, and missing-result diagnostics found during reconciliation",
       inputSchema: {
@@ -279,6 +293,7 @@ async function main(): Promise<void> {
     ({ kind }) => result({ diagnostics: store.diagnostics(kind) }),
   );
 
+  assertRegisteredToolNames(registeredToolNames);
   await server.connect(new StdioServerTransport());
 }
 
@@ -306,6 +321,6 @@ function contractCounts(counts: Record<import("./store.js").WorkerStatus, number
 }
 
 main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.stack : error);
+  console.error(store.safeError(error));
   process.exitCode = 1;
 });

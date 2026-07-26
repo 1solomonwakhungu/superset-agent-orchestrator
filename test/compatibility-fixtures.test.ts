@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { copyFile, readFile, readdir } from "node:fs/promises";
+import { chmod, copyFile, readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import test from "node:test";
@@ -171,6 +171,7 @@ test("state written before assignments existed still loads and reconciles", asyn
   await withTemporaryDirectory("orchestrator-compat", async (directory) => {
     const path = join(directory, "state.json");
     await copyFile(join(fixtureDirectory, "durable-state-legacy.json"), path);
+    await chmod(path, 0o600);
 
     const store = new DurableStore(path, () => false);
     const summary = await store.reconcile(new Date("2026-07-01T00:00:00.000Z"));
@@ -205,6 +206,7 @@ test("assignments without exact identities can never accept a result", async () 
   await withTemporaryDirectory("orchestrator-compat", async (directory) => {
     const path = join(directory, "state.json");
     await copyFile(join(fixtureDirectory, "durable-state-preidentity.json"), path);
+    await chmod(path, 0o600);
 
     const store = new DurableStore(path, () => false);
     await store.reconcile(new Date("2026-07-01T00:00:00.000Z"));
