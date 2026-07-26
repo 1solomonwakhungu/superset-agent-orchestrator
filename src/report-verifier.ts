@@ -69,11 +69,17 @@ const realSchema = z.object({
   const stageFailed = report.admission.stages.reduce((sum, stage) => sum + stage.failed, 0);
   const stageWithheld = report.admission.stages.reduce((sum, stage) => sum + stage.withheld, 0);
   const expectedStageSizes = [5, 10, 15];
-  const stagesConsistent = report.admission.stages.every((stage, index) => stage.stage === index + 1
-    && stage.planned === expectedStageSizes[index]
-    && stage.planned === stage.offered + stage.withheld
-    && stage.offered === stage.admitted + stage.failed
-    && stage.admitted === accepted.filter((session) => session.stage === stage.stage).length);
+  let priorStageIncomplete = false;
+  const stagesConsistent = report.admission.stages.every((stage, index) => {
+    const consistent = stage.stage === index + 1
+      && stage.planned === expectedStageSizes[index]
+      && stage.planned === stage.offered + stage.withheld
+      && stage.offered === stage.admitted + stage.failed
+      && stage.admitted === accepted.filter((session) => session.stage === stage.stage).length
+      && (!priorStageIncomplete || stage.offered === 0);
+    priorStageIncomplete ||= stage.offered < stage.planned || stage.failed > 0;
+    return consistent;
+  });
   const admissionConsistent = report.admission.planned === report.admission.offered + report.admission.withheld
     && report.admission.offered === report.admission.admitted + report.admission.failed
     && report.admission.offered === report.launch.attempted
