@@ -79,7 +79,7 @@ test("fake Superset timeout and malformed output fail deterministically without 
     [{ malformedCommands: ["status"], defaultScript: successScript() }, "PROVIDER_PROTOCOL_ERROR"],
   ] as const) {
     await withHarness(scenario, async ({ adapter, calls }) => {
-      const handle = await adapter.launch({ idempotencyKey: "one", prompt: "one", workspacePath: "/tmp/one" });
+      const handle = await adapter.launch(adapterRequest("one", "one", "/tmp/one"));
       await assert.rejects(async () => adapter.status(handle), (error: unknown) => {
         assert.equal(error instanceof SupersetProcessError && error.code, expectedCode);
         return true;
@@ -125,10 +125,10 @@ test("fake Superset covers every process adapter typed error", async () => {
   for (const [scenario, operation, code] of cases) {
     await withHarness(scenario, async ({ adapter, calls }) => {
       await assert.rejects(async () => {
-        if (operation === "launch") await adapter.launch({ idempotencyKey: "one", prompt: "one", workspacePath: "/tmp/one" });
+        if (operation === "launch") await adapter.launch(adapterRequest("one", "one", "/tmp/one"));
         if (operation === "find") await adapter.findByIdempotencyKey("one");
         if (operation === "cancel") {
-          const handle = await adapter.launch({ idempotencyKey: "one", prompt: "one", workspacePath: "/tmp/one" });
+          const handle = await adapter.launch(adapterRequest("one", "one", "/tmp/one"));
           await adapter.cancel(handle);
         }
       }, (error: unknown) => {
@@ -153,7 +153,7 @@ test("provider requests use stdin, exclude ambient secrets and proxy credentials
     }, async ({ adapter, calls }) => {
       const prompt = "p".repeat(200_000);
       await assert.rejects(
-        adapter.launch({ idempotencyKey: "large", prompt, workspacePath: "/tmp/large" }),
+        adapter.launch(adapterRequest("large", prompt, "/tmp/large")),
         (error: unknown) => {
           assert.equal(error instanceof SupersetProcessError && error.code, "LAUNCH_REJECTED");
           assert.equal(error instanceof Error && error.message.includes(secret), false);
@@ -185,11 +185,8 @@ test("provider requests use stdin, exclude ambient secrets and proxy credentials
 
 test("fake Superset serializes concurrent provider state transactions", async () => {
   await withHarness({ defaultScript: successScript() }, async ({ adapter, calls }) => {
-    const handles = await Promise.all(Array.from({ length: 40 }, (_, index) => adapter.launch({
-      idempotencyKey: `concurrent-${index}`,
-      prompt: `prompt-${index}`,
-      workspacePath: `/tmp/${index}`,
-    })));
+    const handles = await Promise.all(Array.from({ length: 40 }, (_, index) =>
+      adapter.launch(adapterRequest(`concurrent-${index}`, `prompt-${index}`, `/tmp/${index}`))));
     assert.equal(new Set(handles.map(({ runId }) => runId)).size, 40);
     assert.equal((await calls()).filter(({ command }) => command === "launch").length, 40);
   });
@@ -197,11 +194,8 @@ test("fake Superset serializes concurrent provider state transactions", async ()
 
 test("fake Superset deduplicates concurrent launches with the same provider key", async () => {
   await withHarness({ defaultScript: successScript() }, async ({ adapter, fakeState, calls }) => {
-    const handles = await Promise.all(Array.from({ length: 40 }, () => adapter.launch({
-      idempotencyKey: "same-key",
-      prompt: "same prompt",
-      workspacePath: "/tmp/same",
-    })));
+    const handles = await Promise.all(Array.from({ length: 40 }, () =>
+      adapter.launch(adapterRequest("same-key", "same prompt", "/tmp/same"))));
     assert.deepEqual(new Set(handles.map(({ runId }) => runId)), new Set(["fake-001"]));
     assert.equal(Object.keys((await fakeState()).runs).length, 1);
     assert.equal((await calls()).filter(({ command }) => command === "launch").length, 40);
@@ -251,6 +245,10 @@ function request(index: number, task: string) {
 
 function successScript() {
   return { statuses: ["succeeded"], result: { status: "succeeded", output: "ok" } };
+}
+
+function adapterRequest(idempotencyKey: string, prompt: string, workspacePath: string) {
+  return { idempotencyKey, prompt, workspacePath, environment: {}, revalidateWorkspace: async () => undefined };
 }
 
 async function withHarness(
