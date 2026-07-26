@@ -68,6 +68,12 @@ const realSchema = z.object({
   const stageAdmitted = report.admission.stages.reduce((sum, stage) => sum + stage.admitted, 0);
   const stageFailed = report.admission.stages.reduce((sum, stage) => sum + stage.failed, 0);
   const stageWithheld = report.admission.stages.reduce((sum, stage) => sum + stage.withheld, 0);
+  const expectedStageSizes = [5, 10, 15];
+  const stagesConsistent = report.admission.stages.every((stage, index) => stage.stage === index + 1
+    && stage.planned === expectedStageSizes[index]
+    && stage.planned === stage.offered + stage.withheld
+    && stage.offered === stage.admitted + stage.failed
+    && stage.admitted === accepted.filter((session) => session.stage === stage.stage).length);
   const admissionConsistent = report.admission.planned === report.admission.offered + report.admission.withheld
     && report.admission.offered === report.admission.admitted + report.admission.failed
     && report.admission.offered === report.launch.attempted
@@ -75,7 +81,7 @@ const realSchema = z.object({
     && report.admission.failed === report.launch.failures.length
     && stagePlanned === report.admission.planned && stageOffered === report.admission.offered
     && stageAdmitted === report.admission.admitted && stageFailed === report.admission.failed
-    && stageWithheld === report.admission.withheld
+    && stageWithheld === report.admission.withheld && stagesConsistent
     && report.admission.maxObservedInFlight <= report.configuration.maxInFlight;
   const latencies = accepted.map(({ latencyMs }) => latencyMs);
   const latencyConsistent = report.launch.latencyMs.p50 === percentile(latencies, 0.5)
