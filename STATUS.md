@@ -951,7 +951,8 @@ PER-336 security hotfix is complete locally after insecure PR 26 merged as `8989
 - Batch acceptance now authorizes canonical workspaces, writes one security audit per assignment atomically, preserves client-scoped idempotency, and persists complete typed provider errors before the durable write.
 - The gated production MCP fixture uses explicit canonical test workspaces; both fake-provider suites cover deterministic 100-session batches without weakening normal registered-workspace authorization.
 - Verification: `npm run check` passed with 0 failures, including formatting, ESLint, typecheck, build, TypeScript tests and coverage, Python tests (one optional skip), schema no-diff, provenance manifests, and the 28-work research contract. `git diff --check` passed.
-- Next: push the verified merge to PR 33, wait for exact-head checks, merge to main, and synchronize PER-347.
+- Final isolated verification against current `main`: clean `npm ci` and `npm run verify` passed 432 runnable TypeScript tests with 0 failures and 1 intentional live-discovery skip, 96.35% statement coverage, all Python/schema/provenance/research gates, and 10/10 race runs. `git diff --check` remained clean.
+- Next: push this final verification record to PR 33, require exact-head checks, merge to main, and synchronize PER-347.
 
 ## PER-342 live stop claim companion
 
