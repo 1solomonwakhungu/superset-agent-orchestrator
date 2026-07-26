@@ -60,6 +60,7 @@ export interface Worker {
   lifecycleReconcilePending?: boolean;
   cancellationDeliveryPending?: boolean;
   cancellationDeliveryClaimed?: boolean;
+  cancellationDelivered?: boolean;
   providerStopPending?: boolean;
   providerStopClaimed?: boolean;
   providerStopUnsupported?: boolean;
@@ -71,6 +72,14 @@ export interface LateObservation {
   observedAt: string;
   status: string;
   retainedResult: boolean;
+}
+
+const MAX_LATE_OBSERVATIONS = 32;
+
+function appendLateObservation(worker: Worker, observation: LateObservation): void {
+  const observations = (worker.lateObservations ??= []);
+  observations.push(observation);
+  if (observations.length > MAX_LATE_OBSERVATIONS) observations.splice(0, observations.length - MAX_LATE_OBSERVATIONS);
 }
 
 export interface BatchAssignment {
@@ -240,6 +249,7 @@ const workerSchema = z.object({
   lifecycleReconcilePending: z.boolean().optional(),
   cancellationDeliveryPending: z.boolean().optional(),
   cancellationDeliveryClaimed: z.boolean().optional(),
+  cancellationDelivered: z.boolean().optional(),
   providerStopPending: z.boolean().optional(),
   providerStopClaimed: z.boolean().optional(),
   providerStopUnsupported: z.boolean().optional(),
@@ -607,6 +617,9 @@ export class DurableStore {
     return this.updateWorker(workerId, (worker) => {
       delete worker.cancellationDeliveryClaimed;
       if (worker.status === "canceling") worker.cancellationDeliveryPending = true;
+      else if (worker.status === "failed" && worker.stopReason === "deadline_exceeded" && worker.runId !== undefined) {
+        worker.providerStopPending = true;
+      }
     });
   }
 
@@ -614,6 +627,9 @@ export class DurableStore {
     return this.updateWorker(workerId, (worker) => {
       delete worker.cancellationDeliveryPending;
       delete worker.cancellationDeliveryClaimed;
+      worker.cancellationDelivered = true;
+      delete worker.providerStopPending;
+      delete worker.providerStopClaimed;
     });
   }
 
@@ -630,6 +646,25 @@ export class DurableStore {
       delete worker.providerStopPending;
       delete worker.providerStopClaimed;
       worker.providerStopUnsupported = true;
+    });
+  }
+
+  async handleUnsupportedCancellation(workerId: string): Promise<Worker> {
+    return this.updateWorker(workerId, (worker) => {
+      delete worker.cancellationDeliveryPending;
+      delete worker.cancellationDeliveryClaimed;
+      if (worker.status === "failed" && worker.stopReason === "deadline_exceeded") {
+        delete worker.providerStopPending;
+        delete worker.providerStopClaimed;
+        worker.providerStopUnsupported = true;
+        return;
+      }
+      if (worker.status !== "canceling") return;
+      worker.status = worker.preCancelStatus ?? "requested";
+      delete worker.preCancelStatus;
+      delete worker.cancelRequestedAt;
+      delete worker.stopReason;
+      delete worker.stopDetail;
     });
   }
 
@@ -668,6 +703,8 @@ export class DurableStore {
           if (worker.status === "unknown_outcome") worker.status = "canceling";
           if (worker.runId !== undefined && !DurableStore.isTerminal(worker.status)) {
             worker.cancellationDeliveryPending = true;
+          } else if (worker.runId !== undefined && worker.status === "failed" && worker.stopReason === "deadline_exceeded") {
+            worker.providerStopPending = true;
           }
           changed = true;
         }
@@ -693,6 +730,7 @@ export class DurableStore {
       delete worker.cancelRequestedAt;
       delete worker.cancellationDeliveryPending;
       delete worker.cancellationDeliveryClaimed;
+      delete worker.cancellationDelivered;
       delete worker.stopReason;
       delete worker.stopDetail;
     });
@@ -713,7 +751,7 @@ export class DurableStore {
       if (DurableStore.isTerminal(worker.status)) {
         const retainedResult = options.result !== undefined && worker.result === undefined;
         if (retainedResult) worker.result = options.result;
-        (worker.lateObservations ??= []).push({ observedAt: at.toISOString(), status, retainedResult });
+        appendLateObservation(worker, { observedAt: at.toISOString(), status, retainedResult });
         delete worker.lifecycleReconcilePending;
         return;
       }
@@ -745,12 +783,18 @@ export class DurableStore {
     let claimed = false;
     const worker = await this.updateWorker(workerId, (candidate) => {
       if (DurableStore.isTerminal(candidate.status)) {
+        const wasPending = candidate.lifecycleReconcilePending === true;
         const retainedResult = options.result !== undefined && candidate.result === undefined;
+        const changedResult = options.result !== undefined
+          && JSON.stringify(candidate.result) !== JSON.stringify(options.result);
         if (retainedResult || (options.result !== undefined && candidate.lifecycleReconcilePending)) {
           candidate.result = options.result;
         }
-        (candidate.lateObservations ??= []).push({ observedAt: at.toISOString(), status, retainedResult });
-        if (!options.keepReconciliationPending) delete candidate.lifecycleReconcilePending;
+        if (retainedResult || changedResult || !options.keepReconciliationPending) {
+          appendLateObservation(candidate, { observedAt: at.toISOString(), status, retainedResult });
+        }
+        if (options.keepReconciliationPending && wasPending) candidate.lifecycleReconcilePending = true;
+        else delete candidate.lifecycleReconcilePending;
         delete candidate.cancellationDeliveryPending;
         delete candidate.cancellationDeliveryClaimed;
         return;
@@ -759,7 +803,8 @@ export class DurableStore {
       claimed = true;
       candidate.status = status;
       candidate.completedAt = at.toISOString();
-      if (!options.keepReconciliationPending) delete candidate.lifecycleReconcilePending;
+      if (options.keepReconciliationPending) candidate.lifecycleReconcilePending = true;
+      else delete candidate.lifecycleReconcilePending;
       delete candidate.cancellationDeliveryPending;
       delete candidate.cancellationDeliveryClaimed;
       if (options.result !== undefined) candidate.result = options.result;
@@ -794,10 +839,10 @@ export class DurableStore {
       const launch = this.state.assignments.find(({ sessionId }) => sessionId === candidate.id);
       if (candidate.runId !== undefined || launch?.status === "launching") {
         candidate.lifecycleReconcilePending = true;
-        candidate.providerStopPending = true;
+        if (!candidate.cancellationDeliveryClaimed && !candidate.cancellationDelivered) candidate.providerStopPending = true;
       }
       delete candidate.cancellationDeliveryPending;
-      delete candidate.cancellationDeliveryClaimed;
+      if (!candidate.cancellationDeliveryClaimed) delete candidate.cancellationDeliveryClaimed;
       delete candidate.preCancelStatus;
     });
     return { worker, claimed };
