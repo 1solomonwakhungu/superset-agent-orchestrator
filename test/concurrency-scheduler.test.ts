@@ -126,6 +126,33 @@ test("rejects overload structurally when queuing is disabled or full", async () 
   (await queued)();
 });
 
+test("bounded exhaustion rejects excess work and drains every admitted resource", async () => {
+  const scheduler = new ConcurrencyScheduler({ global: 2, maxQueued: 3 });
+  const releases = await Promise.all([
+    scheduler.acquire({ ...base, id: "active-1", workspaceId: "active-1" }),
+    scheduler.acquire({ ...base, id: "active-2", workspaceId: "active-2" }),
+  ]);
+  const queued = Array.from({ length: 3 }, (_, index) => scheduler.acquire({
+    ...base, id: `queued-${index}`, workspaceId: `queued-${index}`,
+  }));
+  await assert.rejects(
+    scheduler.acquire({ ...base, id: "overflow", workspaceId: "overflow" }),
+    (error: unknown) => error instanceof ConcurrencyError
+      && error.code === "CONCURRENCY_LIMIT"
+      && error.detail.queueDepth === 3,
+  );
+  assert.equal(scheduler.snapshot().active, 2);
+  assert.equal(scheduler.snapshot().queued.length, 3);
+
+  releases.forEach((release) => release());
+  const firstWave = await Promise.all(queued.slice(0, 2));
+  firstWave.forEach((release) => release());
+  (await queued[2]!)();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(scheduler.snapshot().active, 0);
+  assert.equal(scheduler.snapshot().queued.length, 0);
+});
+
 test("admits same-tick work up to available capacity before rejecting overload", async () => {
   const scheduler = new ConcurrencyScheduler({ global: 2, overload: "reject" });
   const first = scheduler.acquire(base);
