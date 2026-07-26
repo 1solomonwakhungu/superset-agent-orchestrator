@@ -21,6 +21,12 @@ export const PROVIDER_OPERATION_TIMEOUT_MS = 5_000;
 const PROVIDER_UNAVAILABLE_MESSAGE = "The backend lifecycle operation is temporarily unavailable";
 const MAX_PROVIDER_CONCURRENCY = 4;
 
+class ProviderOperationTimeoutError extends Error {
+  constructor(readonly settled: Promise<void>, readonly operationSettled: () => boolean) {
+    super("Provider lifecycle operation timed out");
+  }
+}
+
 export type LifecycleErrorCode =
   | "SESSION_NOT_FOUND"
   | "BATCH_NOT_FOUND"
@@ -191,7 +197,9 @@ export class LifecycleService {
       deliveryCompleted = true;
       return await this.settleFromProvider(sessionId, handle, true);
     } catch (error) {
-      if (!deliveryCompleted) await this.store.releaseCancellationDelivery(sessionId);
+      if (!deliveryCompleted) {
+        await this.releaseProviderClaimAfterFailure(error, () => this.store.releaseCancellationDelivery(sessionId));
+      }
       // Delivery is unknown, so cancellation intent stays recorded and the session remains canceling.
       return {
         sessionId,
@@ -231,7 +239,7 @@ export class LifecycleService {
               if (outcome?.status === "unsupported") await this.store.markProviderStopUnsupported(worker.id);
               else await this.store.markProviderStopDelivered(worker.id);
             } catch (error) {
-              await this.store.releaseProviderStop(worker.id);
+              await this.releaseProviderClaimAfterFailure(error, () => this.store.releaseProviderStop(worker.id));
               throw error;
             }
           }
@@ -279,9 +287,9 @@ export class LifecycleService {
               };
             }
             await this.store.markCancellationDelivered(worker.id);
-          } catch {
+          } catch (error) {
             // Status may still provide terminal evidence when stop delivery is uncertain.
-            await this.store.releaseCancellationDelivery(worker.id);
+            await this.releaseProviderClaimAfterFailure(error, () => this.store.releaseCancellationDelivery(worker.id));
           }
         }
         return await this.settleFromProvider(worker.id, { runId: worker.runId! });
@@ -312,7 +320,7 @@ export class LifecycleService {
               if (outcome?.status === "unsupported") await this.store.markProviderStopUnsupported(worker.id);
               else await this.store.markProviderStopDelivered(worker.id);
             } catch (error) {
-              await this.store.releaseProviderStop(worker.id);
+              await this.releaseProviderClaimAfterFailure(error, () => this.store.releaseProviderStop(worker.id));
               throw error;
             }
           }
@@ -438,12 +446,17 @@ export class LifecycleService {
       throw error;
     }
     let timedOut = false;
+    let operationSettled = false;
+    const settled = providerOperation.then(
+      () => { operationSettled = true; },
+      () => { operationSettled = true; },
+    );
     try {
       return await Promise.race([
         providerOperation,
         new Promise<never>((_, reject) => controller.signal.addEventListener("abort", () => {
           timedOut = true;
-          reject(new Error("Provider lifecycle operation timed out"));
+          reject(new ProviderOperationTimeoutError(settled, () => operationSettled));
         }, { once: true })),
       ]);
     } finally {
@@ -454,6 +467,15 @@ export class LifecycleService {
       );
       else this.releaseProviderSlot();
     }
+  }
+
+  private async releaseProviderClaimAfterFailure(error: unknown, release: () => Promise<unknown>): Promise<void> {
+    if (error instanceof ProviderOperationTimeoutError && !error.operationSettled()) {
+      // An adapter may ignore abort. Keep ownership until its destructive stop request truly settles.
+      void error.settled.then(release).catch(() => undefined);
+      return;
+    }
+    await release();
   }
 
   private async acquireProviderSlot(signal: AbortSignal): Promise<void> {
