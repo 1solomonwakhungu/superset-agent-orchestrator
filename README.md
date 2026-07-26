@@ -86,22 +86,22 @@ coverage thresholds, and repeat the concurrency-sensitive suites.
 
 ## Tests
 
-The suite is deterministic and offline: no network access, no installed Superset
-CLI, injected clocks, and seeded generators. See
+The required suite is offline and controls timing and randomness where outcomes
+depend on them; the live Superset smoke is explicit opt-in. See
 [`docs/testing-strategy.md`](docs/testing-strategy.md) for the layer map and
 [`docs/flaky-test-policy.md`](docs/flaky-test-policy.md) for how a flake is
 triaged and when quarantine is permitted.
 
-| Command                 | Purpose                                                                        |
-| ----------------------- | ------------------------------------------------------------------------------ |
-| `npm test`              | Full suite                                                                     |
-| `npm run test:coverage` | Full suite, failing below 95% lines, 88% branches, 92% functions over `src/**` |
-| `npm run test:race`     | Repeats the concurrency-sensitive suites (`RACE_REPEATS`, default 10)          |
-| `npm run check`         | Type checking with no emit                                                     |
+| Command                 | Purpose                                                                                            |
+| ----------------------- | -------------------------------------------------------------------------------------------------- |
+| `npm test`              | Full suite                                                                                         |
+| `npm run test:coverage` | Full suite; critical domain/security set requires aggregate 95% lines, 88% branches, 92% functions |
+| `npm run test:race`     | Repeats the concurrency-sensitive suites (`RACE_REPEATS`, default 10)                              |
+| `npm run check`         | Formatting, lint, typecheck, build, JS/Python tests, coverage, and schema diff                     |
 
-Frozen provider payloads and durable state files from earlier releases live in
-`test/fixtures/compat/`. Changing an expectation there is a compatibility change
-and must be reviewed as one.
+Synthetic provider and durable-state compatibility cases live in
+`test/fixtures/compat/`, with provenance and sanitization metadata in that
+directory's manifest. Changing an expectation there is a contract change.
 
 ## Contributions
 

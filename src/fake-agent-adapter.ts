@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import type {
   AgentAdapter,
   LaunchRequest,
@@ -38,7 +39,7 @@ export class FakeAgentAdapter implements AgentAdapter {
     const existing = this.runsByIdempotencyKey.get(request.idempotencyKey);
     if (existing !== undefined) {
       const original = this.requestsByIdempotencyKey.get(request.idempotencyKey);
-      if (JSON.stringify(original) !== JSON.stringify(request)) {
+      if (!isDeepStrictEqual(original, request)) {
         throw new Error("Idempotency key was already used for a different launch request");
       }
       return existing;

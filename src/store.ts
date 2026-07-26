@@ -177,16 +177,16 @@ export interface ReconciliationSummary {
   reconciledAt: string;
 }
 
-const attributionSchema = z.object({ agent: z.string().min(1), task: z.string().min(1) });
-const sessionSchema = z.object({
+const attributionSchema = z.strictObject({ agent: z.string().min(1), task: z.string().min(1) });
+const sessionSchema = z.strictObject({
   id: z.string().min(1), clientId: z.string().min(1), createdAt: z.iso.datetime(), lastSeenAt: z.iso.datetime(),
 });
-const batchSchema = z.object({
+const batchSchema = z.strictObject({
   id: z.string().min(1), name: z.string().min(1), sessionId: z.string().min(1),
   createdAt: z.iso.datetime(), updatedAt: z.iso.datetime(), idempotencyKey: z.string().min(1).optional(),
   clientId: z.string().min(1).optional(), requestFingerprint: z.string().min(1).optional(),
 });
-const workerSchema = z.object({
+const workerSchema = z.strictObject({
   id: z.string().min(1), batchId: z.string().min(1), sessionId: z.string().min(1),
   pid: z.number().int().positive().optional(),
   processStartedAt: z.string().min(1).optional(),
@@ -198,11 +198,11 @@ const workerSchema = z.object({
     context.addIssue({ code: "custom", message: "Running workers require a PID and process start token" });
   }
 });
-const diagnosticSchema = z.object({
+const diagnosticSchema = z.strictObject({
   id: z.string().min(1), kind: z.enum(["orphan", "unknown_outcome", "missing_result"]),
   workerId: z.string().min(1), message: z.string().min(1), detectedAt: z.iso.datetime(),
 });
-const assignmentSchema = z.object({
+const assignmentSchema = z.strictObject({
   id: z.string().min(1), idempotencyKey: z.string().min(1), requestFingerprint: z.string().min(1),
   batchId: z.string().min(1), sessionId: z.string().min(1),
   status: z.enum(["accepted", "launching", "launched", "failed"]), attribution: attributionSchema,
@@ -210,26 +210,26 @@ const assignmentSchema = z.object({
   attemptId: z.string().min(1).optional(), attempt: z.number().int().positive().optional(), acceptedAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(), runId: z.string().min(1).optional(), error: z.string().min(1).optional(),
 });
-const resultClaimSchema = z.object({
+const resultClaimSchema = z.strictObject({
   status: z.enum(["succeeded", "failed", "cancelled", "stopped_without_result", "malformed"]),
   completeness: z.enum(["complete", "empty", "partial", "missing", "malformed"]),
   output: z.string().optional(), error: z.string().min(1).optional(), retryable: z.boolean().optional(),
   stopReason: z.string().min(1).optional(),
-  resume: z.object({ adapter: z.string().min(1), token: z.string().min(1) }).optional(),
+  resume: z.strictObject({ adapter: z.string().min(1), token: z.string().min(1) }).optional(),
 });
-const capturedResultSchema = z.object({
+const capturedResultSchema = z.strictObject({
   deliveryId: z.string().min(1), deliveryFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   assignmentId: z.string().min(1), batchId: z.string().min(1), sessionId: z.string().min(1),
   workspaceId: z.string().min(1), workspacePath: z.string().min(1), attemptId: z.string().min(1),
   attempt: z.number().int().positive(), runId: z.string().min(1), attribution: attributionSchema,
   claim: resultClaimSchema, verifiedArtifacts: z.tuple([]), capturedAt: z.iso.datetime(),
 });
-const auditEventSchema = z.object({
+const auditEventSchema = z.strictObject({
   id: z.string().min(1), assignmentId: z.string().min(1),
   type: z.enum(["launch_accepted", "launch_reserved", "execution_started", "launch_failed"]),
   occurredAt: z.iso.datetime(), runId: z.string().min(1).optional(), error: z.string().min(1).optional(),
 });
-const launchIntentSchema = z.object({
+const launchIntentSchema = z.strictObject({
   idempotencyKey: z.string().min(1), requestHash: z.string().regex(/^[a-f0-9]{64}$/),
   sessionId: z.string().min(1), batchId: z.string().min(1), workerId: z.string().min(1),
   attribution: attributionSchema,
@@ -241,7 +241,7 @@ const launchIntentSchema = z.object({
     context.addIssue({ code: "custom", message: "Bound launch intents require a run ID" });
   }
 });
-const stateSchema = z.object({
+const stateSchema = z.strictObject({
   version: z.literal(1), sessions: z.array(sessionSchema), batches: z.array(batchSchema),
   workers: z.array(workerSchema), diagnostics: z.array(diagnosticSchema),
   assignments: z.array(assignmentSchema).default([]), auditEvents: z.array(auditEventSchema).default([]),
@@ -269,6 +269,35 @@ const stateSchema = z.object({
     deliveries.add(result.deliveryId);
     attempts.add(result.attemptId);
   }
+  const sessionIds = new Set(state.sessions.map(({ id }) => id));
+  const batchIds = new Set(state.batches.map(({ id }) => id));
+  const assignmentById = new Map(state.assignments.map((assignment) => [assignment.id, assignment]));
+  for (const batch of state.batches) {
+    if (!sessionIds.has(batch.sessionId)) context.addIssue({ code: "custom", message: `Batch ${batch.id} references an unknown session` });
+  }
+  // Workers may be orphaned by an interrupted older write; reconciliation
+  // classifies that explicit recovery state instead of rejecting the document.
+  for (const assignment of state.assignments) {
+    if (!batchIds.has(assignment.batchId) || !sessionIds.has(assignment.sessionId)) {
+      context.addIssue({ code: "custom", message: `Assignment ${assignment.id} has invalid batch or session identity` });
+    }
+  }
+  for (const event of state.auditEvents) {
+    if (!assignmentById.has(event.assignmentId)) context.addIssue({ code: "custom", message: `Audit event ${event.id} references an unknown assignment` });
+  }
+  for (const result of state.capturedResults) {
+    const assignment = assignmentById.get(result.assignmentId);
+    if (assignment === undefined
+      || result.batchId !== assignment.batchId
+      || result.sessionId !== assignment.sessionId
+      || result.runId !== assignment.runId
+      || result.workspaceId !== assignment.workspaceId
+      || result.workspacePath !== assignment.workspacePath
+      || result.attemptId !== assignment.attemptId
+      || result.attempt !== assignment.attempt) {
+      context.addIssue({ code: "custom", message: `Captured result ${result.deliveryId} does not match its assignment` });
+    }
+  }
 });
 
 const EMPTY_STATE: DurableState = {
@@ -295,6 +324,7 @@ export class DurableStore {
     private readonly isProcessAlive: (pid: number, processStartedAt?: string) => boolean = (...args) => DurableStore.isProcessAlive(...args),
     private readonly observeQuery: (measurement: QueryMeasurement) => void = () => undefined,
     private readonly now: () => number = performance.now.bind(performance),
+    private readonly persistOverride?: (state: DurableState) => Promise<void>,
   ) {}
 
   async createBatch(
@@ -487,7 +517,8 @@ export class DurableStore {
   async updateLaunch(idempotencyKey: string, status: LaunchStatus, options: { runId?: string; diagnostic?: string } = {}, now = new Date()): Promise<LaunchIntent> {
     return this.withLock(async () => {
       await this.load();
-      const intent = this.state.launchIntents?.find((candidate) => candidate.idempotencyKey === idempotencyKey);
+      const nextState = structuredClone(this.state);
+      const intent = nextState.launchIntents?.find((candidate) => candidate.idempotencyKey === idempotencyKey);
       if (intent === undefined) throw new Error(`Unknown launch idempotency key: ${idempotencyKey}`);
       const transitions: Record<LaunchStatus, readonly LaunchStatus[]> = {
         reserved: ["reserved", "dispatching", "unknown_outcome"],
@@ -509,7 +540,9 @@ export class DurableStore {
         throw new Error("A bound launch cannot be rebound");
       }
       Object.assign(intent, updated);
-      await this.persist();
+      if (this.persistOverride === undefined) await this.persist(nextState);
+      else await this.persistOverride(nextState);
+      this.state = nextState;
       return structuredClone(intent);
     });
   }
@@ -732,12 +765,12 @@ export class DurableStore {
     }
   }
 
-  private async persist(): Promise<void> {
+  private async persist(state: DurableState = this.state): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true });
     const temporaryPath = `${this.path}.${process.pid}.${randomUUID()}.tmp`;
     const file = await open(temporaryPath, "wx", 0o600);
     try {
-      await file.writeFile(`${JSON.stringify(this.state, null, 2)}\n`, "utf8");
+      await file.writeFile(`${JSON.stringify(state, null, 2)}\n`, "utf8");
       await file.sync();
     } finally {
       await file.close();

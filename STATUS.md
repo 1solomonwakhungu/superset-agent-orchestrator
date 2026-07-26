@@ -3,17 +3,19 @@
 ## PER-346 deterministic offline test hardening
 
 - Completed: Added property-style domain-invariant tests, durable-state schema
-  and malformed-payload rejection tests, MCP schema contract tests, frozen
-  compatibility fixtures for Codex, OpenCode, and two earlier durable state
-  shapes, state-transition tests, concurrency and workspace-lease exclusivity
+  and malformed-payload rejection tests, MCP schema contract tests, synthetic
+  compatibility cases for Codex, OpenCode, and historical durable-state shapes,
+  state-transition tests, concurrency and workspace-lease exclusivity
   tests, and adversarial security-control tests. Added enforced coverage
   thresholds, a repeated race-test runner, a testing strategy document, and a
-  flaky-test policy. No product code was added to satisfy a test.
+  flaky-test policy. Product fixes enforce canonical adapter idempotency,
+  fail-closed durable schemas, monotonic launch transitions, and atomic
+  `updateLaunch` in-memory state on persistence failure.
 - Key results after integrating `main@cbd44e1` and its subsequent persistence
-  dependency: 185 active JS/TS tests and
+  dependency: 190 active JS/TS tests and
   3 Python tests pass, with one explicit Superset Desktop smoke skip. C8 reports
-  97.02% lines/statements, 88.07% branches, and 92.71% functions across all
-  source files. Twenty repeated race runs and 75 focused domain, schema,
+  98.09% lines/statements, 92.61% branches, and 95.77% functions across the
+  enforced critical modules. Twenty repeated race runs and focused domain, schema,
   contract, persistence, and safety tests passed.
 - Review follow-up: Standalone coverage and race commands now build their
   required artifacts, the real discovery smoke test is explicitly opt-in, and

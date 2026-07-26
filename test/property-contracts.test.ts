@@ -29,6 +29,55 @@ test("checked adapter fixtures replay deterministically and enforce idempotency"
   }), propertyOptions);
 });
 
+test("adapter idempotency ignores object property order but rejects semantic changes", async () => {
+  const scripts = JSON.parse(await readFile(new URL("./fixtures/adapter-runs.json", import.meta.url), "utf8")) as FakeRunScript[];
+  const adapter = new FakeAgentAdapter(scripts);
+  const first = await adapter.launch({
+    idempotencyKey: "ordered-key", prompt: "fixture prompt", workspacePath: "/tmp/fixture-workspace",
+  });
+  const reordered: LaunchRequest = {
+    workspacePath: "/tmp/fixture-workspace", prompt: "fixture prompt", idempotencyKey: "ordered-key",
+  };
+  assert.deepEqual(await adapter.launch(reordered), first);
+  assert.equal(adapter.launches.length, 1);
+});
+
+test("failed launch-intent persistence leaves in-memory state unchanged", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "launch-persist-failure-"));
+  try {
+    const path = join(directory, "state.json");
+    const initial = new DurableStore(path);
+    await initial.reserveLaunch({
+      idempotencyKey: "failure-key", requestHash: "a".repeat(64), sessionId: "session-1",
+      batchId: "batch-1", workerId: "worker-1", attribution: { agent: "codex", task: "test" },
+    });
+    const store = new DurableStore(path, undefined, undefined, undefined, async () => {
+      throw new Error("injected persistence failure");
+    });
+    await assert.rejects(store.updateLaunch("failure-key", "dispatching"), /injected persistence failure/);
+    assert.equal(store.launchIntents()[0]?.status, "reserved");
+    assert.equal(new DurableStore(path).launchIntents().length, 0, "an unloaded verifier has no stale in-memory state");
+    const verifier = new DurableStore(path);
+    await verifier.reconcile();
+    assert.equal(verifier.launchIntents()[0]?.status, "reserved");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("recent session queries and default process identity checks execute", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "store-query-coverage-"));
+  try {
+    const store = new DurableStore(join(directory, "state.json"));
+    await store.createBatch("recent", "client-1", [{ agent: "codex", task: "test" }]);
+    assert.equal(store.recentSessions(1).length, 1);
+    assert.equal(DurableStore.processStartedAt(999_999), undefined);
+    await store.reconcile();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("launch state transitions accept only monotonic paths and require a run ID when bound", async () => {
   const allowed: Record<LaunchStatus, readonly LaunchStatus[]> = {
     reserved: ["reserved", "dispatching", "unknown_outcome"],

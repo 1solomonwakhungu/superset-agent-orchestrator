@@ -6,6 +6,7 @@
 set -euo pipefail
 
 REPEATS="${RACE_REPEATS:-10}"
+MAX_REPEATS=100
 RACE_SUITES=(
   "test/idempotency-and-leases.test.ts"
   "test/state-transitions.test.ts"
@@ -17,13 +18,27 @@ RACE_SUITES=(
 
 cd "$(dirname "$0")/.."
 
+if [[ ! "$REPEATS" =~ ^[1-9][0-9]*$ ]] || ((REPEATS > MAX_REPEATS)); then
+  printf 'RACE_REPEATS must be an integer from 1 to %d\n' "$MAX_REPEATS" >&2
+  exit 2
+fi
+
+TSX="./node_modules/.bin/tsx"
+if [[ ! -x "$TSX" ]]; then
+  printf 'local tsx binary is unavailable; run npm ci first\n' >&2
+  exit 2
+fi
+
+LOG_DIRECTORY="$(mktemp -d "${TMPDIR:-/tmp}/orchestrator-race.XXXXXX")"
+trap 'rm -rf "$LOG_DIRECTORY"' EXIT
+
 failures=0
 for ((run = 1; run <= REPEATS; run += 1)); do
   printf 'race run %d/%d\n' "$run" "$REPEATS"
-  if ! npx tsx --test "${RACE_SUITES[@]}" > "${TMPDIR:-/tmp}/race-run-$run.log" 2>&1; then
+  if ! "$TSX" --test "${RACE_SUITES[@]}" > "$LOG_DIRECTORY/race-run-$run.log" 2>&1; then
     failures=$((failures + 1))
     printf 'FAILED run %d; output follows\n' "$run"
-    cat "${TMPDIR:-/tmp}/race-run-$run.log"
+    cat "$LOG_DIRECTORY/race-run-$run.log"
   fi
 done
 

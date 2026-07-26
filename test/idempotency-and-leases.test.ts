@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import test from "node:test";
+import { Worker } from "node:worker_threads";
 import { FakeAgentAdapter } from "../src/fake-agent-adapter.js";
 import { LaunchService } from "../src/launch-service.js";
 import { OrchestratorStorage } from "../src/storage.js";
@@ -220,34 +221,29 @@ test("concurrent acceptances of one idempotency key create one assignment", asyn
   });
 });
 
-test("the registry constraint admits exactly one active writer lease per workspace", async () => {
+test("simultaneous worker threads prove the database writer-lease constraint", async () => {
   await withTemporaryDirectory("orchestrator-lease", async (directory) => {
     const path = join(directory, "registry.sqlite");
     const owner = new OrchestratorStorage(path);
     try {
       seedLeaseFixture(owner);
-      const contenders = Array.from({ length: CONTENDERS }, () => new OrchestratorStorage(path));
-      try {
-        const outcomes = contenders.map((storage, index) => {
-          try {
-            insertLease(storage, `lease-${index}`, "writer", null);
-            return "acquired";
-          } catch (error) {
-            assert.match((error as Error).message, /UNIQUE/);
-            return "refused";
-          }
-        });
-        assert.equal(outcomes.filter((outcome) => outcome === "acquired").length, 1,
-          "the partial unique index admits a single active writer");
-      } finally {
-        for (const storage of contenders) storage.close();
-      }
-
-      const active = owner.database
-        .prepare("SELECT id FROM workspace_leases WHERE mode = 'writer' AND released_at IS NULL").all();
-      assert.equal(active.length, 1);
-    } finally {
       owner.close();
+      const barrier = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 2);
+      const outcomes = await Promise.all(Array.from({ length: CONTENDERS }, (_, index) =>
+        contendForWriterLease(path, `lease-${index}`, barrier, CONTENDERS)));
+      assert.equal(outcomes.filter((outcome) => outcome === "acquired").length, 1);
+      assert.equal(outcomes.filter((outcome) => outcome === "refused").length, CONTENDERS - 1);
+
+      const verifier = new OrchestratorStorage(path);
+      try {
+        const active = verifier.database
+          .prepare("SELECT id FROM workspace_leases WHERE mode = 'writer' AND released_at IS NULL").all();
+        assert.equal(active.length, 1);
+      } finally {
+        verifier.close();
+      }
+    } finally {
+      try { owner.close(); } catch { /* already closed before worker contention */ }
     }
   });
 });
@@ -276,7 +272,7 @@ test("expiry alone never releases a writer lease", async () => {
   });
 });
 
-test("read-only leases share a workspace and cleanup preserves unreleased writers", async () => {
+test("cleanup preserves every unreleased lease, including an expired writer", async () => {
   await withTemporaryDirectory("orchestrator-lease", async (directory) => {
     const storage = new OrchestratorStorage(join(directory, "registry.sqlite"));
     try {
@@ -291,13 +287,13 @@ test("read-only leases share a workspace and cleanup preserves unreleased writer
         "a lease cannot outlive or precede its batch",
       );
 
-      insertLease(storage, "expired-reader", "read-only", null, AT, "2026-07-01T00:00:01.000Z");
+      insertLease(storage, "expired-writer", "writer", null, AT, "2026-07-01T00:00:01.000Z");
       insertLease(storage, "released-reader", "read-only", LATER);
       const summary = storage.cleanup(new Date("2026-07-02T00:00:00.000Z"));
       assert.equal(summary.leasesDeleted, 1, "cleanup reclaims released leases but cannot infer writer death from expiry");
       assert.equal(storage.database.prepare("SELECT COUNT(*) count FROM workspace_leases").get()?.count, 4);
       assert.equal(
-        storage.database.prepare("SELECT COUNT(*) count FROM workspace_leases WHERE id = 'expired-reader'").get()?.count,
+        storage.database.prepare("SELECT COUNT(*) count FROM workspace_leases WHERE id = 'expired-writer'").get()?.count,
         1,
       );
     } finally {
@@ -351,4 +347,55 @@ function insertLease(
 ): void {
   storage.database.prepare("INSERT INTO workspace_leases VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
     .run(id, "workspace-1", mode, "session-1", batchId, acquiredAt, expiresAt, releasedAt);
+}
+
+async function contendForWriterLease(
+  path: string,
+  leaseId: string,
+  barrier: SharedArrayBuffer,
+  contenders: number,
+): Promise<string> {
+  const worker = new Worker(`
+    const { parentPort, workerData } = require("node:worker_threads");
+    const { DatabaseSync } = require("node:sqlite");
+    const barrier = new Int32Array(workerData.barrier);
+    const db = new DatabaseSync(workerData.path, { timeout: 5000 });
+    const arrived = Atomics.add(barrier, 0, 1) + 1;
+    if (arrived === workerData.contenders) {
+      Atomics.store(barrier, 1, 1);
+      Atomics.notify(barrier, 1, workerData.contenders);
+    }
+    while (Atomics.load(barrier, 1) === 0) Atomics.wait(barrier, 1, 0);
+    try {
+      db.prepare("INSERT INTO workspace_leases VALUES (?, 'workspace-1', 'writer', 'session-1', 'batch-1', ?, ?, NULL)")
+        .run(workerData.leaseId, workerData.at, workerData.later);
+      parentPort.postMessage("acquired");
+    } catch (error) {
+      parentPort.postMessage(String(error).includes("UNIQUE") ? "refused" : { error: String(error) });
+    } finally {
+      db.close();
+    }
+  `, { eval: true, workerData: { path, leaseId, barrier, contenders, at: AT, later: LATER } });
+  const outcome = await new Promise<string | { error: string }>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      void worker.terminate();
+      reject(new Error(`writer contender ${leaseId} timed out`));
+    }, 5_000);
+    worker.once("message", (message: string | { error: string }) => {
+      clearTimeout(timer);
+      resolve(message);
+    });
+    worker.once("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    worker.once("exit", (code) => {
+      if (code !== 0) {
+        clearTimeout(timer);
+        reject(new Error(`writer contender ${leaseId} exited with code ${code}`));
+      }
+    });
+  });
+  if (typeof outcome !== "string") throw new Error(outcome.error);
+  return outcome;
 }

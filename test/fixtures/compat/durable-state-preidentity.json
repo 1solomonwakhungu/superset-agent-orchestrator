@@ -1,5 +1,4 @@
 {
-  "$comment": "A state file written before assignments carried exact workspace and attempt identities, and before captured results existed.",
   "version": 1,
   "sessions": [
     { "id": "session-pre-1", "clientId": "hermes-cli", "createdAt": "2026-06-01T09:00:00.000Z", "lastSeenAt": "2026-06-01T09:00:00.000Z" }
