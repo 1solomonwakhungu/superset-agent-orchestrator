@@ -17,10 +17,6 @@ const authorizer: WorkspaceAuthorizer = {
     revalidate: async () => undefined,
   }),
 };
-const adapterRequest = (idempotencyKey: string, prompt: string, workspacePath: string) => ({
-  idempotencyKey, prompt, workspacePath, environment: {}, revalidateWorkspace: async () => undefined,
-});
-
 test("fake Superset proves completion, failure, cancellation, restart recovery, and exact attribution", async () => {
   await withHarness({
     scripts: [
@@ -110,7 +106,7 @@ test("accepted launches recover after one-shot timeout and malformed responses w
 
       const ledger = await calls();
       assert.deepEqual(ledger.map(({ command }) => command), ["launch", "find"]);
-      assert.deepEqual(ledger[1]?.fault, { id: `first-launch-${action}`, action });
+      assert.deepEqual(ledger[0]?.fault, { id: `first-launch-${action}`, action });
       assert.deepEqual(ledger[1]?.response, { runId: "fake-001" });
       assert.equal(Object.keys((await fakeState()).runs).length, 1);
     }, action === "hang" ? 250 : 10_000);
