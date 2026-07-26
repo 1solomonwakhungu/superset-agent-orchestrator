@@ -199,6 +199,16 @@ export class LaunchService {
         });
     } catch (error) {
       if (error instanceof InjectedCrash) throw error;
+      const recovered = await this.adapter.findByIdempotencyKey(assignment.idempotencyKey);
+      if (recovered !== undefined) {
+        const launchedAt = this.now().toISOString();
+        await this.store.recordLaunchEvent(
+          assignment.id,
+          "launched",
+          event(assignment.id, "execution_started", launchedAt, { runId: recovered.runId }),
+        );
+        return;
+      }
       if (!hasErrorCode(error, "LAUNCH_REJECTED")) throw error;
       const message = error instanceof Error ? error.message : String(error);
       const failedAt = this.now().toISOString();

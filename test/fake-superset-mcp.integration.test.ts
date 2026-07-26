@@ -5,9 +5,28 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { z } from "zod";
 
 const server = resolve("dist/src/server.js");
 const fake = resolve("test/fixtures/fake-superset.mjs");
+const errorSchema = z.object({ code: z.string() }).passthrough();
+const claimSchema = z.object({
+  output: z.string().optional(), error: z.string().optional(), stopReason: z.string().optional(),
+}).passthrough();
+const resultSchema = z.object({
+  claim: claimSchema,
+  attribution: z.object({ agent: z.string(), task: z.string() }).passthrough(),
+}).passthrough();
+const sessionSchema = z.object({ sessionId: z.string(), batchId: z.string() }).passthrough();
+const responseSchema = z.object({
+  batch_id: z.string().optional(),
+  sessions: z.array(sessionSchema).default([]),
+  items: z.array(z.object({
+    canceled: z.boolean().optional(), workspace_id: z.string().optional(),
+    result: resultSchema.optional(), error: errorSchema.optional(),
+  }).passthrough()).default([]),
+  error: errorSchema.optional(),
+}).passthrough();
 
 test("production MCP server persists attributed completion, failure, cancellation, and restart", async () => {
   await withServer({
@@ -26,21 +45,21 @@ test("production MCP server persists attributed completion, failure, cancellatio
     const cancelResponse = await call(harness.client, "provider_sessions_cancel", {
       request_id: "cancel", session_ids: [canceled.sessionId], reason: "operator request",
     });
-    assert.equal(cancelResponse.items[0].canceled, true);
+    assert.equal(cancelResponse.items[0]?.canceled, true);
     const terminal = await results(harness.client, launched.sessions.map(({ sessionId }) => sessionId));
-    assert.equal(terminal.items[0].result.claim.output, "exact answer");
-    assert.equal(terminal.items[0].result.attribution.task, "task-0");
-    assert.equal(terminal.items[0].workspace_id, "workspace-0");
-    assert.equal(terminal.items[1].result.claim.error, "agent failed");
-    assert.equal(terminal.items[2].result.claim.stopReason, "operator request");
+    assert.equal(terminal.items[0]?.result?.claim.output, "exact answer");
+    assert.equal(terminal.items[0]?.result?.attribution.task, "task-0");
+    assert.equal(terminal.items[0]?.workspace_id, "workspace-0");
+    assert.equal(terminal.items[1]?.result?.claim.error, "agent failed");
+    assert.equal(terminal.items[2]?.result?.claim.stopReason, "operator request");
     const terminalCancel = await call(harness.client, "provider_sessions_cancel", {
       request_id: "late-cancel", session_ids: [complete.sessionId],
     });
-    assert.equal(terminalCancel.items[0].error.code, "INVALID_TRANSITION");
+    assert.equal(terminalCancel.items[0]?.error?.code, "INVALID_TRANSITION");
 
     await harness.restart();
     const recovered = await results(harness.client, launched.sessions.map(({ sessionId }) => sessionId));
-    assert.deepEqual(recovered.items.map((item: any) => item.result.claim), terminal.items.map((item: any) => item.result.claim));
+    assert.deepEqual(recovered.items.map((item) => item.result?.claim), terminal.items.map((item) => item.result?.claim));
     assert.equal((await harness.calls()).filter(({ command }) => command === "launch").length, 3);
   });
 });
@@ -54,7 +73,7 @@ test("production MCP server deduplicates concurrent semantic batch replays", asy
       call(harness.client, "provider_batches_launch", second),
     ]);
     assert.equal(left.batch_id, right.batch_id);
-    assert.deepEqual(left.sessions.map(({ sessionId }: any) => sessionId), right.sessions.map(({ sessionId }: any) => sessionId));
+    assert.deepEqual(left.sessions.map(({ sessionId }) => sessionId), right.sessions.map(({ sessionId }) => sessionId));
     assert.equal((await harness.calls()).filter(({ command }) => command === "launch").length, 4);
   });
 });
@@ -73,7 +92,7 @@ test("production MCP server exposes every provider error once without retries", 
       const response = operation === "cancel"
         ? await call(harness.client, "provider_sessions_cancel", { request_id: "cancel", session_ids: [sessionId] })
         : await results(harness.client, [sessionId]);
-      assert.equal(response.items[0].error.code, code);
+      assert.equal(response.items[0]?.error?.code, code);
       const command = operation === "launch" ? "launch" : operation === "cancel" ? "cancel" : "status";
       assert.equal((await harness.calls()).filter((call) => call.command === command).length, 1);
     }, 200);
@@ -87,7 +106,7 @@ test("production MCP server exposes every provider error once without retries", 
   });
   try {
     const unavailable = await call(connection.client, "provider_batches_launch", launchArguments(1));
-    assert.equal(unavailable.error.code, "PROVIDER_UNAVAILABLE");
+    assert.equal(unavailable.error?.code, "PROVIDER_UNAVAILABLE");
   } finally {
     await connection.transport.close();
     await rm(directory, { recursive: true, force: true });
@@ -103,9 +122,9 @@ test("production MCP server launches one deterministic 100-session batch", async
     const completed = await results(harness.client, launched.sessions.map(({ sessionId }) => sessionId));
     assert.equal(completed.items.length, 100);
     for (const [index, item] of completed.items.entries()) {
-      assert.equal(item.result.attribution.agent, `agent-${index}`);
-      assert.equal(item.result.attribution.task, `task-${index}`);
-      assert.equal(item.result.claim.output, "ok");
+      assert.equal(item.result?.attribution.agent, `agent-${index}`);
+      assert.equal(item.result?.attribution.task, `task-${index}`);
+      assert.equal(item.result?.claim.output, "ok");
     }
     assert.equal((await harness.calls()).filter(({ command }) => command === "launch").length, 100);
   });
@@ -130,19 +149,16 @@ function launchArguments(count: number) {
 }
 
 async function launch(client: Client, count: number) {
-  return call(client, "provider_batches_launch", launchArguments(count)) as Promise<{
-    batch_id: string;
-    sessions: Array<{ sessionId: string; batchId: string }>;
-  }>;
+  return call(client, "provider_batches_launch", launchArguments(count));
 }
 
 async function results(client: Client, sessionIds: string[]) {
   return call(client, "provider_sessions_results", { request_id: "results", session_ids: sessionIds });
 }
 
-async function call(client: Client, name: string, arguments_: Record<string, unknown>): Promise<any> {
+async function call(client: Client, name: string, arguments_: Record<string, unknown>) {
   const response = await client.callTool({ name, arguments: arguments_ });
-  return response.structuredContent;
+  return responseSchema.parse(response.structuredContent);
 }
 
 async function connect(env: Record<string, string>) {
@@ -158,8 +174,8 @@ async function withServer(
   scenario: object,
   run: (harness: {
     client: Client;
-    restart(): Promise<void>;
-    calls(): Promise<Array<{ command: string }>>;
+    restart: () => Promise<void>;
+    calls: () => Promise<Array<{ command: string }>>;
   }) => Promise<void>,
   timeoutMs = 10_000,
 ) {

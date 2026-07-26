@@ -71,7 +71,7 @@ test("fake Superset timeout and malformed output fail deterministically without 
   ] as const) {
     await withHarness(scenario, async ({ adapter, calls }) => {
       const handle = await adapter.launch({ idempotencyKey: "one", prompt: "one", workspacePath: "/tmp/one" });
-      await assert.rejects(adapter.status(handle), (error: unknown) => {
+      await assert.rejects(async () => adapter.status(handle), (error: unknown) => {
         assert.equal(error instanceof SupersetProcessError && error.code, expectedCode);
         return true;
       });
@@ -81,10 +81,7 @@ test("fake Superset timeout and malformed output fail deterministically without 
 });
 
 test("accepted launches recover after one-shot timeout and malformed responses without duplicate execution", async () => {
-  for (const [action, expectedCode] of [
-    ["hang", "PROVIDER_UNAVAILABLE"],
-    ["malformed", "PROVIDER_PROTOCOL_ERROR"],
-  ] as const) {
+  for (const action of ["hang", "malformed"] as const) {
     await withHarness({
       faults: [{ id: `first-launch-${action}`, command: "launch", occurrence: 1, action }],
       defaultScript: successScript(),
@@ -92,13 +89,7 @@ test("accepted launches recover after one-shot timeout and malformed responses w
       const store = new DurableStore(statePath);
       const accepted = await new LaunchService(store, adapter, now).accept(request(0, action));
 
-      await assert.rejects(
-        new LaunchService(store, adapter, now).dispatchPending(),
-        (error: unknown) => {
-          assert.equal(error instanceof SupersetProcessError && error.code, expectedCode);
-          return true;
-        },
-      );
+      await new LaunchService(store, adapter, now).dispatchPending();
       assert.equal(Object.keys((await fakeState()).runs).length, 1);
 
       const restartedStore = new DurableStore(statePath);
@@ -162,7 +153,7 @@ test("provider requests use stdin, exclude ambient secrets and proxy credentials
       );
       const [call] = await calls();
       assert.ok(call);
-      assert.equal(call.payload.prompt.length, 200_000);
+      assert.equal(call.payload.prompt?.length, 200_000);
       assert.equal(call.argv.includes(prompt), false);
       assert.equal(call.environment.PROVIDER_SECRET_CANARY, undefined);
       assert.equal(call.environment.HTTPS_PROXY, undefined);
@@ -216,8 +207,14 @@ test("fake Superset completes and attributes a deterministic 100-session batch",
     const accepted = await launches.acceptBatch({
       idempotencyKey: "batch-100", clientId: "integration", batchName: "fake-superset",
       assignments: Array.from({ length: 100 }, (_, index) => {
-        const { clientId: _clientId, batchName: _batchName, ...assignment } = request(index, `task-${index}`);
-        return assignment;
+        const item = request(index, `task-${index}`);
+        return {
+          idempotencyKey: item.idempotencyKey,
+          attribution: item.attribution,
+          prompt: item.prompt,
+          workspaceId: item.workspaceId,
+          workspacePath: item.workspacePath,
+        };
       }),
     });
     assert.equal(new Set(accepted.map(({ batchId }) => batchId)).size, 1);
@@ -253,16 +250,16 @@ async function withHarness(
   run: (harness: {
     adapter: SupersetProcessAdapter & { restart(): SupersetProcessAdapter };
     statePath: string;
-    calls(): Promise<Array<{
+    calls: () => Promise<Array<{
       command: string;
-      payload: any;
+      payload: { prompt?: string };
       argv: string[];
       environment: Record<string, string | undefined>;
       response?: unknown;
       failure?: unknown;
       fault?: { id: string; action: string };
     }>>;
-    fakeState(): Promise<{ runs: Record<string, unknown> }>;
+    fakeState: () => Promise<{ runs: Record<string, unknown> }>;
   }) => Promise<void>,
   timeoutMs = 10_000,
 ) {
@@ -282,7 +279,7 @@ async function withHarness(
     runs: Record<string, unknown>;
     calls: Array<{
       command: string;
-      payload: any;
+      payload: { prompt?: string };
       argv: string[];
       environment: Record<string, string | undefined>;
       response?: unknown;
