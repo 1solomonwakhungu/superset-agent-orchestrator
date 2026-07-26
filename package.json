@@ -29,7 +29,7 @@
     "compatibility:report": "node scripts/generate-compatibility-report.mjs",
     "start": "node dist/src/server.js",
     "test": "tsx --test test/**/*.test.ts test/**/*.test.mjs",
-    "test:coverage": "c8 --check-coverage --branches=80 --functions=65 --lines=85 --statements=85 --reporter=text --reporter=json-summary npm test",
+    "test:coverage": "c8 --all --check-coverage --branches=88 --functions=92 --lines=95 --statements=95 --include=src/store.ts --include=src/storage.ts --include=src/fake-agent-adapter.ts --include=src/tool-contract.ts --reporter=text --reporter=json-summary npm test",
     "test:python": "python3.11 -m unittest discover -s tests",
     "test:race": "npm run build && bash scripts/run-race-tests.sh",
     "typecheck": "tsc --noEmit",

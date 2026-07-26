@@ -68,7 +68,8 @@ test("asynchronous launch returns after acceptance without waiting for the adapt
       cancel: async () => undefined,
       resumeMetadata: async () => undefined,
     };
-    const service = new LaunchService(new DurableStore(path), adapter);
+    const store = new DurableStore(path);
+    const service = new LaunchService(store, adapter);
 
     const accepted = await service.launch(request);
     assert.equal(accepted.status, "accepted");
@@ -77,12 +78,8 @@ test("asynchronous launch returns after acceptance without waiting for the adapt
     assert.equal((JSON.parse(await readFile(path, "utf8")) as DurableState).assignments[0]?.status, "launching");
 
     releaseLaunch();
-    let status: string | undefined;
-    for (let attempt = 0; attempt < 100 && status !== "launched"; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      status = (JSON.parse(await readFile(path, "utf8")) as DurableState).assignments[0]?.status;
-    }
-    assert.equal(status, "launched");
+    await service.dispatchPending();
+    assert.equal((JSON.parse(await readFile(path, "utf8")) as DurableState).assignments[0]?.status, "launched");
   });
 });
 

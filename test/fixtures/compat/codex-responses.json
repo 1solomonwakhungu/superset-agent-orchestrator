@@ -1,5 +1,5 @@
 {
-  "$comment": "Frozen Codex payloads captured from the documented response shape. Changing an expectation here is a compatibility change and must be reviewed as one.",
+  "$comment": "Synthetic Codex contract cases derived from the adapter input schema; not captured from an upstream release.",
   "adapter": "codex",
   "cases": [
     {

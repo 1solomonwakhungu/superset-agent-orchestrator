@@ -1,0 +1,12 @@
+{
+  "provenance": "synthetic",
+  "sourceRevision": "a45f35d1e1d3af26b79cf972e5a439daa9a2a740",
+  "sourceRevisionMeaning": "PER-346 commit that introduced these synthetic cases",
+  "sanitized": true,
+  "files": {
+    "codex-responses.json": "0903d8a0cccc7115a8541a550c44aa89db2780340a907f405c76059a7dc2bded",
+    "durable-state-legacy.json": "002f98caad9084fd8e9c6a18a703db3af5c766a71ab1de1afcff26b04a86e4b3",
+    "durable-state-preidentity.json": "c9eee2561b56ad02c0ae026a25224661caf348f29c90c0f9b70876622713ee1f",
+    "opencode-responses.json": "f19f85cd5ba9a2ed9af3b71805e486c63a06abd165fd49be3b77a7c8326e2b72"
+  }
+}

@@ -129,6 +129,15 @@ const rejectedStates: Array<[string, unknown]> = [
   })],
   ["a prompt-less assignment", mutate((state) => { delete first(state, "assignments").prompt; })],
   ["a numeric identifier where a string is required", mutate((state) => { first(state, "sessions").id = 7; })],
+  ["an unknown top-level policy field", mutate((state) => { state.futurePolicy = { allowRemoteWorkspaces: true }; })],
+  ["an unknown nested session field", mutate((state) => { first(state, "sessions").futureFlag = "ignore-me"; })],
+  ["an unknown nested attribution field", mutate((state) => {
+    (first(state, "workers").attribution as JsonState).policyOverride = true;
+  })],
+  ["a batch referencing an unknown session", mutate((state) => { first(state, "batches").sessionId = "missing"; })],
+  ["an assignment referencing an unknown session", mutate((state) => { first(state, "assignments").sessionId = "missing"; })],
+  ["an audit event referencing an unknown assignment", mutate((state) => { first(state, "auditEvents").assignmentId = "missing"; })],
+  ["a captured result contradicting its assignment", mutate((state) => { first(state, "capturedResults").runId = "other-run"; })],
 ];
 
 test("valid durable state loads with every record kind intact", async () => {
@@ -200,22 +209,6 @@ test("a missing state file starts empty instead of failing", async () => {
   });
 });
 
-test("forward-compatible fields are dropped rather than trusted", async () => {
-  await withTemporaryDirectory("orchestrator-schema", async (directory) => {
-    const path = join(directory, "state.json");
-    const state = validState();
-    state.futurePolicy = { allowRemoteWorkspaces: true };
-    (state.sessions as JsonState[])[0]!.futureFlag = "ignore-me";
-    await writeFile(path, JSON.stringify(state));
-
-    const store = new DurableStore(path, () => true);
-    await store.reconcile(new Date(AT));
-    const snapshot = store.snapshot() as unknown as JsonState;
-    assert.equal("futurePolicy" in snapshot, false, "unknown top-level policy must not survive a load");
-    assert.equal("futureFlag" in (snapshot.sessions as JsonState[])[0]!, false);
-  });
-});
-
 test("prototype-polluting payloads cannot escape the parser", async () => {
   await withTemporaryDirectory("orchestrator-schema", async (directory) => {
     const path = join(directory, "state.json");
@@ -226,7 +219,7 @@ test("prototype-polluting payloads cannot escape the parser", async () => {
     }));
 
     const store = new DurableStore(path, () => true);
-    await store.reconcile(new Date(AT));
+    await assert.rejects(() => store.reconcile(new Date(AT)), /Cannot load orchestrator state/);
     assert.equal(({} as Record<string, unknown>).polluted, undefined);
     assert.equal((Object.prototype as unknown as Record<string, unknown>).polluted, undefined);
   });

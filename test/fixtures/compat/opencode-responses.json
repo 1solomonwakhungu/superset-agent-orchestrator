@@ -1,5 +1,5 @@
 {
-  "$comment": "Frozen OpenCode assistant-message payloads. Each documented error variant appears exactly once so a provider-side rename is caught here first.",
+  "$comment": "Synthetic OpenCode contract cases derived from the adapter input schema; not captured from an upstream release.",
   "adapter": "opencode",
   "cases": [
     {

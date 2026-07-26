@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { copyFile, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
@@ -10,10 +11,8 @@ import { DurableStore, type CapturedResult } from "../src/store.js";
 import { withTemporaryDirectory } from "./support/deterministic.js";
 
 /**
- * Frozen provider payloads and durable state files from earlier releases. These
- * fixtures are the compatibility contract: the adapters must keep mapping the
- * recorded inputs to the recorded outputs, and the store must keep reading state
- * written before later fields existed.
+ * Synthetic provider payloads and historical-shape durable state cases. These
+ * fixtures are contract examples, not captures from an upstream release.
  */
 
 interface FixtureCase {
@@ -30,11 +29,35 @@ interface FixtureFile {
   cases: FixtureCase[];
 }
 
+interface FixtureManifest {
+  provenance: "synthetic";
+  sourceRevision: string;
+  sourceRevisionMeaning: string;
+  sanitized: true;
+  files: Record<string, string>;
+}
+
 const fixtureDirectory = fileURLToPath(new URL("./fixtures/compat/", import.meta.url));
 
 async function loadFixture(name: string): Promise<FixtureFile> {
   return JSON.parse(await readFile(join(fixtureDirectory, name), "utf8")) as FixtureFile;
 }
+
+test("compatibility fixture manifest binds synthetic provenance and sanitization", async () => {
+  const manifest = JSON.parse(await readFile(join(fixtureDirectory, "manifest.json"), "utf8")) as FixtureManifest;
+  assert.equal(manifest.provenance, "synthetic");
+  assert.match(manifest.sourceRevision, /^[0-9a-f]{40}$/);
+  assert.equal(manifest.sourceRevisionMeaning, "PER-346 commit that introduced these synthetic cases");
+  assert.equal(manifest.sanitized, true);
+  assert.deepEqual(Object.keys(manifest.files).sort(), [
+    "codex-responses.json", "durable-state-legacy.json", "durable-state-preidentity.json", "opencode-responses.json",
+  ]);
+  for (const [name, digest] of Object.entries(manifest.files)) {
+    assert.match(digest, /^[0-9a-f]{64}$/);
+    const bytes = await readFile(join(fixtureDirectory, name));
+    assert.equal(createHash("sha256").update(bytes).digest("hex"), digest, name);
+  }
+});
 
 function runFixture(
   fixture: FixtureFile,
@@ -64,7 +87,7 @@ function runFixture(
   }
 }
 
-test("frozen Codex payloads still map to their recorded results", async () => {
+test("synthetic Codex contract cases map to their declared results", async () => {
   const fixture = await loadFixture("codex-responses.json");
   runFixture(fixture, mapCodexTerminalResponse, MalformedCodexResponseError);
 
@@ -76,7 +99,7 @@ test("frozen Codex payloads still map to their recorded results", async () => {
   assert.ok(fixture.cases.filter(({ expect }) => expect.kind === "malformed").length >= 4);
 });
 
-test("frozen OpenCode payloads still map to their recorded results", async () => {
+test("synthetic OpenCode contract cases map to their declared results", async () => {
   const fixture = await loadFixture("opencode-responses.json");
   runFixture(fixture, mapOpenCodeTerminalResponse, MalformedOpenCodeResponseError);
 

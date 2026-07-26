@@ -97,6 +97,7 @@ export class LaunchService {
   }
 
   async dispatchPending(): Promise<void> {
+    if (this.dispatching !== undefined) return this.dispatching;
     for (const assignment of await this.store.pendingAssignments()) await this.dispatch(assignment);
   }
 
