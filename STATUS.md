@@ -1,5 +1,15 @@
 # Status
 
+## PER-364 MiniCPM5 architecture audit
+
+- Added a no-model-load audit of the pinned checkpoint's actual safetensors header,
+  config, tokenizer metadata, special tokens, and exact chat template.
+- Generates deterministic tensor inventory, layer/module totals, tokenizer report,
+  exact template, and a round-tripped tool-call rendering under `audit/`.
+- Verified 219 tensors and 1,080,632,832 parameters; `npm run verify` passed
+  131 runnable TypeScript tests and 6 Python tests with one explicit skip.
+- Next: PR delivery, exact-head CI, merge, and merged-main readback.
+
 ## PER-344 concurrency limits and backpressure
 
 - Added configurable global, per-host, per-project, per-agent, and per-workspace
@@ -356,8 +366,48 @@ locally.
   discovery, bounded wait, lease admission, and the complete published versioned
   contract remain owned by their production implementation tasks.
 - Integrated prerequisite PR 23 at `0f1138a3a4c2e7fb3f6410f8e5b6760d7ce73ef7`.
-- Next: run focused and full verification, push the exact PR head, and merge only
-  after exact-head checks succeed.
+- Integrated subsequent current `main` at `9c53e2bcfeab3ff979d56048e1bfebbe8cc425f6`
+  without touching open PR 35; updated the merged PER-348 synthetic worker to
+  expect client-scoped provider idempotency keys.
+- Latest verification: focused fake-provider, launch, and resilience tests passed
+  28/28; `npm run check` passed formatting, lint, typecheck, build, 186 tests (185
+  pass, 0 fail, 1 explicit live-discovery skip), coverage, Python 5/5 with one
+  optional checkpoint audit skip, schema no-diff, and provenance.
+- Next: push the exact PR head and merge only after exact-head checks succeed.
+
+PER-348 adversarial resilience regression coverage is complete locally.
+
+- Added deterministic launch interruption, forced dispatch contention,
+  cancellation race, stale-event, conflicting-result, corruption, migration,
+  stale-lease, hostile-parser, hostile-identifier, and secret-canary tests.
+- Replaced process-local dispatch exclusion with a filesystem-backed assignment
+  lock and added exact result-attribution enforcement.
+- All fixtures use temporary synthetic state and do not invoke Superset, cron, or
+  user repositories.
+- Resolved PR review findings by fencing retries after shutdown, reclaiming only
+  expired read-only leases, and tolerating backward wall-clock adjustments.
+- Hardened acceptance and transition evidence against mismatched assignments,
+  event types, and conflicting reused audit IDs.
+- Verification: all 117 offline Node tests and 19 focused regressions passed;
+  build, typecheck, schema generation, the 3-test configuration contract, strict
+  local-routing verification, focused Markdown lint, and `git diff --check` passed.
+- The full Node command's real Superset smoke test remains unavailable because the
+  executable is absent and prohibited for this assignment. The merged Python
+  monitor suite has one unrelated recovery failure; `pytest` is not installed.
+- Full-tree Markdown lint still reports pre-existing issues in `README.md`,
+  `docs/mcp-tool-contract.md`, and historical `STATUS.md` entries; the changed
+  matrix passes focused Markdown lint.
+- Integrated current `main` through secured persistence PR 38 without regressing
+  exact schema, ownership, mode, path-alias, sidecar, backup, or export controls.
+- Added real child-process `SIGKILL` coverage at all five launch boundaries and
+  made atomic adapter launch idempotency explicit so stale lock recovery cannot
+  create a second provider run.
+- Current verification: focused resilience and storage coverage passed 52/52;
+  `npm run check` passed formatting, ESLint, typecheck, build, 150 tests (149
+  pass, 0 fail, 1 optional live Superset skip), coverage, Python 3/3, and schema
+  no-diff. `npm ci` reported 2 pre-existing moderate advisories.
+- Next: commit and push the exact reviewed head, resolve all PR 34 threads, verify
+  GitHub checks, and merge with exact-head protection.
 
 Historical PER-336 local verification before PR 26 merged:
 
