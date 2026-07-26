@@ -426,15 +426,24 @@ export class DurableStore {
   private readonly workersById = new Map<string, Worker>();
   private readonly workerIdsByBatchId = new Map<string, string[]>();
   private readonly batchesByIdempotencyKey = new Map<string, string>();
+  private readonly redaction: RedactionPolicy;
+  private readonly dispatchLockStaleMs: number;
 
   constructor(
     private readonly path: string,
     private readonly isProcessAlive: (pid: number, processStartedAt?: string) => boolean = DurableStore.isProcessAlive.bind(DurableStore),
     private readonly observeQuery: (measurement: QueryMeasurement) => void = () => undefined,
     private readonly now: () => number = performance.now.bind(performance),
-    private readonly redaction = new RedactionPolicy(),
-    private readonly dispatchLockStaleMs = 10_000,
-  ) {}
+    redactionOrDispatchLockStaleMs: RedactionPolicy | number = new RedactionPolicy(),
+    dispatchLockStaleMs = 10_000,
+  ) {
+    this.redaction = redactionOrDispatchLockStaleMs instanceof RedactionPolicy
+      ? redactionOrDispatchLockStaleMs
+      : new RedactionPolicy();
+    this.dispatchLockStaleMs = typeof redactionOrDispatchLockStaleMs === "number"
+      ? redactionOrDispatchLockStaleMs
+      : dispatchLockStaleMs;
+  }
 
   redactText(value: string): string {
     return this.redaction.text(value);
@@ -961,11 +970,18 @@ export class DurableStore {
   }): Promise<{ assignment: Assignment; created: boolean }> {
     return this.withLock(async () => {
       await this.load();
+      const worker = {
+        ...input.worker,
+        attribution: {
+          agent: this.redactText(input.worker.attribution.agent),
+          task: this.redactText(input.worker.attribution.task),
+        },
+      };
       assignmentSchema.parse(input.assignment);
       sessionSchema.parse(input.session);
       batchSchema.parse(input.batch);
       auditEventSchema.parse(input.event);
-      workerSchema.parse(input.worker);
+      workerSchema.parse(worker);
       if (input.event.assignmentId !== input.assignment.id) {
         throw new Error("Launch acceptance event assignment does not match its target");
       }
@@ -984,10 +1000,10 @@ export class DurableStore {
         this.state.sessions.push(input.session);
         this.state.batches.push(input.batch);
         this.state.assignments.push(input.assignment);
-        this.state.workers.push(input.worker);
+        this.state.workers.push(worker);
         this.state.auditEvents.push(input.event);
-        this.rebuildIndexes();
         this.appendSecurityAuditToState(input.securityAudit, new Date(input.event.occurredAt));
+        this.rebuildIndexes();
         await this.persist();
       } catch (error) {
         await this.load().catch(() => {
@@ -1083,19 +1099,29 @@ export class DurableStore {
       const allowed = assignment.status === "accepted" && (status === "launching" || status === "failed")
         || assignment.status === "launching" && (status === "launched" || status === "failed");
       if (!allowed) return { assignment: structuredClone(assignment), transitioned: false };
-      assignment.status = status;
-      assignment.updatedAt = event.occurredAt < assignment.updatedAt ? assignment.updatedAt : event.occurredAt;
-      if (event.runId !== undefined) assignment.runId = event.runId;
-      if (event.runId !== undefined) {
-        const worker = this.state.workers.find(({ id }) => id === assignment.sessionId);
-        if (worker === undefined) throw new Error(`Missing lifecycle worker for assignment: ${assignmentId}`);
-        if (worker.runId !== undefined && worker.runId !== event.runId) throw new Error("Worker is already bound to another run");
-        worker.runId = event.runId;
+      const previousState = structuredClone(this.state);
+      try {
+        assignment.status = status;
+        assignment.updatedAt = event.occurredAt < assignment.updatedAt ? assignment.updatedAt : event.occurredAt;
+        if (event.runId !== undefined) assignment.runId = event.runId;
+        if (event.runId !== undefined) {
+          const worker = this.state.workers.find(({ id }) => id === assignment.sessionId);
+          if (worker === undefined) throw new Error(`Missing lifecycle worker for assignment: ${assignmentId}`);
+          if (worker.runId !== undefined && worker.runId !== event.runId) throw new Error("Worker is already bound to another run");
+          worker.runId = event.runId;
+        }
+        if (event.error !== undefined) assignment.error = this.redaction.text(event.error);
+        if (existingEvent === undefined) this.state.auditEvents.push({
+          ...event,
+          ...(event.error === undefined ? {} : { error: this.redaction.text(event.error) }),
+        });
+        if (securityAudit !== undefined) this.appendSecurityAuditToState(securityAudit, new Date(event.occurredAt));
+        await this.persist();
+      } catch (error) {
+        this.state = previousState;
+        this.rebuildIndexes();
+        throw error;
       }
-      if (event.error !== undefined) assignment.error = event.error;
-      if (existingEvent === undefined) this.state.auditEvents.push(event);
-      if (securityAudit !== undefined) this.appendSecurityAuditToState(securityAudit, new Date(event.occurredAt));
-      await this.persist();
       return { assignment: structuredClone(assignment), transitioned: true };
     });
   }
@@ -1291,6 +1317,7 @@ export class DurableStore {
   private async persist(): Promise<void> {
     await assertPrivateStatePath(this.path);
     stateSchema.parse(this.state);
+    await mkdir(dirname(this.path), { recursive: true });
     const temporaryPath = `${this.path}.${process.pid}.${randomUUID()}.tmp`;
     const file = await open(temporaryPath, "wx", 0o600);
     try {
