@@ -554,6 +554,13 @@ locally.
   52/52; `npm run check` passed 210 tests (209 pass, 0 fail, 1 explicit live
   discovery skip), coverage, Python 5/5 with one optional checkpoint audit skip,
   schema no-diff, and provenance.
+- Integrated cancellation/timeouts PR 27 through current `main` at
+  `036449f42ad98537f4deb0141f8d3a6a81526037`; provider batch acceptance now
+  creates lifecycle workers atomically for every session. Focused provider,
+  launch, lifecycle, protocol, and resilience tests passed 81/81; `npm run check`
+  passed 263 tests (262 pass, 0 fail, 1 explicit live-discovery skip), coverage,
+  Python 5/5 with one optional checkpoint audit skip, schema no-diff, and
+  provenance.
 - Next: push the exact PR head and merge only after exact-head checks succeed.
 
 PER-348 adversarial resilience regression coverage is complete locally.
