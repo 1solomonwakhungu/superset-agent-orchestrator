@@ -178,7 +178,7 @@ and there is no additional terminal state.
 | `succeeded` | `completed` | Stop reason `succeeded` or `succeeded_before_cancellation` |
 | `failed` | `failed` | Includes deadline expiry via `deadline_exceeded` |
 | `canceled` | `canceled` | Stop reason is one of the cancellation reasons |
-| `unknown_outcome` | `lost` | Counted as settled by aggregate queries |
+| `unknown_outcome` | `lost` | Nonterminal; aggregate `all_terminal` waits remain unsatisfied |
 
 A deadline is not a distinct state. `LifecycleService.enforceDeadlines` expires an
 overdue nonterminal session as `failed` with stop reason `deadline_exceeded`,
@@ -187,6 +187,14 @@ provider so concurrent sweeps expire each session exactly once. Cancellation
 intent that a provider rejects as unsupported is withdrawn and the pre-cancel
 status restored, so `canceling` always reflects a command the provider accepted or
 one whose delivery is genuinely unknown.
+
+If cancellation or deadline expiry wins while provider launch is in flight, the
+terminal outcome remains monotonic. A later successful launch binds its exact run
+identity and persists stop/reconciliation intent before the launch event commits;
+restart reconciliation then stops the run when supported and records terminal or
+missing-result evidence without changing the winning outcome. A later launch
+failure clears pending delivery flags; it records `launch_error` only when no
+terminal outcome had already won.
 
 ## Audit Projection
 
