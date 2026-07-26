@@ -1,0 +1,31 @@
+{
+  "corpus_version": "per-365-v1",
+  "files": {
+    "code.jsonl": {
+      "bytes": 1674,
+      "items": 3,
+      "sha256": "5c39ffd3fa8257606f19bd3e7e21020b7e77a72c53a0051c5b3dfc99647811df"
+    },
+    "determinism.jsonl": {
+      "bytes": 1204,
+      "items": 3,
+      "sha256": "ca9d3817b4e43911895b79ebd2dbf8a8fcc7dd97b47e63528e67b289d7d88529"
+    },
+    "long-context.jsonl": {
+      "bytes": 1765,
+      "items": 3,
+      "sha256": "09d7ef89d32aa665eca2f4996e2237f98ad1d8409bf4627e4966ec16a5f918b4"
+    },
+    "reasoning.jsonl": {
+      "bytes": 1194,
+      "items": 3,
+      "sha256": "c363d71cbff5ad2f4e4ac77adf539a4aeea363e840c5a4d336ad969b8a910613"
+    },
+    "tool-use.jsonl": {
+      "bytes": 3264,
+      "items": 3,
+      "sha256": "a5ecd88834109ccf871e9b7b50e2a01ecc1b51c4677728beeaa8855143b57b14"
+    }
+  },
+  "schema_version": 1
+}
