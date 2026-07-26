@@ -116,8 +116,6 @@ node --test test/configuration-contract.test.mjs
 - [Local control-plane threat model](docs/security/local-control-plane-threat-model.md)
 - [Idempotency and reconciliation contract](docs/idempotency-and-reconciliation.md)
 - [Workspace lease and writer-safety policy](docs/workspace-lease-and-writer-safety.md)
-- [Testing strategy and coverage thresholds](docs/testing-strategy.md)
-- [Flaky-test policy](docs/flaky-test-policy.md)
 
 The MCP contract publishes typed TypeScript/Zod schemas and a client-neutral JSON
 Schema catalog. It defines asynchronous launch, stable IDs, batches of 100
