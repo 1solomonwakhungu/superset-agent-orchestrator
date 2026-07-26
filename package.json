@@ -28,6 +28,7 @@
     "benchmark:fake": "npm run build && node dist/src/fake-backend-benchmark.js",
     "load:real": "npm run build && node dist/src/real-agent-load-runner.js",
     "reports:verify": "npm run build && node dist/src/report-verifier.js",
+    "load:ci": "npm run build && node dist/src/bounded-load-ci.js artifacts/per-351-ci",
     "discovery:record": "npm run build && node scripts/record-discovery-fixture.mjs",
     "compatibility:report": "node scripts/generate-compatibility-report.mjs",
     "start": "node dist/src/server.js",

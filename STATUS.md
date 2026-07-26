@@ -1,5 +1,24 @@
 # Status
 
+## PER-351 reproducible bounded-load CI companion
+
+- Added deterministic injected duration, query-clock, and resource measurements
+  for offline CI while preserving real host and wall-clock measurements for
+  operator CLI runs.
+- Added bounded admission with configurable maximum in flight, launch timeouts,
+  resource ceilings, and per-stage offered, admitted, failed, withheld, and
+  maximum-in-flight evidence.
+- Added fail-closed verification for throughput, latency, admission arithmetic,
+  overload evidence, resource violations, attribution, and report companions.
+- Added a five-minute offline CI job that generates and verifies three JSON and
+  Markdown report pairs and uploads them without invoking Superset or paid agents.
+- Verification: `npm run check` passed 141 runnable Node tests with one expected
+  skip, 3 Python tests, coverage, lint, typecheck, build, format, and schema gates;
+  `npm run load:ci` generated and verified all reports with `paidAgents: 0`; and
+  `git diff --check` passed.
+- Next: deliver the companion change through exact-head CI and merge it into the
+  primary PER-351 branch.
+
 ## PER-351 performance and load validation
 
 - Added reproducible 100-session fake-backend and staged 30-agent controlled-load
