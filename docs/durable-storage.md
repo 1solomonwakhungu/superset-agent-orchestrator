@@ -8,7 +8,7 @@ SQLite is embedded in the supported Node runtime. The registry enables foreign k
 
 ## Schema
 
-Schema version 2 stores:
+Schema version 3 stores:
 
 | Table | Durable purpose |
 | --- | --- |
@@ -17,11 +17,12 @@ Schema version 2 stores:
 | `sessions` | Adapter identity, backend identity, attempt, and state |
 | `results` | One attributed terminal result per session |
 | `events` | Ordered, immutable lifecycle and audit history |
-| `workspace_leases` | Time-bounded read or exclusive writer ownership |
+| `workspace_leases` | Fenced lease generation, owner process identity, state, and heartbeat |
+| `workspace_fencing` | Highest writer generation ever allocated per workspace |
 | `idempotency_records` | Scoped request hash and replay response |
 | `schema_migrations` | Applied schema versions |
 
-Foreign keys prevent orphaned attribution. `(assignment_id, attempt)` prevents duplicate attempts. A partial unique index mechanically prevents two active writers in one workspace. Event update and delete triggers enforce append-only history.
+Foreign keys prevent orphaned attribution. `(assignment_id, attempt)` prevents duplicate attempts. A partial unique index mechanically prevents two non-released writers in one workspace. The fencing ledger survives cleanup and rollback so generations are never reused. Event update and delete triggers enforce append-only history.
 
 ## Migrations and rollback
 
@@ -39,7 +40,7 @@ Cleanup is transactional and conservative:
 - Expired results lose response text and artifact payloads.
 - Assignment, session, result, batch, requester, workspace, timestamps, states, and stop reasons remain for attribution.
 - Events are never deleted or changed.
-- Released workspace leases are deleted. Expiry alone never releases or deletes a writer lease; reconciliation must first prove release.
+- Released workspace leases are deleted only after the configured result-retention period. Expiry alone never releases or deletes a writer lease; reconciliation must first prove release.
 - Idempotency records are deleted after their explicit expiry or configured maximum age.
 - A `retention.cleanup_completed` event records cleanup counts.
 

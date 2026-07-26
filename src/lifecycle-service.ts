@@ -1,6 +1,10 @@
-import type { AgentAdapter } from "./agent-adapter.js";
-import type { RunResult } from "./agent-adapter.js";
-import { z } from "zod";
+import type { AgentAdapter, RunResult } from "./agent-adapter.js";
+import {
+  parseProviderCancellation,
+  parseProviderResult,
+  parseProviderStatus,
+  ProviderProtocolError,
+} from "./provider-protocol.js";
 import { normalize } from "./result-capture.js";
 import {
   BatchQueryError,
@@ -16,27 +20,6 @@ const DEFAULT_POLL_INTERVAL_MS = 25;
 export const PROVIDER_OPERATION_TIMEOUT_MS = 5_000;
 const PROVIDER_UNAVAILABLE_MESSAGE = "The backend lifecycle operation is temporarily unavailable";
 const MAX_PROVIDER_CONCURRENCY = 8;
-const runStatusSchema = z.object({
-  runId: z.string().min(1),
-  status: z.enum(["queued", "running", "succeeded", "failed", "cancelled"]),
-  updatedAt: z.iso.datetime(),
-}).strict();
-const resumeSchema = z.object({ adapter: z.string().min(1), token: z.string().min(1) }).strict();
-const runResultSchema = z.discriminatedUnion("status", [
-  z.object({ status: z.literal("succeeded"), output: z.string(), resume: resumeSchema.optional() }).strict(),
-  z.object({
-    status: z.literal("failed"), error: z.string(), retryable: z.boolean(),
-    output: z.string().optional(), resume: resumeSchema.optional(),
-  }).strict(),
-  z.object({
-    status: z.literal("cancelled"), reason: z.string().optional(),
-    output: z.string().optional(), resume: resumeSchema.optional(),
-  }).strict(),
-]);
-const cancellationOutcomeSchema = z.union([
-  z.undefined(),
-  z.object({ status: z.enum(["accepted", "unsupported"]) }).strict(),
-]);
 
 export type LifecycleErrorCode =
   | "SESSION_NOT_FOUND"
@@ -189,8 +172,11 @@ export class LifecycleService {
         changed: true,
       };
     }
+    let deliveryCompleted = false;
     try {
-      const outcome = await this.cancelProvider(handle, detail ?? reason);
+      const outcome = parseProviderCancellation(await this.providerCall(
+        (signal) => this.adapter.cancel(handle, detail ?? reason, signal),
+      ));
       if (outcome !== undefined && outcome.status === "unsupported") {
         const restored = await this.store.clearWorkerCancellation(sessionId);
         return {
@@ -201,9 +187,10 @@ export class LifecycleService {
         };
       }
       await this.store.markCancellationDelivered(sessionId);
+      deliveryCompleted = true;
       return await this.settleFromProvider(sessionId, handle, true);
     } catch (error) {
-      await this.store.releaseCancellationDelivery(sessionId);
+      if (!deliveryCompleted) await this.store.releaseCancellationDelivery(sessionId);
       // Delivery is unknown, so cancellation intent stays recorded and the session remains canceling.
       return {
         sessionId,
@@ -233,10 +220,13 @@ export class LifecycleService {
       if (!claimed || !DurableStore.isTerminal(settled.status)) return undefined;
       let providerStopError: string | undefined;
       if (this.adapter.cancellation === "supported" && settled.runId !== undefined) {
+        const runId = settled.runId;
         try {
           if (await this.store.claimProviderStop(worker.id)) {
             try {
-              const outcome = await this.cancelProvider({ runId: settled.runId }, "deadline_exceeded");
+              const outcome = parseProviderCancellation(await this.providerCall(
+                (signal) => this.adapter.cancel({ runId }, "deadline_exceeded", signal),
+              ));
               if (outcome?.status === "unsupported") await this.store.markProviderStopUnsupported(worker.id);
               else await this.store.markProviderStopDelivered(worker.id);
             } catch (error) {
@@ -244,9 +234,9 @@ export class LifecycleService {
               throw error;
             }
           }
-          await this.settleFromProvider(worker.id, { runId: settled.runId });
-        } catch {
-          providerStopError = PROVIDER_UNAVAILABLE_MESSAGE;
+          await this.settleFromProvider(worker.id, { runId });
+        } catch (error) {
+          providerStopError = error instanceof ProviderProtocolError ? error.message : PROVIDER_UNAVAILABLE_MESSAGE;
         }
       }
       return {
@@ -273,7 +263,11 @@ export class LifecycleService {
             };
           }
           try {
-            const outcome = await this.cancelProvider({ runId: worker.runId! }, worker.stopDetail ?? worker.stopReason);
+            const outcome = parseProviderCancellation(await this.providerCall((signal) => this.adapter.cancel(
+              { runId: worker.runId! },
+              worker.stopDetail ?? worker.stopReason,
+              signal,
+            )));
             if (outcome?.status === "unsupported") {
               const restored = await this.store.clearWorkerCancellation(worker.id);
               return {
@@ -311,7 +305,9 @@ export class LifecycleService {
         if (worker.providerStopPending && this.adapter.cancellation === "supported") {
           if (await this.store.claimProviderStop(worker.id)) {
             try {
-              const outcome = await this.cancelProvider({ runId: worker.runId! }, worker.stopReason);
+              const outcome = parseProviderCancellation(await this.providerCall(
+                (signal) => this.adapter.cancel({ runId: worker.runId! }, worker.stopReason, signal),
+              ));
               if (outcome?.status === "unsupported") await this.store.markProviderStopUnsupported(worker.id);
               else await this.store.markProviderStopDelivered(worker.id);
             } catch (error) {
@@ -376,13 +372,9 @@ export class LifecycleService {
     handle: { runId: string },
     intentClaimed = false,
   ): Promise<CancellationResult> {
-    const observed = this.parseProvider(
-      runStatusSchema,
-      await this.providerCall((signal) => this.adapter.status(handle, signal)),
-      "status",
-    );
+    const observed = parseProviderStatus(await this.providerCall((signal) => this.adapter.status(handle, signal)));
     if (observed.runId !== handle.runId) {
-      throw new ProviderProtocolError("Provider returned a different execution identity");
+      throw new ProviderProtocolError("status", "malformed");
     }
     if (observed.status === "queued" || observed.status === "running") {
       const worker = await this.store.worker(sessionId);
@@ -396,8 +388,7 @@ export class LifecycleService {
     let result: RunResult | undefined;
     let resultFailure: string | undefined;
     try {
-      const raw = await this.providerCall((signal) => this.adapter.result(handle, signal));
-      result = raw === undefined ? undefined : this.parseProvider(runResultSchema, raw, "result") as RunResult;
+      result = parseProviderResult(await this.providerCall((signal) => this.adapter.result(handle, signal)));
     } catch (error) {
       resultFailure = error instanceof ProviderProtocolError
         ? error.message
@@ -464,17 +455,6 @@ export class LifecycleService {
     }
   }
 
-  private async cancelProvider(handle: { runId: string }, reason?: string) {
-    const raw = await this.providerCall((signal) => this.adapter.cancel(handle, reason, signal));
-    return this.parseProvider(cancellationOutcomeSchema, raw, "cancel outcome");
-  }
-
-  private parseProvider<T>(schema: z.ZodType<T>, value: unknown, operation: string): T {
-    const parsed = schema.safeParse(value);
-    if (!parsed.success) throw new ProviderProtocolError(`Provider returned a malformed ${operation}`);
-    return parsed.data;
-  }
-
   private async acquireProviderSlot(signal: AbortSignal): Promise<void> {
     if (this.activeProviderOperations >= MAX_PROVIDER_CONCURRENCY) {
       await new Promise<void>((resolve, reject) => {
@@ -502,8 +482,6 @@ export class LifecycleService {
     }
   }
 }
-
-class ProviderProtocolError extends Error {}
 
 async function mapConcurrent<T, R>(items: T[], limit: number, operation: (item: T) => Promise<R>): Promise<R[]> {
   const results = new Array<R>(items.length);
