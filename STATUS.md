@@ -805,3 +805,11 @@ PER-336 security hotfix is complete locally after insecure PR 26 merged as `8989
   `git diff --check` passed.
 - Next: deliver the companion PR into the primary PER-342 branch and verify its
   exact-head CI.
+
+## PER-342 live stop claim companion
+
+- Timed-out cancellation and deadline-stop calls now retain their durable delivery claim while an adapter ignores abort and its provider operation remains active.
+- Abort-aware failures still release claims synchronously; ignored-abort claims become retryable only after the original operation settles, while restart recovery remains unchanged.
+- Added focused cancellation and deadline reconciliation regressions proving no overlapping duplicate stop is issued and delivery resumes after settlement.
+- Verification: lifecycle service tests passed 59/59; `npm run check` passed the full format, lint, typecheck, build, TypeScript, coverage, Python, schema, provenance, and research gates; `git diff --check` passed.
+- Next: commit and push the companion, open it against PR 66's head branch, verify exact-head CI, and merge.
