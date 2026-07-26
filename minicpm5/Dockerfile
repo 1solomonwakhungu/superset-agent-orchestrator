@@ -15,8 +15,10 @@ ENV PYTHONHASHSEED=0 \
 COPY --from=uv /uv /uvx /bin/
 WORKDIR /workspace
 COPY minicpm5/pyproject.toml minicpm5/uv.lock minicpm5/.python-version ./
-RUN uv sync --frozen --no-dev --no-extra
+RUN uv sync --frozen --no-dev \
+    && useradd --create-home --uid 10001 baseline
 COPY minicpm5/scripts/ scripts/
 COPY minicpm5/env/ env/
-ENTRYPOINT ["uv", "run", "--frozen"]
+USER baseline
+ENTRYPOINT ["uv", "run", "--frozen", "--no-sync"]
 CMD ["python", "scripts/logit_fingerprint.py"]
