@@ -14,6 +14,8 @@ launch-ledger technical preview that reports unobservable work as
 
 See the [product boundary and measurable release gates](docs/adr/0002-product-boundary-and-mvp-gates.md).
 
+The repository also contains the [MiniCPM5-1B reproducibility environment](docs/minicpm5-reproducible-environment.md).
+
 ## Development
 
 Requirements: Node.js 22, npm 10 or later, and Python 3.11.

@@ -50,7 +50,7 @@ async function launchedAssignment(directory: string, name: string) {
     workspacePath: `/tmp/${name}`,
   });
   await store.recordLaunchEvent(accepted.assignmentId, "launching", auditEvent(accepted.assignmentId, "launch_reserved", clock().toISOString()));
-  const launched = await store.recordLaunchEvent(
+  const { assignment: launched } = await store.recordLaunchEvent(
     accepted.assignmentId,
     "launched",
     auditEvent(accepted.assignmentId, "execution_started", clock().toISOString(), "run-1"),
@@ -147,8 +147,8 @@ test("assignments advance accepted to launching to launched and then stop accept
       "failed",
       auditEvent(assignment.id, "launch_failed", clock().toISOString()),
     );
-    assert.equal(afterTerminal.status, "launched", "a launched assignment is terminal for launch bookkeeping");
-    assert.equal(afterTerminal.error, undefined);
+    assert.equal(afterTerminal.assignment.status, "launched", "a launched assignment is terminal for launch bookkeeping");
+    assert.equal(afterTerminal.assignment.error, undefined);
 
     const events = store.snapshot().auditEvents.map(({ type }) => type);
     assert.deepEqual(events, ["launch_accepted", "launch_reserved", "execution_started"],
@@ -174,15 +174,20 @@ test("a failed launch is terminal and never silently relaunches", async () => {
       workspaceId: "workspace-1",
       workspacePath: "/tmp/failed",
     });
+    await store.recordLaunchEvent(
+      accepted.assignmentId,
+      "launching",
+      auditEvent(accepted.assignmentId, "launch_reserved", clock().toISOString()),
+    );
 
-    const failed = await store.recordLaunchEvent(accepted.assignmentId, "failed", {
+    const { assignment: failed } = await store.recordLaunchEvent(accepted.assignmentId, "failed", {
       ...auditEvent(accepted.assignmentId, "launch_failed", clock().toISOString()),
       error: "adapter refused the launch",
     });
     assert.equal(failed.status, "failed");
     assert.equal(failed.error, "adapter refused the launch");
 
-    const retried = await store.recordLaunchEvent(
+    const { assignment: retried } = await store.recordLaunchEvent(
       accepted.assignmentId,
       "launched",
       auditEvent(accepted.assignmentId, "execution_started", clock().toISOString(), "run-9"),
@@ -266,7 +271,7 @@ test("results are refused before an assignment reaches launched", async () => {
     });
     // Bind a run ID while the assignment is still only launching, so identity
     // matches and the status guard is the assertion under test.
-    const launching = await store.recordLaunchEvent(
+    const { assignment: launching } = await store.recordLaunchEvent(
       accepted.assignmentId,
       "launching",
       auditEvent(accepted.assignmentId, "launch_reserved", clock().toISOString(), "run-1"),

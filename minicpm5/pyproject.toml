@@ -1,0 +1,37 @@
+[project]
+name = "minicpm5-baseline"
+version = "0.1.0"
+description = "Reproducible MiniCPM5-1B baseline environment"
+requires-python = "==3.12.11"
+dependencies = [
+  "huggingface-hub==0.34.4",
+  "numpy==2.3.2",
+  "safetensors==0.6.2",
+  "torch==2.8.0",
+  "transformers==4.55.0",
+]
+
+[project.optional-dependencies]
+macos-mlx = [
+  "mlx==0.29.0; platform_system == 'Darwin' and platform_machine == 'arm64'",
+  "mlx-lm==0.27.1; platform_system == 'Darwin' and platform_machine == 'arm64'",
+]
+
+[dependency-groups]
+dev = ["pytest==8.4.1"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.uv]
+required-version = "==0.8.3"
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cpu", marker = "sys_platform == 'linux'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

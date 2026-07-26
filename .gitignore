@@ -11,3 +11,7 @@ test/**/*.js
 test/**/*.d.ts
 .orchestrator/
 *.tmp
+.venv/
+minicpm5/artifacts/
+minicpm5/env/captures/*.md
+!minicpm5/env/captures/.gitkeep
