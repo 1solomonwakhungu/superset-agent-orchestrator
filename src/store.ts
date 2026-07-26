@@ -1033,7 +1033,8 @@ export class DurableStore {
       previousHash = eventHash;
     }
     const head = this.state.securityAuditHead;
-    if (head !== undefined && (head.sequence !== events.length || head.eventHash !== previousHash)) {
+    if ((events.length > 0 && head === undefined)
+      || (head !== undefined && (head.sequence !== events.length || head.eventHash !== previousHash))) {
       return { valid: false, length: events.length, brokenAtSequence: events.length + 1 };
     }
     return { valid: true, length: events.length };
