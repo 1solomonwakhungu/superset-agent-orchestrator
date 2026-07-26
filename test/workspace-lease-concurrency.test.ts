@@ -22,6 +22,7 @@ const sourceDirectory = join(projectRoot, "src");
 const WORKER = `
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 const [mode, sourceDirectory, databasePath, lockDirectory, workspaceId, startAt] = process.argv.slice(2);
 const load = (name) => import(pathToFileURL(join(sourceDirectory, name)).href);
@@ -39,7 +40,25 @@ const tool = new WorkspaceSafetyTool(storage, {
 while (Date.now() < Number(startAt)) {}
 
 try {
-  const lease = tool.acquireWriter({ workspaceId, ownerBatchId: "batch-1", ttlMs: 750 });
+  let lease;
+  let attempts = 0;
+  do {
+    attempts += 1;
+    try {
+      lease = tool.acquireWriter({ workspaceId, ownerBatchId: "batch-1", ttlMs: 750 });
+    } catch (error) {
+      if (mode !== "retry-release" || error.code !== "WORKSPACE_WRITER_BUSY" || attempts >= 500) throw error;
+      await delay(10);
+    }
+  } while (!lease);
+  if (mode === "retry-release") {
+    await delay(25);
+    tool.releaseWriter(lease);
+    process.stdout.write(JSON.stringify({ ok: true, generation: lease.generation, pid: process.pid, attempts }));
+    tool.close();
+    storage.close();
+    process.exit(0);
+  }
   const bound = tool.bindProcess(lease, process.pid);
   process.stdout.write(JSON.stringify({ ok: true, generation: bound.generation, pid: process.pid }));
   if (mode === "crash") {
@@ -61,6 +80,7 @@ interface WorkerOutcome {
   code?: string;
   generation?: number;
   pid?: number;
+  attempts?: number;
 }
 
 interface Fixture {
@@ -88,7 +108,8 @@ async function withFixture(body: (fixture: Fixture) => Promise<void>): Promise<v
   }
 }
 
-async function spawnWorker(fixture: Fixture, mode: "release" | "crash", startAt: number): Promise<WorkerOutcome> {
+async function spawnWorker(fixture: Fixture, mode: "release" | "crash" | "retry-release",
+  startAt: number): Promise<WorkerOutcome> {
   const { stdout } = await run(process.execPath,
     ["--import", "tsx", fixture.workerPath, mode, sourceDirectory, fixture.databasePath,
       fixture.lockDirectory, "ws", String(startAt)],
@@ -160,5 +181,20 @@ test("a crashed owner keeps its lease until process absence is proven", async ()
     } finally {
       tool.close();
     }
+  });
+});
+
+test("contending processes eventually reacquire in distinct monotonic generations", async () => {
+  await withFixture(async (fixture) => {
+    const startAt = Date.now() + 1_000;
+    const outcomes = await Promise.all(
+      Array.from({ length: 4 }, () => spawnWorker(fixture, "retry-release", startAt)));
+
+    assert.equal(outcomes.every((outcome) => outcome.ok), true, JSON.stringify(outcomes));
+    assert.deepEqual(outcomes.map(({ generation }) => generation).sort((a, b) => a! - b!), [1, 2, 3, 4]);
+    assert.equal(outcomes.some(({ attempts }) => attempts! > 1), true);
+    assert.equal(fixture.storage.lastAllocatedGeneration("ws"), 4);
+    assert.equal(fixture.storage.database.prepare(
+      "SELECT COUNT(*) count FROM workspace_leases WHERE state = 'released'").get()?.count, 4);
   });
 });
