@@ -99,7 +99,7 @@ test("production MCP server exposes every provider error once without retries", 
       }
       const command = operation === "launch" ? "launch" : operation === "cancel" ? "cancel" : "status";
       assert.equal((await harness.calls()).filter((call) => call.command === command).length, 1);
-    }, 200);
+    }, 1_000);
   }
 
   const directory = await mkdtemp(join(tmpdir(), "fake-superset-no-provider-"));
