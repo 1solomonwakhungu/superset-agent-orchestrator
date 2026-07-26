@@ -941,13 +941,13 @@ export class DurableStore {
       sessionSchema.parse(input.session);
       batchSchema.parse(input.batch);
       auditEventSchema.parse(input.event);
+      workerSchema.parse(input.worker);
       if (input.event.assignmentId !== input.assignment.id) {
         throw new Error("Launch acceptance event assignment does not match its target");
       }
       if (input.event.type !== "launch_accepted") {
         throw new Error("Launch acceptance event must have type launch_accepted");
       }
-      workerSchema.parse(input.worker);
       const existing = this.state.assignments.find(({ idempotencyKey }) => idempotencyKey === input.assignment.idempotencyKey);
       if (existing !== undefined) {
         if (existing.requestFingerprint !== input.assignment.requestFingerprint) {

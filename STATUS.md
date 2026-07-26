@@ -1,5 +1,11 @@
 # Status
 
+## PER-345 integration with current main, 2026-07-26
+
+- Integrated exact `origin/main` `76ac850d70b42cafeaaf2c058916b0d8f7e5abfe` into rewritten integration head `26351a418ab06e81457ddbc82e6fc36df484eb74`.
+- Retained main's merged PER-342 lifecycle validation and cancellation semantics together with PER-345 security, PER-343 lease/fencing, and PER-351 load behavior.
+- Verification: `npm run check` passed 299 tests with 298 passing and one explicit live-discovery skip, 92.46% statement coverage, six Python tests with one skip, schema no-diff, provenance verification, and DiskLM research verification of 28 cited works.
+
 ## PER-345/PER-342 current-head integration, 2026-07-26
 
 - Preserved primary PR ancestry by merging exact PR head `e7db756cf45bf71caedae2a07c8d7071571d62c1`, then integrated exact current main `6791ae4cc5f74a187495dfe2bb63ac8b0ce06fe7`.
@@ -43,6 +49,62 @@
   3/3 Python tests; lint, typecheck, build, and `git diff --check` passed.
 - Next: merge the companion PR into the primary PER-345 branch after CI.
 
+## PER-342 cancellation, timeouts, and bounded wait
+
+- Added `LifecycleService` owning cancel-one, cancel-batch, deadline expiry, and
+  bounded wait on top of the durable single-writer store.
+- Made cancellation honest: capability is checked before any mutation, a backend
+  that rejects a cancel it advertised is rolled back, an undispatched session is
+  canceled locally, and an unreachable provider returns `PROVIDER_UNAVAILABLE`
+  while retaining intent.
+- Made races deterministic: cancellation intent and deadline expiry are claimed
+  under the store lock, so concurrent callers issue exactly one provider stop and
+  report each transition once. Terminal state is monotonic and late results are
+  retained as audited late observations without regression.
+- Mapped deadlines to `failed`/`deadline_exceeded` per the authoritative state
+  machine instead of inventing a terminal state; canceled and failed sessions keep
+  partial output with exact completeness.
+- Added MCP tools `batches_cancel`, `batches_wait`, `sessions_set_deadline`, and
+  `deadlines_enforce`, plus a background deadline sweep.
+- Merged current `main` (`90cef0d`); the only conflict was additive `STATUS.md`
+  sections and both sides were kept.
+- Made offline verification deterministic: the live Superset smoke test now skips
+  only when the executable is genuinely absent (spawn `ENOENT`). A present but
+  broken, unhealthy, or malformed CLI still fails, and the run is mandatory when
+  `SUPERSET_ORCHESTRATOR_EXECUTABLE` is set or
+  `SUPERSET_ORCHESTRATOR_REQUIRE_LIVE_SMOKE=1`.
+- Kept real discovery schema coverage offline by recording sanitized Superset
+  1.16.1 responses in `test/fixtures/`, replaying them through the real adapter
+  against the same contract assertions, and pinning the real CLI key sets plus
+  observed optional-field variation.
+- Verification: `npm run verify` passed 136/136 with the Superset CLI present and
+  135/136 with 1 declared skip and exit code 0 with the CLI absent from `PATH`;
+  focused lifecycle and race tests passed 33/33 across 10 consecutive runs;
+  `npm run check` and `git diff --check` passed.
+- Addressed all five PR review findings: atomic local cancellation, asynchronous
+  provider reconciliation, locked deadline rechecks, immediate all-error waits,
+  and the dedicated batch-cancellation response schema.
+- Final verification: `npm run verify` passed 143 tests with 1 expected live-CLI
+  skip; `npm run check`, schema generation, strict routing verification, and
+  `git diff --check` passed.
+- Independent review fixed published-schema/runtime drift for cancellation and
+  wait, bounded and sanitized provider lifecycle calls, provider identity
+  validation, single-flight background sweeps, parallel batch controls, and a
+  production reconciliation path that retains results arriving after timeout.
+- Current verification: `npm run verify` passed 145 tests with 1 expected
+  live-CLI skip; focused lifecycle/MCP tests passed 42/42 across 10 runs (420
+  checks); typecheck, schema generation/diff, strict routing, and diff checks
+  passed.
+- Integrated signed quality-gate baseline `cbd44e1` and connected asynchronous
+  launch acceptance/binding to lifecycle workers, including cancellation while
+  provider launch is in flight. Added versioned deadline contracts, bounded
+  provider abort coverage, limited batch cancellation concurrency, sequential
+  reconciliation phases, protocol-identity errors, and pre-persist validation.
+- Post-integration verification: `npm ci` passed; `npm run check` passed 153/154
+  tests with 1 declared live smoke skip, 3/3 Python tests, schema no-diff, and
+  94.78% statement / 87.47% branch / 92.47% function coverage. Focused
+  launch/lifecycle/MCP tests passed 52/52 across 10 runs (520 checks), and
+  `git diff --check` passed.
 ## PER-351 performance and load validation
 
 - Added reproducible 100-session fake-backend and staged 30-agent controlled-load
@@ -77,7 +139,6 @@
   30-session dry-run launched 0 agents and withheld all 30 admissions.
 - Next: push the integrated head, verify exact-head GitHub CI, merge PR #35, and
   reconcile Linear.
-
 ## PER-343 workspace lease enforcement
 
 - Added transactional writer acquisition, monotonic generations, private fencing
@@ -238,64 +299,6 @@ Verification completed:
 No host cleanup, Hermes access, or destructive operation was executed. The
 implementation is ready for review; invoke a dry-run from an appropriately
 authorized host before considering `--execute`.
-
-## PER-342 cancellation, timeouts, and bounded wait
-
-- Added `LifecycleService` owning cancel-one, cancel-batch, deadline expiry, and
-  bounded wait on top of the durable single-writer store.
-- Made cancellation honest: capability is checked before any mutation, a backend
-  that rejects a cancel it advertised is rolled back, an undispatched session is
-  canceled locally, and an unreachable provider returns `PROVIDER_UNAVAILABLE`
-  while retaining intent.
-- Made races deterministic: cancellation intent and deadline expiry are claimed
-  under the store lock, so concurrent callers issue exactly one provider stop and
-  report each transition once. Terminal state is monotonic and late results are
-  retained as audited late observations without regression.
-- Mapped deadlines to `failed`/`deadline_exceeded` per the authoritative state
-  machine instead of inventing a terminal state; canceled and failed sessions keep
-  partial output with exact completeness.
-- Added MCP tools `batches_cancel`, `batches_wait`, `sessions_set_deadline`, and
-  `deadlines_enforce`, plus a background deadline sweep.
-- Merged current `main` (`90cef0d`); the only conflict was additive `STATUS.md`
-  sections and both sides were kept.
-- Made offline verification deterministic: the live Superset smoke test now skips
-  only when the executable is genuinely absent (spawn `ENOENT`). A present but
-  broken, unhealthy, or malformed CLI still fails, and the run is mandatory when
-  `SUPERSET_ORCHESTRATOR_EXECUTABLE` is set or
-  `SUPERSET_ORCHESTRATOR_REQUIRE_LIVE_SMOKE=1`.
-- Kept real discovery schema coverage offline by recording sanitized Superset
-  1.16.1 responses in `test/fixtures/`, replaying them through the real adapter
-  against the same contract assertions, and pinning the real CLI key sets plus
-  observed optional-field variation.
-- Verification: `npm run verify` passed 136/136 with the Superset CLI present and
-  135/136 with 1 declared skip and exit code 0 with the CLI absent from `PATH`;
-  focused lifecycle and race tests passed 33/33 across 10 consecutive runs;
-  `npm run check` and `git diff --check` passed.
-- Addressed all five PR review findings: atomic local cancellation, asynchronous
-  provider reconciliation, locked deadline rechecks, immediate all-error waits,
-  and the dedicated batch-cancellation response schema.
-- Final verification: `npm run verify` passed 143 tests with 1 expected live-CLI
-  skip; `npm run check`, schema generation, strict routing verification, and
-  `git diff --check` passed.
-- Independent review fixed published-schema/runtime drift for cancellation and
-  wait, bounded and sanitized provider lifecycle calls, provider identity
-  validation, single-flight background sweeps, parallel batch controls, and a
-  production reconciliation path that retains results arriving after timeout.
-- Current verification: `npm run verify` passed 145 tests with 1 expected
-  live-CLI skip; focused lifecycle/MCP tests passed 42/42 across 10 runs (420
-  checks); typecheck, schema generation/diff, strict routing, and diff checks
-  passed.
-- Integrated signed quality-gate baseline `cbd44e1` and connected asynchronous
-  launch acceptance/binding to lifecycle workers, including cancellation while
-  provider launch is in flight. Added versioned deadline contracts, bounded
-  provider abort coverage, limited batch cancellation concurrency, sequential
-  reconciliation phases, protocol-identity errors, and pre-persist validation.
-- Post-integration verification: `npm ci` passed; `npm run check` passed 153/154
-  tests with 1 declared live smoke skip, 3/3 Python tests, schema no-diff, and
-  94.78% statement / 87.47% branch / 92.47% function coverage. Focused
-  launch/lifecycle/MCP tests passed 52/52 across 10 runs (520 checks), and
-  `git diff --check` passed.
-
 ## PER-352 cross-platform compatibility CI
 
 - Added exact-head macOS 14 and Ubuntu 24.04 CI lanes for Node.js 22 and 24 with
