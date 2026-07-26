@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
 import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { dirname } from "node:path";
 import lockfile from "proper-lockfile";
 import { z } from "zod";
+import { preparePrivateDirectory, secureCreatedFile, validateOwnerOnlyFile } from "./storage.js";
 
 export type WorkerStatus = "requested" | "running" | "canceling" | "succeeded" | "failed" | "canceled" | "unknown_outcome";
 export type TerminalWorkerStatus = Extract<WorkerStatus, "succeeded" | "failed" | "canceled" | "unknown_outcome">;
@@ -621,7 +622,10 @@ export class DurableStore {
       for (const worker of this.state.workers) {
         if (worker.cancellationDeliveryClaimed) {
           delete worker.cancellationDeliveryClaimed;
-          if (worker.status === "canceling") worker.cancellationDeliveryPending = true;
+          if (worker.status === "unknown_outcome") worker.status = "canceling";
+          if (worker.runId !== undefined && !DurableStore.isTerminal(worker.status)) {
+            worker.cancellationDeliveryPending = true;
+          }
           changed = true;
         }
         if (worker.providerStopClaimed) {
@@ -763,7 +767,8 @@ export class DurableStore {
       .filter((worker) => worker.deadlineAt !== undefined
         && worker.deadlineAt <= cutoff
         && !DurableStore.isTerminal(worker.status))
-      .sort((left, right) => left.deadlineAt!.localeCompare(right.deadlineAt!))));
+      .sort((left, right) => left.deadlineAt!.localeCompare(right.deadlineAt!))
+      .slice(0, 250)));
   }
 
   async reconcile(now = new Date()): Promise<ReconciliationSummary> {
@@ -796,11 +801,9 @@ export class DurableStore {
 
         // A canceling worker whose process is provably gone never reported its terminal outcome.
         if (worker.status === "canceling" && worker.pid !== undefined
+          && !worker.cancellationDeliveryPending
           && !this.isProcessAlive(worker.pid, worker.processStartedAt)) {
-          worker.status = "unknown_outcome";
-          worker.completedAt = detectedAt;
-          delete worker.preCancelStatus;
-          diagnose("unknown_outcome", worker, "Canceling worker process was absent during reconciliation");
+          diagnose("unknown_outcome", worker, "Canceling worker process was absent; exact provider reconciliation remains pending");
         }
 
         if ((worker.status === "succeeded" || worker.status === "failed") && worker.result === undefined) {
@@ -1033,6 +1036,7 @@ export class DurableStore {
 
   private async load(): Promise<void> {
     try {
+      if (existsSync(this.path)) validateOwnerOnlyFile(this.path);
       const parsed: unknown = JSON.parse(await readFile(this.path, "utf8"));
       this.state = stateSchema.parse(parsed) as DurableState;
     } catch (error) {
@@ -1145,7 +1149,8 @@ export class DurableStore {
 
   private async persist(): Promise<void> {
     stateSchema.parse(this.state);
-    await mkdir(dirname(this.path), { recursive: true });
+    await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
+    preparePrivateDirectory(dirname(this.path));
     const temporaryPath = `${this.path}.${process.pid}.${randomUUID()}.tmp`;
     const file = await open(temporaryPath, "wx", 0o600);
     try {
@@ -1156,6 +1161,7 @@ export class DurableStore {
     }
     try {
       await rename(temporaryPath, this.path);
+      secureCreatedFile(this.path);
       const directory = await open(dirname(this.path), "r");
       try {
         await directory.sync();
@@ -1169,7 +1175,8 @@ export class DurableStore {
   }
 
   private async withLock<T>(operation: () => Promise<T>): Promise<T> {
-    await mkdir(dirname(this.path), { recursive: true });
+    await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
+    preparePrivateDirectory(dirname(this.path));
     const release = await lockfile.lock(this.path, {
       realpath: false,
       stale: 10_000,
@@ -1202,7 +1209,7 @@ export class DurableStore {
   }
 
   static isTerminal(status: WorkerStatus): status is TerminalWorkerStatus {
-    return status === "succeeded" || status === "failed" || status === "canceled" || status === "unknown_outcome";
+    return status === "succeeded" || status === "failed" || status === "canceled";
   }
 
   static processStartedAt(pid: number): string | undefined {

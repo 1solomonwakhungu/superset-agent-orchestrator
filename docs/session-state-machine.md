@@ -178,7 +178,7 @@ and there is no additional terminal state.
 | `succeeded` | `completed` | Stop reason `succeeded` or `succeeded_before_cancellation` |
 | `failed` | `failed` | Includes deadline expiry via `deadline_exceeded` |
 | `canceled` | `canceled` | Stop reason is one of the cancellation reasons |
-| `unknown_outcome` | `lost` | Counted as settled by aggregate queries |
+| `unknown_outcome` | `lost` | Nonterminal; aggregate `all_terminal` waits remain unsatisfied |
 
 A deadline is not a distinct state. `LifecycleService.enforceDeadlines` expires an
 overdue nonterminal session as `failed` with stop reason `deadline_exceeded`,

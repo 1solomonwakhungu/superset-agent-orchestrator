@@ -62,7 +62,7 @@ function fixture(): DurableState {
 async function withState(run: (path: string) => Promise<void>): Promise<void> {
   const directory = await mkdtemp(join(tmpdir(), "orchestrator-restart-"));
   const path = join(directory, "state.json");
-  await writeFile(path, JSON.stringify(fixture()), "utf8");
+  await writeFile(path, JSON.stringify(fixture()), { encoding: "utf8", mode: 0o600 });
   try {
     await run(path);
   } finally {
@@ -147,7 +147,7 @@ test("running state without a process identity fails safely", async () => {
   await withState(async (path) => {
     const state = fixture();
     delete state.workers[0]?.processStartedAt;
-    await writeFile(path, JSON.stringify(state), "utf8");
+    await writeFile(path, JSON.stringify(state), { encoding: "utf8", mode: 0o600 });
 
     await assert.rejects(new DurableStore(path).reconcile(), /Running workers require a PID and process start token/);
   });

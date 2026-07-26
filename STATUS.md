@@ -34,6 +34,12 @@
   stop handoff after deadline/cancellation, terminal settlement despite result
   retrieval failure, runtime provider payload validation, bounded lifecycle
   fan-out, restart-safe stop retry flags, and terminal deadline refusal.
+- Integrated merged PER-336 security hotfix `d0b57fe`; lifecycle projection files
+  now use fail-closed owner-only, no-follow, single-link validation and secure
+  atomic publication. Final local gates passed 197/198 tests with one declared
+  live smoke skip, Python 3/3, schema no-diff, and 93.36% statement / 87.13%
+  branch / 87.39% function coverage. Focused lifecycle/result tests passed 78/78
+  across 10 runs (780 checks).
 
 ## PER-352 cross-platform compatibility CI
 
