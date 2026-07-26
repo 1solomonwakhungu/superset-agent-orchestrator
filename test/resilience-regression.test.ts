@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -56,8 +56,52 @@ test("process death at every launch boundary recovers without a duplicate provid
       assert.equal(state.assignments.length, 1, boundary);
       assert.equal(state.assignments[0]?.status, "launched", boundary);
       assert.deepEqual(JSON.parse(await readFile(providerPath, "utf8")), { runId: "synthetic-run" }, boundary);
+      assert.deepEqual((await readdir(join(statePath, ".."))).filter((name) => name.endsWith(".tmp")), [], boundary);
     });
   }
+});
+
+test("malformed provider handles fail closed and release dispatch locks", async () => {
+  await fixture(async (path) => {
+    let lookups = 0;
+    const adapter: AgentAdapter = {
+      findByIdempotencyKey: async () => {
+        lookups += 1;
+        return lookups === 1 ? undefined : { runId: "" };
+      },
+      launch: async () => ({ providerId: "not-a-run" }) as unknown as { runId: string },
+      status: async () => { throw new Error("unused"); }, result: async () => undefined,
+      cancel: async () => undefined, resumeMetadata: async () => undefined,
+    };
+    const service = new LaunchService(new DurableStore(path), adapter, authorizer);
+    const accepted = await service.accept(request);
+    await service.dispatchPending();
+
+    const assignment = await new DurableStore(path).assignmentForResult(accepted.assignmentId);
+    assert.equal(assignment.status, "failed");
+    assert.equal(assignment.error, "Provider returned a malformed run handle");
+    assert.deepEqual((await readdir(join(path, ".."))).filter((name) => name.includes(".lock") || name.endsWith(".tmp")), []);
+  });
+});
+
+test("transient recovery lookup failures remain retryable", async () => {
+  await fixture(async (path) => {
+    const adapter: AgentAdapter = {
+      findByIdempotencyKey: async () => { throw new Error("provider unavailable"); },
+      launch: async () => { throw new Error("launch transport unavailable"); },
+      status: async () => { throw new Error("unused"); }, result: async () => undefined,
+      cancel: async () => undefined, resumeMetadata: async () => undefined,
+    };
+    const service = new LaunchService(new DurableStore(path), adapter, authorizer);
+    const accepted = await service.accept(request);
+
+    await assert.rejects(service.dispatchPending(), /provider unavailable/);
+
+    const assignment = await new DurableStore(path).assignmentForResult(accepted.assignmentId);
+    assert.equal(assignment.status, "launching");
+    assert.equal(assignment.error, undefined);
+    assert.deepEqual((await readdir(join(path, ".."))).filter((name) => name.includes(".lock") || name.endsWith(".tmp")), []);
+  });
 });
 
 test("concurrent dispatchers atomically claim one provider launch", async () => {

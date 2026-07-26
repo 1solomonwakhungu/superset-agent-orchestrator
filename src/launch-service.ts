@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { AgentAdapter } from "./agent-adapter.js";
+import type { AgentAdapter, RunHandle } from "./agent-adapter.js";
 import {
   DurableStore,
   type Assignment,
@@ -235,11 +235,12 @@ export class LaunchService {
       }
       this.injectCrash("after_launch_started");
       this.injectCrash("before_adapter_launch");
-      let handle = assignment.status === "launching"
-        ? await this.adapter.findByIdempotencyKey(assignment.idempotencyKey)
-        : undefined;
+      let handle: RunHandle | undefined;
       try {
         await this.auditAssignment(assignment, "allowed", "launch_intent", grant.projectId);
+        handle = assignment.status === "launching"
+          ? validRunHandle(await this.adapter.findByIdempotencyKey(assignment.idempotencyKey))
+          : undefined;
         handle ??= await this.adapter.launch({
           idempotencyKey: assignment.idempotencyKey,
           prompt: assignment.prompt,
@@ -247,9 +248,22 @@ export class LaunchService {
           environment: childEnvironment(),
           revalidateWorkspace: () => grant.revalidate(),
         });
+        handle = validRunHandle(handle);
       } catch (error) {
         if (error instanceof InjectedCrash) throw error;
-        const recovered = await this.adapter.findByIdempotencyKey(assignment.idempotencyKey);
+        let recovered: RunHandle | undefined;
+        try {
+          recovered = validRunHandle(await this.adapter.findByIdempotencyKey(assignment.idempotencyKey));
+        } catch (lookupError) {
+          if (!(lookupError instanceof MalformedRunHandleError)) throw lookupError;
+          await this.recordLaunchFailure(
+            assignment,
+            "Provider returned a malformed run handle",
+            "INVALID_PROVIDER_RESPONSE",
+            grant.projectId,
+          );
+          return;
+        }
         if (recovered !== undefined) {
           const launchedAt = this.now().toISOString();
           await this.store.recordLaunchEvent(
@@ -260,13 +274,20 @@ export class LaunchService {
           );
           return;
         }
-        const message = this.store.safeError(error);
-        const failedAt = this.now().toISOString();
-        await this.store.recordLaunchEvent(
-          assignment.id,
-          "failed",
-          event(assignment.id, "launch_failed", failedAt, { error: message }),
-          this.auditAssignmentInput(assignment, "failed", reasonCode(error), grant.projectId),
+        await this.recordLaunchFailure(
+          assignment,
+          this.store.safeError(error),
+          reasonCode(error),
+          grant.projectId,
+        );
+        return;
+      }
+      if (handle === undefined) {
+        await this.recordLaunchFailure(
+          assignment,
+          "Provider returned a malformed run handle",
+          "INVALID_PROVIDER_RESPONSE",
+          grant.projectId,
         );
         return;
       }
@@ -330,9 +351,24 @@ export class LaunchService {
       ...(projectId === undefined ? {} : { projectId }),
     };
   }
+
+  private async recordLaunchFailure(
+    assignment: Assignment,
+    error: string,
+    reason: string,
+    projectId?: string,
+  ): Promise<void> {
+    await this.store.recordLaunchEvent(
+      assignment.id,
+      "failed",
+      event(assignment.id, "launch_failed", this.now().toISOString(), { error }),
+      this.auditAssignmentInput(assignment, "failed", reason, projectId),
+    );
+  }
 }
 
 export class InjectedCrash extends Error {}
+class MalformedRunHandleError extends Error {}
 
 function stableId(kind: string, key: string): string {
   return `${kind}_${createHash("sha256").update(`${kind}\0${key}`).digest("hex").slice(0, 24)}`;
@@ -367,4 +403,13 @@ function acceptance(assignment: Assignment): LaunchAcceptance {
     status: assignment.status,
     acceptedAt: assignment.acceptedAt,
   };
+}
+
+function validRunHandle(value: unknown): RunHandle | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "object" || value === null || typeof (value as { runId?: unknown }).runId !== "string"
+    || (value as { runId: string }).runId.length === 0) {
+    throw new MalformedRunHandleError("Provider returned a malformed run handle");
+  }
+  return { runId: (value as { runId: string }).runId };
 }
