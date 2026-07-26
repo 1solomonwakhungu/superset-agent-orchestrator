@@ -84,6 +84,13 @@ const cutoff = (now: Date, days: number): string => new Date(now.getTime() - day
 const durableTables = ["schema_migrations", "batches", "assignments", "sessions", "results", "events", "workspace_leases", "idempotency_records"];
 const sqliteSidecarSuffixes = ["-wal", "-shm", "-journal"];
 
+function validateOwnership(stat: { uid: number }, path: string): void {
+  const effectiveUid = process.geteuid?.();
+  if (effectiveUid !== undefined && stat.uid !== effectiveUid) {
+    throw new Error(`Storage path must be owned by the effective user: ${path}`);
+  }
+}
+
 function preparePrivateDirectory(path: string): void {
   let created = false;
   try { mkdirSync(path, { recursive: false, mode: 0o700 }); created = true; }
@@ -94,6 +101,7 @@ function preparePrivateDirectory(path: string): void {
   try {
     const stat = fstatSync(descriptor);
     if (!stat.isDirectory()) throw new Error(`Storage directory must be a real directory: ${path}`);
+    validateOwnership(stat, path);
     if (created) fchmodSync(descriptor, 0o700);
     else if ((stat.mode & 0o077) !== 0) throw new Error(`Preexisting storage directory must already be owner-only (0700): ${path}`);
   } finally { closeSync(descriptor); }
@@ -114,6 +122,7 @@ function validateOwnerOnlyFile(path: string): void {
   try {
     const stat = fstatSync(descriptor);
     if (!stat.isFile()) throw new Error(`Storage path must be a regular file: ${path}`);
+    validateOwnership(stat, path);
     if (stat.nlink !== 1) throw new Error(`Storage path must not have multiple hard links: ${path}`);
     if ((stat.mode & 0o077) !== 0) throw new Error(`Storage path must already be owner-only (0600): ${path}`);
   } finally { closeSync(descriptor); }
@@ -124,6 +133,7 @@ function secureCreatedFile(path: string): void {
   try {
     const stat = fstatSync(descriptor);
     if (!stat.isFile()) throw new Error(`Storage path must be a regular file: ${path}`);
+    validateOwnership(stat, path);
     if (stat.nlink !== 1) throw new Error(`Storage path must not have multiple hard links: ${path}`);
     fchmodSync(descriptor, 0o600);
   } finally { closeSync(descriptor); }
@@ -134,6 +144,7 @@ function validateOwnerOnlyDirectory(path: string): void {
   try {
     const stat = fstatSync(descriptor);
     if (!stat.isDirectory()) throw new Error(`Storage directory must be a real directory: ${path}`);
+    validateOwnership(stat, path);
     if ((stat.mode & 0o077) !== 0) throw new Error(`Storage directory must be owner-only (0700): ${path}`);
   } finally { closeSync(descriptor); }
 }
