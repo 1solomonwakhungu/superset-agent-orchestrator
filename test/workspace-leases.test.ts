@@ -182,7 +182,8 @@ test("expiry alone never releases a lease and recovery needs owner-process proof
     const recovered = storage.database.prepare(
       "SELECT data_json FROM events WHERE event_type = 'lease_recovered'").get() as { data_json: string };
     assert.equal((JSON.parse(recovered.data_json) as { evidence: string }).evidence, "owner_process_absent");
-    assert.throws(() => storage.recoverExpiredWriterLease(lease.leaseId, { ownerProcessAbsent: true },
+    assert.throws(() => storage.recoverExpiredWriterLease(storage.workspaceLeaseById(lease.leaseId)!,
+      { ownerProcessAbsent: true },
       "operator", after(3_000)), LeaseRecoveryAmbiguousError);
   });
 });
@@ -220,6 +221,32 @@ test("a live owner is quarantined rather than displaced, and repair is evidence-
     assert.deepEqual(storage.database.prepare(
       "SELECT event_type FROM events WHERE event_type IN ('lease_quarantined', 'lease_repaired') ORDER BY sequence")
       .all().map((row) => (row as { event_type: string }).event_type), ["lease_quarantined", "lease_repaired"]);
+  });
+});
+
+test("recovery mutations reject a stale observed lease snapshot", async () => {
+  await withWorkspace(({ storage }) => {
+    const lease = storage.acquireWriterLease({
+      workspaceId: "ws",
+      ownerBatchId: "batch-1",
+      ttlMs: 1_000,
+      now: acquiredAt,
+    });
+    const observedActive = storage.workspaceLeaseById(lease.leaseId)!;
+
+    storage.quarantineWriterLease(observedActive, "identity became ambiguous", "reconciler-a", after(2_000));
+    assert.throws(() => storage.recoverExpiredWriterLease(observedActive,
+      { ownerProcessAbsent: true }, "reconciler-b", after(2_000)), LeaseFencedError);
+
+    const observedQuarantined = storage.workspaceLeaseById(lease.leaseId)!;
+    storage.repairQuarantinedWriterLease(observedQuarantined,
+      { ownerProcessAbsent: true }, "operator-a", after(3_000));
+    assert.throws(() => storage.repairQuarantinedWriterLease(observedQuarantined,
+      { ownerProcessAbsent: true }, "operator-b", after(3_000)), LeaseFencedError);
+
+    assert.equal(storage.workspaceLeaseStatus("ws")?.state, "released");
+    assert.equal(storage.acquireWriterLease({ workspaceId: "ws", ownerBatchId: "batch-2", ttlMs: 30_000 })
+      .generation, 2);
   });
 });
 
