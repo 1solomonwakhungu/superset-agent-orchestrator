@@ -13,6 +13,10 @@ test("configuration schema is valid JSON with closed objects", async () => {
   assert.equal(schema.properties.superset.additionalProperties, false);
   assert.equal(schema.properties.timeouts.additionalProperties, false);
   assert.equal(schema.properties.environment.additionalProperties, false);
+  assert.equal(schema.properties.concurrency.additionalProperties, false);
+  assert.equal(schema.properties.concurrency.properties.global.minimum, undefined);
+  assert.equal(schema.$defs.positiveLimit.minimum, 1);
+  assert.deepEqual(schema.properties.concurrency.properties.overload.enum, ["queue", "reject"]);
   assert.equal(schema.$defs.timeout.minimum, 1);
   assert.equal(schema.$defs.environmentName.pattern, "^[A-Za-z_][A-Za-z0-9_]*$");
 });

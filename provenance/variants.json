@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-26T07:20:00Z",
+  "source": "https://huggingface.co/api/models",
+  "variants": [
+    {
+      "family": "BF16",
+      "repository": "openbmb/MiniCPM5-1B",
+      "revision": "4e9de7a0778dc1c362e983e6858f0e77542cbdca",
+      "license": "apache-2.0",
+      "artifacts": [{"path": "model-00000-of-00001.safetensors", "bytes": 2161290912, "sha256": "7ab8fd86563125929be78aeec8cb3969c7ed2ead3be1ab9d3ec0a9fa69c8660d"}]
+    },
+    {
+      "family": "SFT",
+      "repository": "openbmb/MiniCPM5-1B-SFT",
+      "revision": "fb06dfdfc9f9dbd66a9c7a682b3ac400739cfcb0",
+      "license": "apache-2.0",
+      "artifacts": [{"path": "model-00000-of-00001.safetensors", "bytes": 2161290944, "sha256": "3d55612299c140fb1f16180df61ccf8166f48fb4ba7b499435aac6a4055f1675"}]
+    },
+    {
+      "family": "GGUF",
+      "repository": "openbmb/MiniCPM5-1B-GGUF",
+      "revision": "87007042419d30c1d8f38ef065424ee33870831e",
+      "license": "apache-2.0",
+      "artifacts": [
+        {"path": "MiniCPM5-1B-F16.gguf", "bytes": 2166551936, "sha256": "68c40b08b1242754a107b9510af89aa75b10c75843ca7844643c70956b7f1e3d"},
+        {"path": "MiniCPM5-1B-Q4_K_M.gguf", "bytes": 688065920, "sha256": "81b64d05a23b17b34c475f42b3e72fbde62d4b92cc34541f7a8031d0752deafa"},
+        {"path": "MiniCPM5-1B-Q8_0.gguf", "bytes": 1153529216, "sha256": "0dc7638539067268774c275a14a6ec9c7e01f7eeb2cff606c8590361fa527e4c"}
+      ]
+    },
+    {
+      "family": "MLX",
+      "repository": "openbmb/MiniCPM5-1B-MLX",
+      "revision": "e17c13c7788c3a0a739b91b8a2594584017e9db2",
+      "license": "apache-2.0",
+      "artifacts": [{"path": "model.safetensors", "bytes": 608026621, "sha256": "a23e0c5c79944a0b2cc92cb9ab79376b4dce41e2312383727e21ee43fe19cb4f"}]
+    }
+  ]
+}

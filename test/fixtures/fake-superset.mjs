@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { Buffer } from "node:buffer";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import lockfile from "proper-lockfile";
 
