@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import type { AgentAdapter } from "../src/agent-adapter.js";
 import { FakeAgentAdapter } from "../src/fake-agent-adapter.js";
 import { LaunchService, type AsynchronousLaunchRequest } from "../src/launch-service.js";
 import { ResultCaptureService, type ResultDelivery } from "../src/result-capture.js";
@@ -110,6 +111,54 @@ test("makes duplicate and late delivery idempotent and rejects conflicts", async
   }
 });
 
+test("concurrent conflicting deliveries persist exactly one authoritative result", async () => {
+  const context = await fixture();
+  try {
+    const deliveries = [
+      { kind: "adapter_result", result: { status: "succeeded", output: "winner-a" } } as const,
+      { kind: "adapter_result", result: { status: "failed", error: "winner-b", retryable: false } } as const,
+    ];
+    const settled = await Promise.allSettled(deliveries.map((delivery, index) =>
+      new ResultCaptureService(new DurableStore(context.path), context.adapter)
+        .ingest(context.accepted.assignmentId, `racing-delivery-${index}`, delivery)));
+
+    assert.equal(settled.filter(({ status }) => status === "fulfilled").length, 1);
+    assert.equal(settled.filter(({ status }) => status === "rejected").length, 1);
+    const state = JSON.parse(await readFile(context.path, "utf8")) as DurableState;
+    assert.equal(state.capturedResults?.length, 1);
+    assert.match(state.capturedResults?.[0]?.deliveryId ?? "", /^racing-delivery-[01]$/);
+  } finally {
+    await rm(context.directory, { recursive: true, force: true });
+  }
+});
+
+test("rejects forged result attribution without mutating durable state", async () => {
+  const context = await fixture();
+  try {
+    const assignment = await context.store.assignmentForResult(context.accepted.assignmentId);
+    const before = await readFile(context.path, "utf8");
+    await assert.rejects(context.store.captureResult({
+      deliveryId: "forged-attribution",
+      deliveryFingerprint: "a".repeat(64),
+      assignmentId: assignment.id,
+      batchId: assignment.batchId,
+      sessionId: assignment.sessionId,
+      workspaceId: assignment.workspaceId ?? "",
+      workspacePath: assignment.workspacePath,
+      attemptId: assignment.attemptId ?? "",
+      attempt: assignment.attempt ?? 0,
+      runId: assignment.runId ?? "",
+      attribution: { agent: "attacker", task: assignment.attribution.task },
+      claim: { status: "succeeded", completeness: "complete", output: "forged" },
+      verifiedArtifacts: [],
+      capturedAt: new Date().toISOString(),
+    }), /attribution does not match/);
+    assert.equal(await readFile(context.path, "utf8"), before);
+  } finally {
+    await rm(context.directory, { recursive: true, force: true });
+  }
+});
+
 test("does not capture a nonterminal adapter result", async () => {
   const directory = await mkdtemp(join(tmpdir(), "orchestrator-result-"));
   try {
@@ -166,5 +215,30 @@ test("records malformed adapter results and terminal status mismatches without i
     });
   } finally {
     await rm(mismatch.directory, { recursive: true, force: true });
+  }
+});
+
+test("records structurally malformed and oversized provider payloads as bounded claims", async () => {
+  for (const [deliveryId, mutate, expected] of [
+    ["delivery-bad-status", (adapter: AgentAdapter) => {
+      adapter.status = async () => ({ runId: "wrong", status: "succeeded", updatedAt: "invalid" }) as never;
+    }, "Provider status response was malformed"],
+    ["delivery-large-result", (adapter: AgentAdapter) => {
+      adapter.result = async () => ({ status: "succeeded", output: "x".repeat(1_048_577) });
+    }, "Provider result response was oversized"],
+  ] as const) {
+    const context = await fixture();
+    try {
+      mutate(context.adapter);
+      const captured = await new ResultCaptureService(context.store, context.adapter)
+        .collect(context.accepted.assignmentId, deliveryId);
+      assert.deepEqual(captured.result?.claim, {
+        status: "malformed",
+        completeness: "malformed",
+        error: expected,
+      });
+    } finally {
+      await rm(context.directory, { recursive: true, force: true });
+    }
   }
 });

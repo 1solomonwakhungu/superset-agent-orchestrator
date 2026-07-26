@@ -13,6 +13,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  bounded-load:
+    name: Bounded deterministic load
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run load:ci
+      - uses: actions/upload-artifact@v4
+        with:
+          name: per-351-bounded-load-${{ github.sha }}
+          path: artifacts/per-351-ci/*
+          if-no-files-found: error
+          retention-days: 14
+
   quality:
     name: Quality gates
     runs-on: ubuntu-24.04
@@ -29,3 +48,18 @@ jobs:
       - run: npm ci
       - run: npm audit --audit-level=high
       - run: npm run check
+
+  minicpm5:
+    name: MiniCPM5 reproducibility environment
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.3"
+          enable-cache: true
+      - run: uv sync --frozen
+        working-directory: minicpm5
+      - run: uv run --frozen pytest
+        working-directory: minicpm5
