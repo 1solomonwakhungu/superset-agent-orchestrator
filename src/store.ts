@@ -1,13 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
 import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { dirname } from "node:path";
 import lockfile from "proper-lockfile";
 import { z } from "zod";
 import { auditField, RedactionPolicy, SecurityError, SECURITY_POLICY_VERSION } from "./security.js";
 import { assertPrivateStatePath } from "./state-path.js";
+import { preparePrivateDirectory, secureCreatedFile, validateOwnerOnlyFile } from "./storage.js";
 
 export type WorkerStatus = "requested" | "running" | "canceling" | "succeeded" | "failed" | "canceled" | "unknown_outcome";
 export type TerminalWorkerStatus = Extract<WorkerStatus, "succeeded" | "failed" | "canceled" | "unknown_outcome">;
@@ -60,6 +61,10 @@ export interface Worker {
   deadlineAt?: string;
   lifecycleReconcilePending?: boolean;
   cancellationDeliveryPending?: boolean;
+  cancellationDeliveryClaimed?: boolean;
+  providerStopPending?: boolean;
+  providerStopClaimed?: boolean;
+  providerStopUnsupported?: boolean;
   lateObservations?: LateObservation[];
 }
 
@@ -278,6 +283,10 @@ const workerSchema = z.object({
   deadlineAt: z.iso.datetime().optional(),
   lifecycleReconcilePending: z.boolean().optional(),
   cancellationDeliveryPending: z.boolean().optional(),
+  cancellationDeliveryClaimed: z.boolean().optional(),
+  providerStopPending: z.boolean().optional(),
+  providerStopClaimed: z.boolean().optional(),
+  providerStopUnsupported: z.boolean().optional(),
   lateObservations: z.array(z.object({
     observedAt: z.iso.datetime(), status: z.string().min(1), retainedResult: z.boolean(),
   })).optional(),
@@ -541,7 +550,7 @@ export class DurableStore {
       requested: 0, running: 0, canceling: 0, succeeded: 0, failed: 0, canceled: 0, unknown_outcome: 0,
     };
     for (const worker of this.workersForBatch(batchId)) counts[worker.status] += 1;
-    const settled = counts.succeeded + counts.failed + counts.canceled + counts.unknown_outcome;
+    const settled = counts.succeeded + counts.failed + counts.canceled;
     return {
       ...page,
       sessions: page.sessions.map(({ id, batchId: attributedBatchId, status, attribution, startedAt, completedAt }) => ({
@@ -621,6 +630,9 @@ export class DurableStore {
   /** Records the wall-clock instant after which a nonterminal worker must be expired. */
   async setWorkerDeadline(workerId: string, deadline: Date): Promise<Worker> {
     return this.updateWorker(workerId, (worker) => {
+      if (DurableStore.isTerminal(worker.status)) {
+        throw new BatchQueryError("invalid_request", "Cannot set a deadline on a terminal session");
+      }
       worker.deadlineAt = deadline.toISOString();
     });
   }
@@ -669,16 +681,93 @@ export class DurableStore {
       .filter((worker) => worker.status === "canceling" && worker.runId !== undefined)));
   }
 
+  async claimCancellationDelivery(workerId: string): Promise<boolean> {
+    let claimed = false;
+    await this.updateWorker(workerId, (worker) => {
+      if (!worker.cancellationDeliveryPending || worker.cancellationDeliveryClaimed) return;
+      delete worker.cancellationDeliveryPending;
+      worker.cancellationDeliveryClaimed = true;
+      claimed = true;
+    });
+    return claimed;
+  }
+
+  async releaseCancellationDelivery(workerId: string): Promise<Worker> {
+    return this.updateWorker(workerId, (worker) => {
+      delete worker.cancellationDeliveryClaimed;
+      if (worker.status === "canceling") worker.cancellationDeliveryPending = true;
+    });
+  }
+
   async markCancellationDelivered(workerId: string): Promise<Worker> {
     return this.updateWorker(workerId, (worker) => {
       delete worker.cancellationDeliveryPending;
+      delete worker.cancellationDeliveryClaimed;
+    });
+  }
+
+  async markProviderStopDelivered(workerId: string): Promise<Worker> {
+    return this.updateWorker(workerId, (worker) => {
+      delete worker.providerStopPending;
+      delete worker.providerStopClaimed;
+      delete worker.providerStopUnsupported;
+    });
+  }
+
+  async markProviderStopUnsupported(workerId: string): Promise<Worker> {
+    return this.updateWorker(workerId, (worker) => {
+      delete worker.providerStopPending;
+      delete worker.providerStopClaimed;
+      worker.providerStopUnsupported = true;
+    });
+  }
+
+  async claimProviderStop(workerId: string): Promise<boolean> {
+    let claimed = false;
+    await this.updateWorker(workerId, (worker) => {
+      if (!worker.providerStopPending || worker.providerStopClaimed) return;
+      delete worker.providerStopPending;
+      worker.providerStopClaimed = true;
+      claimed = true;
+    });
+    return claimed;
+  }
+
+  async releaseProviderStop(workerId: string): Promise<Worker> {
+    return this.updateWorker(workerId, (worker) => {
+      delete worker.providerStopClaimed;
+      if (worker.runId !== undefined) worker.providerStopPending = true;
     });
   }
 
   /** Returns timed-out executions whose eventual provider result has not yet been observed. */
   async workersPendingLifecycleReconciliation(): Promise<Worker[]> {
     return this.withFreshState(() => structuredClone(this.state.workers
-      .filter((worker) => worker.lifecycleReconcilePending === true && worker.runId !== undefined)));
+      .filter((worker) => (worker.lifecycleReconcilePending === true || worker.providerStopPending === true)
+        && worker.runId !== undefined)));
+  }
+
+  async recoverLifecycleDeliveryClaims(): Promise<void> {
+    await this.withLock(async () => {
+      await this.load();
+      let changed = false;
+      for (const worker of this.state.workers) {
+        if (worker.cancellationDeliveryClaimed) {
+          delete worker.cancellationDeliveryClaimed;
+          if (worker.status === "unknown_outcome") worker.status = "canceling";
+          if (worker.runId !== undefined && !DurableStore.isTerminal(worker.status)) {
+            worker.cancellationDeliveryPending = true;
+          }
+          changed = true;
+        }
+        if (worker.providerStopClaimed) {
+          delete worker.providerStopClaimed;
+          if (worker.runId !== undefined) worker.providerStopPending = true;
+          changed = true;
+        }
+      }
+      if (changed) await this.persist();
+    });
   }
 
   /**
@@ -692,6 +781,7 @@ export class DurableStore {
       delete worker.preCancelStatus;
       delete worker.cancelRequestedAt;
       delete worker.cancellationDeliveryPending;
+      delete worker.cancellationDeliveryClaimed;
       delete worker.stopReason;
       delete worker.stopDetail;
     });
@@ -721,6 +811,7 @@ export class DurableStore {
       worker.completedAt = at.toISOString();
       delete worker.lifecycleReconcilePending;
       delete worker.cancellationDeliveryPending;
+      delete worker.cancellationDeliveryClaimed;
       if (options.result !== undefined) worker.result = options.result;
       delete worker.preCancelStatus;
       const stopReason = options.stopReason
@@ -736,7 +827,7 @@ export class DurableStore {
   async settleWorkerCancellation(
     workerId: string,
     status: TerminalWorkerStatus,
-    options: { result?: unknown; stopReason?: string; at?: Date } = {},
+    options: { result?: unknown; stopReason?: string; at?: Date; keepReconciliationPending?: boolean } = {},
   ): Promise<{ worker: Worker; claimed: boolean }> {
     validateStopReason(status, options.stopReason);
     const at = options.at ?? new Date();
@@ -744,18 +835,24 @@ export class DurableStore {
     const worker = await this.updateWorker(workerId, (candidate) => {
       if (DurableStore.isTerminal(candidate.status)) {
         const retainedResult = options.result !== undefined && candidate.result === undefined;
-        if (retainedResult) candidate.result = options.result;
+        if (retainedResult || (options.result !== undefined && candidate.lifecycleReconcilePending)) {
+          candidate.result = options.result;
+        }
         (candidate.lateObservations ??= []).push({ observedAt: at.toISOString(), status, retainedResult });
-        delete candidate.lifecycleReconcilePending;
+        if (options.keepReconciliationPending) candidate.lifecycleReconcilePending = true;
+        else delete candidate.lifecycleReconcilePending;
         delete candidate.cancellationDeliveryPending;
+        delete candidate.cancellationDeliveryClaimed;
         return;
       }
       if (candidate.status !== "canceling") return;
       claimed = true;
       candidate.status = status;
       candidate.completedAt = at.toISOString();
-      delete candidate.lifecycleReconcilePending;
+      if (options.keepReconciliationPending) candidate.lifecycleReconcilePending = true;
+      else delete candidate.lifecycleReconcilePending;
       delete candidate.cancellationDeliveryPending;
+      delete candidate.cancellationDeliveryClaimed;
       if (options.result !== undefined) candidate.result = options.result;
       delete candidate.preCancelStatus;
       const stopReason = options.stopReason
@@ -785,7 +882,13 @@ export class DurableStore {
       candidate.status = "failed";
       candidate.stopReason = "deadline_exceeded";
       candidate.completedAt = at.toISOString();
-      if (candidate.runId !== undefined) candidate.lifecycleReconcilePending = true;
+      const launch = this.state.assignments.find(({ sessionId }) => sessionId === candidate.id);
+      if (candidate.runId !== undefined || launch?.status === "launching") {
+        candidate.lifecycleReconcilePending = true;
+        candidate.providerStopPending = true;
+      }
+      delete candidate.cancellationDeliveryPending;
+      delete candidate.cancellationDeliveryClaimed;
       delete candidate.preCancelStatus;
     });
     return { worker, claimed };
@@ -798,7 +901,8 @@ export class DurableStore {
       .filter((worker) => worker.deadlineAt !== undefined
         && worker.deadlineAt <= cutoff
         && !DurableStore.isTerminal(worker.status))
-      .sort((left, right) => left.deadlineAt!.localeCompare(right.deadlineAt!))));
+      .sort((left, right) => left.deadlineAt!.localeCompare(right.deadlineAt!))
+      .slice(0, 250)));
   }
 
   async recordWorkerResult(
@@ -855,11 +959,9 @@ export class DurableStore {
 
         // A canceling worker whose process is provably gone never reported its terminal outcome.
         if (worker.status === "canceling" && worker.pid !== undefined
+          && !worker.cancellationDeliveryPending
           && !this.isProcessAlive(worker.pid, worker.processStartedAt)) {
-          worker.status = "unknown_outcome";
-          worker.completedAt = detectedAt;
-          delete worker.preCancelStatus;
-          diagnose("unknown_outcome", worker, "Canceling worker process was absent during reconciliation");
+          diagnose("unknown_outcome", worker, "Canceling worker process was absent; exact provider reconciliation remains pending");
         }
 
         if ((worker.status === "succeeded" || worker.status === "failed") && worker.result === undefined) {
@@ -1066,7 +1168,11 @@ export class DurableStore {
   async pendingAssignments(): Promise<Assignment[]> {
     return this.withLock(async () => {
       await this.load();
-      return structuredClone(this.state.assignments.filter(({ status }) => status === "accepted" || status === "launching"));
+      return structuredClone(this.state.assignments.filter((assignment) => {
+        if (assignment.status !== "accepted" && assignment.status !== "launching") return false;
+        const worker = this.state.workers.find(({ id }) => id === assignment.sessionId);
+        return worker !== undefined && !DurableStore.isTerminal(worker.status);
+      }));
     });
   }
 
@@ -1081,6 +1187,27 @@ export class DurableStore {
       auditEventSchema.parse(event);
       const assignment = this.state.assignments.find(({ id }) => id === assignmentId);
       if (assignment === undefined) throw new Error(`Unknown assignment: ${assignmentId}`);
+      const lifecycleWorker = this.state.workers.find(({ id }) => id === assignment.sessionId);
+      if (status === "launching" && lifecycleWorker !== undefined && DurableStore.isTerminal(lifecycleWorker.status)) {
+        const previousState = structuredClone(this.state);
+        assignment.status = "failed";
+        assignment.updatedAt = event.occurredAt;
+        assignment.error = "Launch was canceled before provider dispatch";
+        this.state.auditEvents.push({
+          ...event,
+          type: "launch_failed",
+          error: assignment.error,
+        });
+        if (securityAudit !== undefined) this.appendSecurityAuditToState(securityAudit, new Date(event.occurredAt));
+        try {
+          await this.persist();
+        } catch (error) {
+          this.state = previousState;
+          this.rebuildIndexes();
+          throw error;
+        }
+        return { assignment: structuredClone(assignment), transitioned: false };
+      }
       if (event.assignmentId !== assignmentId) throw new Error("Launch event assignment does not match its target");
       const expectedType: Record<typeof status, LaunchAuditType> = {
         launching: "launch_reserved",
@@ -1109,8 +1236,33 @@ export class DurableStore {
           if (worker === undefined) throw new Error(`Missing lifecycle worker for assignment: ${assignmentId}`);
           if (worker.runId !== undefined && worker.runId !== event.runId) throw new Error("Worker is already bound to another run");
           worker.runId = event.runId;
+          if (DurableStore.isTerminal(worker.status)) {
+            worker.lifecycleReconcilePending = true;
+            worker.providerStopPending = true;
+          }
         }
         if (event.error !== undefined) assignment.error = this.redaction.text(event.error);
+        if (status === "failed") {
+          const worker = this.state.workers.find(({ id }) => id === assignment.sessionId);
+          if (worker === undefined) throw new Error(`Missing lifecycle worker for assignment: ${assignmentId}`);
+          if (!DurableStore.isTerminal(worker.status)) {
+            worker.status = "failed";
+            worker.completedAt = event.occurredAt;
+            worker.stopReason = "launch_error";
+            worker.result = {
+              status: "failed",
+              completeness: "missing",
+              error: this.redaction.text(event.error ?? "Provider launch failed"),
+            };
+          }
+          delete worker.preCancelStatus;
+          delete worker.cancelRequestedAt;
+          delete worker.cancellationDeliveryPending;
+          delete worker.cancellationDeliveryClaimed;
+          delete worker.lifecycleReconcilePending;
+          delete worker.providerStopPending;
+          delete worker.providerStopClaimed;
+        }
         if (existingEvent === undefined) this.state.auditEvents.push({
           ...event,
           ...(event.error === undefined ? {} : { error: this.redaction.text(event.error) }),
@@ -1202,6 +1354,7 @@ export class DurableStore {
   private async load(): Promise<void> {
     await assertPrivateStatePath(this.path);
     try {
+      if (existsSync(this.path)) validateOwnerOnlyFile(this.path);
       const parsed: unknown = JSON.parse(await readFile(this.path, "utf8"));
       this.state = stateSchema.parse(parsed) as DurableState;
       this.assertSecurityAuditChain();
@@ -1317,7 +1470,8 @@ export class DurableStore {
   private async persist(): Promise<void> {
     await assertPrivateStatePath(this.path);
     stateSchema.parse(this.state);
-    await mkdir(dirname(this.path), { recursive: true });
+    await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
+    preparePrivateDirectory(dirname(this.path));
     const temporaryPath = `${this.path}.${process.pid}.${randomUUID()}.tmp`;
     const file = await open(temporaryPath, "wx", 0o600);
     try {
@@ -1328,6 +1482,7 @@ export class DurableStore {
     }
     try {
       await rename(temporaryPath, this.path);
+      secureCreatedFile(this.path);
       const directory = await open(dirname(this.path), "r");
       try {
         await directory.sync();
@@ -1374,7 +1529,7 @@ export class DurableStore {
   }
 
   static isTerminal(status: WorkerStatus): status is TerminalWorkerStatus {
-    return status === "succeeded" || status === "failed" || status === "canceled" || status === "unknown_outcome";
+    return status === "succeeded" || status === "failed" || status === "canceled";
   }
 
   static processStartedAt(pid: number): string | undefined {

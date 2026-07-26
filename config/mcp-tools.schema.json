@@ -3636,7 +3636,7 @@
                 "type": "object",
                 "properties": {
                   "expired": {
-                    "maxItems": 100,
+                    "maxItems": 250,
                     "type": "array",
                     "items": {
                       "type": "object",
