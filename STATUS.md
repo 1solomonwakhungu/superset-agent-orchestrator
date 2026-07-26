@@ -15,6 +15,18 @@
 - PR #88 opened; next: pass fresh exact-head CI, merge, and reconcile the
   canonical Linear completion note.
 
+## PER-369 deterministic result reporting, 2026-07-26
+
+- Added canonical JSON and human-readable Markdown baseline report generation,
+  provenance-complete SHA-256 result fingerprints, and a semantic rerun diff.
+- Added a report schema, stable harness-neutral input contract, documented float
+  normalization tolerance, Make targets, and regression coverage.
+- Verification passed: MiniCPM5 15/15 tests; full `npm run check` with 384
+  Node tests (one declared skip), 96.35% statement coverage, 6 Python tests
+  (one model-dependent skip), schema, provenance, and research gates; explicit
+  report JSON Schema validation; and `git diff --check`.
+- Next: open and merge the PR, then synchronize Linear with exact identifiers.
+
 ## PER-346 deadline claim serialization, 2026-07-26
 
 - PR #80 serialized durable deadline-expiry claims before retaining bounded
