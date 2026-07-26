@@ -48,6 +48,7 @@ test("production MCP server persists attributed completion, failure, cancellatio
       request_id: "cancel", session_ids: [canceled.sessionId], reason: "operator request",
     });
     assert.equal(cancelResponse.items[0]?.canceled, true);
+    await harness.restart();
     const terminal = await results(harness.client, launched.sessions.map(({ sessionId }) => sessionId));
     assert.equal(terminal.items[0]?.result?.claim.output, "exact answer");
     assert.equal(terminal.items[0]?.status, "succeeded");
@@ -66,6 +67,16 @@ test("production MCP server persists attributed completion, failure, cancellatio
     const recovered = await results(harness.client, launched.sessions.map(({ sessionId }) => sessionId));
     assert.deepEqual(recovered.items.map((item) => item.result?.claim), terminal.items.map((item) => item.result?.claim));
     assert.equal((await harness.calls()).filter(({ command }) => command === "launch").length, 3);
+  });
+});
+
+test("production MCP server rejects integration workspaces outside the configured root", async () => {
+  await withServer({ defaultScript: successScript() }, async (harness) => {
+    const input = launchArguments(1);
+    input.assignments[0]!.workspace_id = "..";
+    const response = await call(harness.client, "provider_batches_launch", input);
+    assert.equal(response.error?.code, "PROVIDER_UNAVAILABLE");
+    assert.equal((await harness.calls()).filter(({ command }) => command === "launch").length, 0);
   });
 });
 
@@ -224,8 +235,13 @@ async function withServer(
       connection = await connect(env);
     },
     async calls() {
-      const state = JSON.parse(await readFile(fakeStatePath, "utf8")) as { calls: Array<{ command: string }> };
-      return state.calls;
+      try {
+        const state = JSON.parse(await readFile(fakeStatePath, "utf8")) as { calls: Array<{ command: string }> };
+        return state.calls;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+        throw error;
+      }
     },
   };
   try {

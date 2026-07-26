@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import { realpath } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -128,11 +128,19 @@ async function main(): Promise<void> {
   const workspaceAuthorizer: WorkspaceAuthorizer | undefined = integrationToolsEnabled && integrationWorkspaceRoot !== undefined
     ? {
         authorize: async (workspaceId) => {
-          const canonicalPath = assertDataOperand(await realpath(join(integrationWorkspaceRoot, workspaceId)), "workspace path");
+          if (isAbsolute(workspaceId) || workspaceId === "." || workspaceId === ".." || workspaceId.includes("/") || workspaceId.includes("\\")) {
+            throw new Error("Integration workspace ID must name a direct child of the configured root");
+          }
+          const canonicalRoot = await realpath(integrationWorkspaceRoot);
+          const canonicalPath = assertDataOperand(await realpath(resolve(canonicalRoot, workspaceId)), "workspace path");
+          const fromRoot = relative(canonicalRoot, canonicalPath);
+          if (fromRoot.startsWith("..") || isAbsolute(fromRoot) || !(await stat(canonicalPath)).isDirectory()) {
+            throw new Error("Integration workspace must be a directory inside the configured root");
+          }
           return {
             workspaceId, projectId: "provider-integration", canonicalPath,
             revalidate: async () => {
-              if (await realpath(join(integrationWorkspaceRoot, workspaceId)) !== canonicalPath) {
+              if (await realpath(join(canonicalRoot, workspaceId)) !== canonicalPath) {
                 throw new Error("Integration workspace identity changed before launch");
               }
             },
@@ -256,23 +264,15 @@ async function main(): Promise<void> {
           continue;
         }
         try {
-          const state = await provider.status({ runId: assignment.runId });
-          if (state.status !== "queued" && state.status !== "running") {
+          const cancellation = await lifecycle.cancelSession(sessionId, "user_requested", reason);
+          if ("error" in cancellation) {
             items.push({
               session_id: sessionId,
-              error: contractError("INVALID_TRANSITION", "A terminal session cannot be canceled"),
+              error: contractError(cancellation.error, cancellation.message),
             });
             continue;
           }
-          const cancellation = await provider.cancel({ runId: assignment.runId }, reason);
-          if (cancellation?.status === "unsupported") {
-            items.push({
-              session_id: sessionId,
-              error: contractError("CANCEL_UNSUPPORTED", "The backend rejected cancellation as unsupported"),
-            });
-            continue;
-          }
-          items.push({ session_id: sessionId, canceled: true });
+          items.push({ session_id: sessionId, canceled: cancellation.status === "canceled" });
         } catch (error) {
           const failure = error instanceof SupersetProcessError
             ? contractError(error.code, error.message)
