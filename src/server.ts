@@ -86,6 +86,7 @@ async function main(): Promise<void> {
       `Unsupported platform ${process.platform}; supported platforms are darwin and linux. See docs/compatibility.md.`,
     );
   }
+  await store.recoverLifecycleDeliveryClaims();
   const reconciliation = await store.reconcile();
   console.error(`Startup reconciliation complete: ${JSON.stringify(reconciliation)}`);
   const reconciliationTimer = setInterval(() => {
@@ -401,8 +402,12 @@ async function main(): Promise<void> {
           items.push({
             session_id: id,
             error: contractError(
-              error instanceof BatchQueryError && error.code === "not_found" ? "SESSION_NOT_FOUND" : "STATE_UNAVAILABLE",
-              error instanceof BatchQueryError && error.code === "not_found" ? error.message : "Unable to persist the session deadline",
+              error instanceof BatchQueryError && error.code === "not_found"
+                ? "SESSION_NOT_FOUND"
+                : error instanceof BatchQueryError && error.code === "invalid_request"
+                  ? "INVALID_TRANSITION"
+                  : "STATE_UNAVAILABLE",
+              error instanceof BatchQueryError ? error.message : "Unable to persist the session deadline",
             ),
           });
         }
@@ -413,17 +418,22 @@ async function main(): Promise<void> {
   server.registerTool(
     tool("deadlines_enforce"),
     {
-      description: "Expire every nonterminal session whose deadline has passed and report the exact expirations",
+      description: "Expire up to 250 overdue nonterminal sessions and report whether another bounded sweep is needed",
       inputSchema: enforceDeadlinesRequestSchema.shape,
     },
-    async () => result(enforceDeadlinesResultSchema.parse(contractEnvelope({
-      expired: (await lifecycle.enforceDeadlines()).map((worker) => ({
+    async () => {
+      const expired = await lifecycle.enforceDeadlines();
+      const hasMore = await lifecycle.hasOverdueDeadlines();
+      return result(enforceDeadlinesResultSchema.parse(contractEnvelope({
+        expired: expired.map((worker) => ({
         session_id: worker.sessionId,
         deadline_at: worker.deadlineAt,
         state: "failed" as const,
         ...(worker.providerStopError === undefined ? {} : { provider_stop_error: worker.providerStopError }),
       })),
-    }))),
+        has_more: hasMore,
+      })));
+    },
   );
   server.registerTool(
     tool("recent_sessions"),

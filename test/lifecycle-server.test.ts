@@ -122,9 +122,19 @@ test("deadlines expire nonterminal sessions as failed/deadline_exceeded", async 
   assert.deepEqual(expired.data.expired.map(({ session_id, state }) => ({ session_id, state })), [
     { session_id: sessionIds[0]!, state: "failed" },
   ]);
+  assert.equal(expired.data.has_more, false);
 
   const page = await call<{ sessions: Array<{ status: string }> }>(client, "batches_get", { batchId: created.batch.id });
   assert.equal(page.sessions[0]!.status, "failed");
   const repeated = enforceDeadlinesResultSchema.parse(await call<unknown>(client, "deadlines_enforce", { contract_version: "1.0" }));
   assert.deepEqual(repeated.data.expired, []);
+  assert.equal(repeated.data.has_more, false);
+
+  const terminalDeadline = setDeadlineResultSchema.parse(await call<unknown>(
+    client,
+    "sessions_set_deadline",
+    { contract_version: "1.0", session_ids: sessionIds, deadline_ms: 1_000 },
+  ));
+  const item = terminalDeadline.data.items[0]!;
+  assert.equal("error" in item ? item.error.code : undefined, "INVALID_TRANSITION");
 }));

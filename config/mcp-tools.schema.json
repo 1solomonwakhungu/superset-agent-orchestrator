@@ -3636,7 +3636,7 @@
                 "type": "object",
                 "properties": {
                   "expired": {
-                    "maxItems": 100,
+                    "maxItems": 250,
                     "type": "array",
                     "items": {
                       "type": "object",
@@ -3667,10 +3667,14 @@
                       ],
                       "additionalProperties": false
                     }
+                  },
+                  "has_more": {
+                    "type": "boolean"
                   }
                 },
                 "required": [
-                  "expired"
+                  "expired",
+                  "has_more"
                 ],
                 "additionalProperties": false
               }
