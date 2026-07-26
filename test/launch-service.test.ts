@@ -162,13 +162,14 @@ test("retries transient background dispatch failure without another launch reque
     const service = new LaunchService(store, adapter, () => new Date(), () => undefined, 5);
     await service.launch(request);
 
-    let status: string | undefined;
-    for (let attempt = 0; attempt < 100 && status !== "launched"; attempt += 1) {
+    let launched = false;
+    for (let attempt = 0; attempt < 100 && !launched; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 10));
-      status = (JSON.parse(await readFile(path, "utf8")) as DurableState).assignments[0]?.status;
+      const state = JSON.parse(await readFile(path, "utf8")) as DurableState;
+      launched = state.assignments[0]?.status === "launched";
     }
+    assert.equal(launched, true);
     assert.equal(adapter.launches.length, 1);
-    assert.equal(status, "launched");
     assert.ok(attempts >= 2);
   });
 });
