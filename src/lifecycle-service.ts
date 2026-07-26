@@ -165,10 +165,11 @@ export class LifecycleService {
     }
     const handle = { runId: intent.worker.runId };
     if (!await this.store.claimCancellationDelivery(sessionId)) {
+      const worker = await this.store.worker(sessionId);
       return {
         sessionId,
-        status: "canceling",
-        ...(intent.worker.stopReason === undefined ? {} : { stopReason: intent.worker.stopReason }),
+        status: worker?.status ?? "canceling",
+        ...(worker?.stopReason === undefined ? {} : { stopReason: worker.stopReason }),
         changed: true,
       };
     }
@@ -417,7 +418,9 @@ export class LifecycleService {
       result: claim,
       ...(stopReason === undefined ? {} : { stopReason }),
       at: this.wallClockNow(),
-      ...(!resultMismatch && resultFailure === undefined ? {} : { keepReconciliationPending: true }),
+      ...(result !== undefined && !resultMismatch && resultFailure === undefined
+        ? {}
+        : { keepReconciliationPending: true }),
     };
     const { worker: settled, claimed } = await this.store.settleWorkerCancellation(sessionId, terminal, options);
     return {

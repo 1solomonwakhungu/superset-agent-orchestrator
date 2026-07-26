@@ -7,12 +7,21 @@ import test from "node:test";
 import type { AgentAdapter } from "../src/agent-adapter.js";
 import { FakeAgentAdapter } from "../src/fake-agent-adapter.js";
 import { LaunchService, type AsynchronousLaunchRequest, type LaunchBoundary } from "../src/launch-service.js";
+import { childEnvironment } from "../src/security.js";
 import { DurableStore } from "../src/store.js";
+
+const workspacePath = "/tmp/per-348-fixture";
+const authorizer = {
+  authorize: async (workspaceId: string) => ({
+    workspaceId, projectId: "project-per-348", canonicalPath: workspacePath,
+    revalidate: async () => undefined,
+  }),
+};
 
 const request: AsynchronousLaunchRequest = {
   idempotencyKey: "per-348-race", clientId: "test", batchName: "PER-348",
   attribution: { agent: "fake", task: "race" }, prompt: "synthetic",
-  workspaceId: "fixture", workspacePath: "/tmp/per-348-fixture",
+  workspaceId: "fixture",
 };
 
 async function fixture(run: (path: string) => Promise<void>): Promise<void> {
@@ -63,7 +72,7 @@ test("malformed provider handles fail closed and release dispatch locks", async 
       status: async () => { throw new Error("unused"); }, result: async () => undefined,
       cancel: async () => undefined, resumeMetadata: async () => undefined,
     };
-    const service = new LaunchService(new DurableStore(path), adapter);
+    const service = new LaunchService(new DurableStore(path), adapter, authorizer);
     const accepted = await service.accept(request);
     await service.dispatchPending();
 
@@ -82,7 +91,7 @@ test("transient recovery lookup failures remain retryable", async () => {
       status: async () => { throw new Error("unused"); }, result: async () => undefined,
       cancel: async () => undefined, resumeMetadata: async () => undefined,
     };
-    const service = new LaunchService(new DurableStore(path), adapter);
+    const service = new LaunchService(new DurableStore(path), adapter, authorizer);
     const accepted = await service.accept(request);
 
     await assert.rejects(service.dispatchPending(), /provider unavailable/);
@@ -112,10 +121,10 @@ test("concurrent dispatchers atomically claim one provider launch", async () => 
       status: async () => { throw new Error("unused"); }, result: async () => undefined,
       cancel: async () => undefined, resumeMetadata: async () => undefined,
     };
-    await new LaunchService(new DurableStore(path), adapter).accept(request);
-    const first = new LaunchService(new DurableStore(path), adapter).dispatchPending();
+    await new LaunchService(new DurableStore(path), adapter, authorizer).accept(request);
+    const first = new LaunchService(new DurableStore(path), adapter, authorizer).dispatchPending();
     await launchEntered;
-    const second = new LaunchService(new DurableStore(path), adapter).dispatchPending();
+    const second = new LaunchService(new DurableStore(path), adapter, authorizer).dispatchPending();
     await new Promise((resolve) => setTimeout(resolve, 25));
     assert.equal(launches, 1, "the second dispatcher must wait outside the provider boundary");
     releaseLaunch?.();
@@ -133,7 +142,7 @@ test("forged and mismatched launch events cannot mutate state", async () => {
       findByIdempotencyKey: async () => undefined,
       launch: async () => ({ runId: "unused" }), status: async () => { throw new Error("unused"); },
       result: async () => undefined, cancel: async () => undefined, resumeMetadata: async () => undefined,
-    }).accept(request);
+    }, authorizer).accept(request);
     const before = await readFile(path, "utf8");
     const at = "2026-07-24T20:00:00.000Z";
     await assert.rejects(store.recordLaunchEvent(accepted.assignmentId, "launching", {
@@ -153,7 +162,9 @@ test("clock rollback cannot strand an accepted launch or regress its materialize
     const adapter = new FakeAgentAdapter([{
       statuses: ["succeeded"], result: { status: "succeeded", output: "done" },
     }]);
-    const service = new LaunchService(new DurableStore(path), adapter, () => times.shift() ?? new Date(0));
+    const service = new LaunchService(
+      new DurableStore(path), adapter, authorizer, () => times.shift() ?? new Date(0),
+    );
     const accepted = await service.accept(request);
     await service.dispatchPending();
 
@@ -169,7 +180,7 @@ test("conflicting audit event IDs cannot mutate an assignment without evidence",
     const store = new DurableStore(path);
     const service = new LaunchService(store, new FakeAgentAdapter([{
       statuses: ["succeeded"], result: { status: "succeeded", output: "done" },
-    }]));
+    }]), authorizer);
     const first = await service.accept(request);
     const second = await service.accept({ ...request, idempotencyKey: "second" });
     const occurredAt = "2026-07-24T20:00:00.000Z";
@@ -188,7 +199,7 @@ test("acceptance evidence must identify the accepted assignment and event type",
     const store = new DurableStore(path);
     const service = new LaunchService(store, new FakeAgentAdapter([{
       statuses: ["succeeded"], result: { status: "succeeded", output: "done" },
-    }]));
+    }]), authorizer);
     await service.accept(request);
     const state = store.snapshot();
     const input = {
@@ -197,6 +208,11 @@ test("acceptance evidence must identify the accepted assignment and event type",
       batch: { ...state.batches[0]!, id: "forged-batch" },
       worker: { ...state.workers[0]!, id: "forged-session", sessionId: "forged-session", batchId: "forged-batch" },
       event: { ...state.auditEvents[0]!, id: "forged-event" },
+      securityAudit: {
+        requesterId: "forged-session", operation: "sessions_launch", decision: "allowed" as const,
+        reasonCode: "launch_accepted", correlationId: "forged-key", workspaceId: "fixture",
+        projectId: "project-per-348", assignmentId: "forged-assignment",
+      },
     };
 
     await assert.rejects(store.acceptLaunch(input), /does not match its target/);
@@ -215,6 +231,7 @@ test("concurrent duplicate cancellation produces one terminal cancellation", asy
   }]);
   const handle = await adapter.launch({
     idempotencyKey: "cancel-race", prompt: "synthetic", workspacePath: "/tmp/fixture",
+    environment: childEnvironment(), revalidateWorkspace: async () => undefined,
   });
   await Promise.all([adapter.cancel(handle, "operator"), adapter.cancel(handle, "duplicate")]);
 
@@ -229,6 +246,7 @@ test("cancellation arriving after terminal completion is inert", async () => {
   }]);
   const handle = await adapter.launch({
     idempotencyKey: "late-cancel", prompt: "synthetic", workspacePath: "/tmp/fixture",
+    environment: childEnvironment(), revalidateWorkspace: async () => undefined,
   });
   await adapter.status(handle);
   await adapter.status(handle);

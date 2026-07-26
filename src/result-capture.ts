@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { AgentAdapter, RunResult, TerminalRunStatus } from "./agent-adapter.js";
 import { parseProviderResult, parseProviderStatus, ProviderProtocolError } from "./provider-protocol.js";
+import { assertBoundedOptionalText, assertIdentifier, MAX_RESULT_BYTES } from "./security.js";
 import { DurableStore, type AgentResultClaim, type CapturedResult } from "./store.js";
 
 export type ResultDelivery =
@@ -37,11 +38,18 @@ export class ResultCaptureService {
     if (state.status === "queued" || state.status === "running") return { duplicate: false };
     let result: RunResult | undefined;
     try {
-      result = parseProviderResult(await this.adapter.result({ runId: assignment.runId }));
+      const providerResult = await this.adapter.result({ runId: assignment.runId });
+      if (providerResult !== undefined && typeof providerResult === "object" && "output" in providerResult) {
+        const output = providerResult.output;
+        if (typeof output === "string") assertBoundedOptionalText(output, "result output", MAX_RESULT_BYTES);
+      }
+      result = parseProviderResult(providerResult);
     } catch (error) {
       return this.ingest(assignmentId, deliveryId, {
         kind: "malformed",
-        error: error instanceof Error ? error.message : String(error),
+        error: error instanceof Error && error.message.includes("exceeds the 4194304 byte limit")
+          ? "Provider result response was oversized"
+          : error instanceof Error ? error.message : String(error),
       });
     }
     if (result !== undefined && result.status !== state.status) {
@@ -56,11 +64,11 @@ export class ResultCaptureService {
   }
 
   async ingest(assignmentId: string, deliveryId: string, delivery: ResultDelivery) {
-    if (deliveryId.length === 0) throw new Error("deliveryId must not be empty");
+    assertIdentifier(deliveryId, "deliveryId");
     const assignment = await this.store.assignmentForResult(assignmentId);
     if (assignment.runId === undefined) throw new Error("Result ingestion requires a bound run ID");
     requireExactIdentities(assignment);
-    const claim = normalize(delivery);
+    const claim = boundedClaim(this.store.redactValue(normalize(delivery)) as AgentResultClaim);
     const deliveryFingerprint = createHash("sha256").update(canonical({
       assignmentId: assignment.id,
       batchId: assignment.batchId,
@@ -90,6 +98,30 @@ export class ResultCaptureService {
       capturedAt: this.now().toISOString(),
     });
   }
+}
+
+function boundedClaim(claim: AgentResultClaim): AgentResultClaim {
+  let remaining = MAX_RESULT_BYTES;
+  const bounded = (value: string | undefined, name: string): string | undefined => {
+    if (value === undefined) return undefined;
+    assertBoundedOptionalText(value, name, remaining);
+    remaining -= Buffer.byteLength(value, "utf8");
+    return value;
+  };
+  return {
+    status: claim.status,
+    completeness: claim.completeness,
+    ...(claim.retryable === undefined ? {} : { retryable: claim.retryable }),
+    ...(claim.output === undefined ? {} : { output: bounded(claim.output, "result output")! }),
+    ...(claim.error === undefined ? {} : { error: bounded(claim.error, "result error")! }),
+    ...(claim.stopReason === undefined ? {} : { stopReason: bounded(claim.stopReason, "result stop reason")! }),
+    ...(claim.resume === undefined ? {} : {
+      resume: {
+        adapter: bounded(claim.resume.adapter, "result resume adapter")!,
+        token: bounded(claim.resume.token, "result resume token")!,
+      },
+    }),
+  };
 }
 
 function requireExactIdentities(assignment: {

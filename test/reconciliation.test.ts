@@ -134,7 +134,7 @@ test("reconciliation diagnostics are durable and idempotent across repeated rest
 test("corrupt state fails safely instead of discarding durable identities", async () => {
   const directory = await mkdtemp(join(tmpdir(), "orchestrator-corrupt-"));
   const path = join(directory, "state.json");
-  await writeFile(path, "not-json", "utf8");
+  await writeFile(path, "not-json", { encoding: "utf8", mode: 0o600 });
   try {
     await assert.rejects(new DurableStore(path).reconcile(), /Cannot load orchestrator state/);
     assert.equal(await readFile(path, "utf8"), "not-json");

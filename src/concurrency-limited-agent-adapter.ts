@@ -1,5 +1,6 @@
 import type {
   AgentAdapter,
+  CancellationOutcome,
   LaunchRequest,
   ResumeMetadata,
   RunHandle,
@@ -19,7 +20,9 @@ interface HeldPermit {
 }
 
 export class ConcurrencyLimitedAgentAdapter implements AgentAdapter {
+  readonly cancellation: "supported" | "unsupported";
   private readonly releases = new Map<string, HeldPermit>();
+  private readonly runIdsByIdempotencyKey = new Map<string, string>();
   private readonly unresolvedLaunches = new Map<string, () => void>();
   private readonly unresolvedRecoveries = new Map<string, () => void>();
   private readonly recoveries = new Map<string, Promise<RunHandle | undefined>>();
@@ -31,7 +34,9 @@ export class ConcurrencyLimitedAgentAdapter implements AgentAdapter {
     private readonly scheduler: ConcurrencyScheduler,
     private readonly resolveScope: ScopeResolver,
     private readonly resolveRecoveryScope: RecoveryScopeResolver,
-  ) {}
+  ) {
+    this.cancellation = adapter.cancellation ?? "unsupported";
+  }
 
   findByIdempotencyKey(idempotencyKey: string): Promise<RunHandle | undefined> {
     const existing = this.recoveries.get(idempotencyKey);
@@ -60,6 +65,7 @@ export class ConcurrencyLimitedAgentAdapter implements AgentAdapter {
         release();
       } else {
         this.releases.set(handle.runId, { idempotencyKey: request.idempotencyKey, release });
+        this.runIdsByIdempotencyKey.set(request.idempotencyKey, handle.runId);
       }
       return handle;
     } catch (error) {
@@ -68,8 +74,8 @@ export class ConcurrencyLimitedAgentAdapter implements AgentAdapter {
     }
   }
 
-  async status(handle: RunHandle): Promise<RunState> {
-    const state = await this.adapter.status(handle);
+  async status(handle: RunHandle, signal?: AbortSignal): Promise<RunState> {
+    const state = await this.adapter.status(handle, signal);
     if (state.runId !== handle.runId) {
       throw new Error(`Status returned run ${state.runId} for requested run ${handle.runId}`);
     }
@@ -80,8 +86,8 @@ export class ConcurrencyLimitedAgentAdapter implements AgentAdapter {
     return state;
   }
 
-  async result(handle: RunHandle): Promise<RunResult | undefined> {
-    const result = await this.adapter.result(handle);
+  async result(handle: RunHandle, signal?: AbortSignal): Promise<RunResult | undefined> {
+    const result = await this.adapter.result(handle, signal);
     if (result !== undefined) {
       this.markTerminalDuringRecovery(handle.runId);
       this.release(handle.runId);
@@ -89,8 +95,8 @@ export class ConcurrencyLimitedAgentAdapter implements AgentAdapter {
     return result;
   }
 
-  async cancel(handle: RunHandle, reason?: string): Promise<void> {
-    await this.adapter.cancel(handle, reason);
+  async cancel(handle: RunHandle, reason?: string, signal?: AbortSignal): Promise<CancellationOutcome | void> {
+    return await this.adapter.cancel(handle, reason, signal);
   }
 
   resumeMetadata(handle: RunHandle): Promise<ResumeMetadata | undefined> {
@@ -100,7 +106,11 @@ export class ConcurrencyLimitedAgentAdapter implements AgentAdapter {
   private async recover(idempotencyKey: string): Promise<RunHandle | undefined> {
     const unresolvedRelease = this.unresolvedLaunches.get(idempotencyKey);
     const retainedRecoveryRelease = this.unresolvedRecoveries.get(idempotencyKey);
-    const recoveryRelease = unresolvedRelease === undefined && retainedRecoveryRelease === undefined
+    const retainedRunId = this.runIdsByIdempotencyKey.get(idempotencyKey);
+    const retainedPermit = retainedRunId === undefined ? undefined : this.releases.get(retainedRunId);
+    const recoveryRelease = unresolvedRelease === undefined
+      && retainedRecoveryRelease === undefined
+      && retainedPermit === undefined
       ? this.scheduler.acquireExisting({ ...this.resolveRecoveryScope(idempotencyKey), id: idempotencyKey })
       : retainedRecoveryRelease;
     let handle: RunHandle | undefined;
@@ -113,6 +123,7 @@ export class ConcurrencyLimitedAgentAdapter implements AgentAdapter {
     if (handle === undefined) {
       unresolvedRelease?.();
       recoveryRelease?.();
+      if (retainedRunId !== undefined) this.release(retainedRunId);
       this.unresolvedLaunches.delete(idempotencyKey);
       this.unresolvedRecoveries.delete(idempotencyKey);
       return undefined;
@@ -124,6 +135,7 @@ export class ConcurrencyLimitedAgentAdapter implements AgentAdapter {
         if (existing.idempotencyKey !== idempotencyKey) throw new Error(`Run ${handle.runId} is already bound to another idempotency key`);
         unresolvedRelease();
       } else this.releases.set(handle.runId, { idempotencyKey, release: unresolvedRelease });
+      this.runIdsByIdempotencyKey.set(idempotencyKey, handle.runId);
       return this.inspectRecoveredRun(handle);
     }
     const existing = this.releases.get(handle.runId);
@@ -133,12 +145,19 @@ export class ConcurrencyLimitedAgentAdapter implements AgentAdapter {
       if (existing.idempotencyKey !== idempotencyKey) throw new Error(`Run ${handle.runId} is already bound to another idempotency key`);
       return handle;
     }
+    if (retainedPermit !== undefined && retainedRunId === handle.runId) {
+      // Only a terminal status or result can remove a retained permit while lookup is pending.
+      return handle;
+    }
     this.recoveringRuns.add(handle.runId);
     try {
       if (recoveryRelease === undefined) throw new Error("Recovery permit was not reserved");
       this.unresolvedRecoveries.delete(idempotencyKey);
       if (this.terminalRuns.has(handle.runId)) recoveryRelease();
-      else this.releases.set(handle.runId, { idempotencyKey, release: recoveryRelease });
+      else {
+        this.releases.set(handle.runId, { idempotencyKey, release: recoveryRelease });
+        this.runIdsByIdempotencyKey.set(idempotencyKey, handle.runId);
+      }
       return await this.inspectRecoveredRun(handle);
     } finally {
       this.recoveringRuns.delete(handle.runId);
@@ -162,7 +181,9 @@ export class ConcurrencyLimitedAgentAdapter implements AgentAdapter {
   }
 
   private release(runId: string): void {
-    this.releases.get(runId)?.release();
+    const permit = this.releases.get(runId);
+    permit?.release();
+    if (permit !== undefined) this.runIdsByIdempotencyKey.delete(permit.idempotencyKey);
     this.releases.delete(runId);
   }
 }
