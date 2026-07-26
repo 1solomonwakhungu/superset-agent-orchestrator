@@ -37,7 +37,7 @@
     "research:verify": "node scripts/verify-disklm-research.mjs",
     "start": "node dist/src/server.js",
     "test": "tsx --test test/**/*.test.ts test/**/*.test.mjs",
-    "test:coverage": "c8 --all --check-coverage --branches=88 --functions=92 --lines=95 --statements=95 --include=src/store.ts --include=src/storage.ts --include=src/fake-agent-adapter.ts --include=src/tool-contract.ts --reporter=text --reporter=json-summary npm test",
+    "test:coverage": "npm run build && c8 --all --check-coverage --branches=88 --functions=92 --lines=95 --statements=95 --include=src/store.ts --include=src/storage.ts --include=src/fake-agent-adapter.ts --include=src/tool-contract.ts --reporter=text --reporter=json-summary npm test",
     "test:python": "python3.11 -m unittest discover -s tests",
     "test:race": "npm run build && bash scripts/run-race-tests.sh",
     "typecheck": "tsc --noEmit",
