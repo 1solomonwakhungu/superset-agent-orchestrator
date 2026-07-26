@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -12,13 +12,14 @@ async function fixture(run: (directory: string) => void | Promise<void>): Promis
 }
 
 test("a forged current migration version with missing schema fails closed", async () => {
-  await fixture((directory) => {
+  await fixture(async (directory) => {
     const path = join(directory, "registry.sqlite");
     const database = new DatabaseSync(path);
     database.exec("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL) STRICT");
     database.prepare("INSERT INTO schema_migrations VALUES (2, ?)").run(new Date().toISOString());
     database.close();
-    assert.throws(() => new OrchestratorStorage(path), /noncontiguous|incomplete/);
+    await chmod(path, 0o600);
+    assert.throws(() => new OrchestratorStorage(path), /not contiguous|missing required/);
   });
 });
 

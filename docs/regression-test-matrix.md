@@ -6,10 +6,11 @@ the live Superset CLI, reads user data, changes cron, or enters an unrelated rep
 
 | P0 failure | Deterministic injection | Required invariant |
 | --- | --- | --- |
-| Interrupted launch after durable acceptance | Throw at each launch boundary, reopen a fresh store | One durable assignment and at most one provider run |
-| Concurrent dispatch | Two stores contend while one provider launch is blocked | A durable assignment lock admits one provider call |
+| Interrupted launch after durable acceptance | SIGKILL a child at each launch boundary, recover in a fresh process | One durable assignment and at most one provider run |
+| Concurrent dispatch | Two stores contend while one provider launch is blocked | The lock serializes calls; adapter idempotency prevents duplicate runs after stale-lock recovery |
 | Cancellation race | Duplicate cancellation and cancellation after completion | One immutable terminal adapter result |
-| Stale or forged launch event | Replay, regress time, mismatch aggregate or event type | No state or audit mutation |
+| Stale or forged launch event | Replay or mismatch aggregate or event type | No state or audit mutation |
+| Backward wall-clock adjustment | Generate a valid transition before the prior timestamp | Transition succeeds without regressing materialized time |
 | Late or conflicting result | Race two deliveries for one attempt | One immutable authoritative result |
 | Corrupt registry bytes | Open a non-SQLite fixture | Fail closed without replacing bytes |
 | Falsified migration ledger | Claim the current version with missing objects or gaps | Fail closed before serving data |
@@ -20,10 +21,9 @@ the live Superset CLI, reads user data, changes cron, or enters an unrelated rep
 | Hostile identifiers | NUL, control, option, traversal, and prototype names | Reject or preserve strictly as inert data |
 | Secret canary | Synthetic token in rejected backend/error payloads | Error text does not disclose backend payload |
 
-The launch interruption matrix remains in `test/launch-service.test.ts`. These
-in-process failpoints prove durable recovery logic, not operating-system process
-death. Race and event tests are in `test/resilience-regression.test.ts`;
-corruption and migration tests
-are in `test/storage-adversarial.test.ts`; hostile parser inputs are in
-hostile inputs are in `test/security-adversarial-corpus.test.ts`; exact result
-attribution is covered by `test/result-capture.test.ts`.
+The launch interruption matrix uses `test/fixtures/launch-process-worker.ts` to
+terminate a child with `SIGKILL` and recover through a fresh process. Race and
+event tests are in `test/resilience-regression.test.ts`; corruption and migration
+tests are in `test/storage-adversarial.test.ts`; hostile inputs are in
+`test/security-adversarial-corpus.test.ts`; exact result attribution is covered
+by `test/result-capture.test.ts`.

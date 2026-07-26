@@ -292,9 +292,10 @@ export class DurableStore {
 
   constructor(
     private readonly path: string,
-    private readonly isProcessAlive: (pid: number, processStartedAt?: string) => boolean = DurableStore.isProcessAlive,
+    private readonly isProcessAlive: (pid: number, processStartedAt?: string) => boolean = DurableStore.isProcessAlive.bind(DurableStore),
     private readonly observeQuery: (measurement: QueryMeasurement) => void = () => undefined,
     private readonly now: () => number = performance.now.bind(performance),
+    private readonly dispatchLockStaleMs = 10_000,
   ) {}
 
   get statePath(): string { return this.path; }
@@ -304,8 +305,8 @@ export class DurableStore {
     const lockPath = `${this.path}.${assignmentId}.dispatch`;
     const release = await lockfile.lock(lockPath, {
       realpath: false,
-      stale: 10_000,
-      update: 2_000,
+      stale: this.dispatchLockStaleMs,
+      update: Math.max(1_000, Math.floor(this.dispatchLockStaleMs / 5)),
       retries: { retries: 50, minTimeout: 50, maxTimeout: 200 },
     });
     try {

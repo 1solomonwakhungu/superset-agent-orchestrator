@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { AgentAdapter } from "../src/agent-adapter.js";
 import { FakeAgentAdapter } from "../src/fake-agent-adapter.js";
-import { LaunchService, type AsynchronousLaunchRequest } from "../src/launch-service.js";
+import { LaunchService, type AsynchronousLaunchRequest, type LaunchBoundary } from "../src/launch-service.js";
 import { DurableStore } from "../src/store.js";
 
 const request: AsynchronousLaunchRequest = {
@@ -19,6 +20,35 @@ async function fixture(run: (path: string) => Promise<void>): Promise<void> {
   try { await run(join(directory, "state.json")); }
   finally { await rm(directory, { recursive: true, force: true }); }
 }
+
+async function runWorker(args: string[]): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ["--import", "tsx", join(import.meta.dirname, "fixtures/launch-process-worker.ts"), ...args], {
+      stdio: "ignore",
+    });
+    child.once("error", reject);
+    child.once("exit", (code, signal) => resolve({ code, signal }));
+  });
+}
+
+test("process death at every launch boundary recovers without a duplicate provider run", async () => {
+  const boundaries: LaunchBoundary[] = [
+    "after_acceptance", "after_launch_started", "before_adapter_launch",
+    "after_adapter_launch", "after_launch_recorded",
+  ];
+  for (const boundary of boundaries) {
+    await fixture(async (statePath) => {
+      const providerPath = `${statePath}.provider`;
+      const crashed = await runWorker(["crash", statePath, providerPath, boundary]);
+      assert.equal(crashed.signal, "SIGKILL", boundary);
+      assert.deepEqual(await runWorker(["recover", statePath, providerPath]), { code: 0, signal: null }, boundary);
+      const state = JSON.parse(await readFile(statePath, "utf8")) as { assignments: { status: string }[] };
+      assert.equal(state.assignments.length, 1, boundary);
+      assert.equal(state.assignments[0]?.status, "launched", boundary);
+      assert.deepEqual(JSON.parse(await readFile(providerPath, "utf8")), { runId: "synthetic-run" }, boundary);
+    });
+  }
+});
 
 test("concurrent dispatchers atomically claim one provider launch", async () => {
   await fixture(async (path) => {

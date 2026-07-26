@@ -28,11 +28,16 @@ function batchError(error: unknown) {
 }
 
 async function main(): Promise<void> {
+  if (process.platform !== "darwin" && process.platform !== "linux") {
+    throw new Error(
+      `Unsupported platform ${process.platform}; supported platforms are darwin and linux. See docs/compatibility.md.`,
+    );
+  }
   const reconciliation = await store.reconcile();
   console.error(`Startup reconciliation complete: ${JSON.stringify(reconciliation)}`);
   const reconciliationTimer = setInterval(() => {
     store.reconcile().catch((error: unknown) => {
-      console.error(`Background reconciliation failed: ${error instanceof Error ? error.message : error}`);
+      console.error("Background reconciliation failed:", error);
     });
   }, Number(process.env.SUPERSET_ORCHESTRATOR_RECONCILE_MS ?? 30_000));
   reconciliationTimer.unref();

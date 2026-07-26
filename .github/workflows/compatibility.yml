@@ -1,0 +1,65 @@
+name: Compatibility
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: ${{ matrix.runner }} / Node ${{ matrix.node }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, macos-14]
+        node: [22, 24]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Use approved npm
+        run: npm install --global npm@10.9.8
+      - run: npm ci
+      - id: verify
+        run: npm run verify
+      - name: Record exact lane result
+        if: always()
+        run: node scripts/write-compatibility-result.mjs compatibility-result/result.json "${{ matrix.runner }}" "${{ matrix.node }}" "${{ steps.verify.outcome }}" "${{ github.event.pull_request.head.sha || github.sha }}"
+      - name: Upload exact lane result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compatibility-${{ matrix.runner }}-node-${{ matrix.node }}
+          path: compatibility-result/result.json
+
+  report:
+    name: Generated compatibility report
+    if: always()
+    needs: verify
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: compatibility-*
+          path: compatibility-results
+      - name: Generate report from exact-head results
+        run: node scripts/generate-compatibility-report.mjs compatibility-results compatibility-report.md
+      - run: cat compatibility-report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: compatibility-report
+          path: compatibility-report.md
