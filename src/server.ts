@@ -155,7 +155,7 @@ async function main(): Promise<void> {
       for (const [index, assignment] of assignments.entries()) {
         const sessionId = session_ids[index]!;
         if (assignment === undefined) {
-          items.push({ session_id: sessionId, error: { code: "SESSION_NOT_FOUND", message: "Unknown session" } });
+          items.push({ session_id: sessionId, error: contractError("SESSION_NOT_FOUND", "Unknown session") });
           continue;
         }
         if (assignment.status === "launched") {
@@ -163,7 +163,7 @@ async function main(): Promise<void> {
             await capture.collect(assignment.id, `provider:${assignment.attemptId}`);
           } catch (error) {
             if (error instanceof SupersetProcessError) {
-              items.push({ session_id: sessionId, error: { code: error.code, message: error.message } });
+              items.push({ session_id: sessionId, error: contractError(error.code, error.message) });
               continue;
             }
             throw error;
@@ -177,7 +177,7 @@ async function main(): Promise<void> {
           workspace_id: assignment.workspaceId, run_id: assignment.runId,
           ...(captured === undefined ? {} : { result: captured }),
           ...(assignment.error === undefined ? {} : {
-            error: { code: assignment.errorCode ?? "INTERNAL_ERROR", message: assignment.error },
+            error: contractError(asErrorCode(assignment.errorCode), assignment.error),
           }),
         });
       }
@@ -202,13 +202,16 @@ async function main(): Promise<void> {
       for (const [index, assignment] of assignments.entries()) {
         const sessionId = session_ids[index]!;
         if (assignment === undefined || assignment.runId === undefined) {
-          items.push({ session_id: sessionId, error: { code: "SESSION_NOT_FOUND", message: "Session has no provider execution" } });
+          items.push({
+            session_id: sessionId,
+            error: contractError("SESSION_NOT_FOUND", "Session has no provider execution"),
+          });
           continue;
         }
         if (captured[index] !== undefined) {
           items.push({
             session_id: sessionId,
-            error: { code: "INVALID_TRANSITION", message: "A terminal session cannot be canceled" },
+            error: contractError("INVALID_TRANSITION", "A terminal session cannot be canceled"),
           });
           continue;
         }
@@ -217,7 +220,7 @@ async function main(): Promise<void> {
           if (state.status !== "queued" && state.status !== "running") {
             items.push({
               session_id: sessionId,
-              error: { code: "INVALID_TRANSITION", message: "A terminal session cannot be canceled" },
+              error: contractError("INVALID_TRANSITION", "A terminal session cannot be canceled"),
             });
             continue;
           }
@@ -225,8 +228,8 @@ async function main(): Promise<void> {
           items.push({ session_id: sessionId, canceled: true });
         } catch (error) {
           const failure = error instanceof SupersetProcessError
-            ? { code: error.code, message: error.message }
-            : { code: "PROVIDER_UNAVAILABLE", message: error instanceof Error ? error.message : String(error) };
+            ? contractError(error.code, error.message)
+            : contractError("PROVIDER_UNAVAILABLE", error instanceof Error ? error.message : String(error));
           items.push({ session_id: sessionId, error: failure });
         }
       }
@@ -421,14 +424,18 @@ async function main(): Promise<void> {
   await server.connect(new StdioServerTransport());
 }
 
-function providerError(requestId: string, code: string, message: string) {
-  return { ...result({ request_id: requestId, error: { code, message } }), isError: true };
+function providerError(requestId: string, code: ErrorCode, message: string) {
+  return { ...result({ request_id: requestId, error: contractError(code, message) }), isError: true };
 }
 
 function processFailure(requestId: string, error: unknown) {
   return error instanceof SupersetProcessError
     ? providerError(requestId, error.code, error.message)
-    : providerError(requestId, "INTERNAL_ERROR", error instanceof Error ? error.message : String(error));
+    : providerError(requestId, "PROVIDER_UNAVAILABLE", error instanceof Error ? error.message : String(error));
+}
+
+function asErrorCode(code: string | undefined): ErrorCode {
+  return code !== undefined && code in errorDefinitions ? code as ErrorCode : "INTEGRITY_FAILURE";
 }
 
 function contractState(status: import("./store.js").WorkerStatus) {
