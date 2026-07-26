@@ -1,0 +1,45 @@
+{
+  "checkpoint": {
+    "license": "apache-2.0",
+    "mirror": "https://huggingface.co/openbmb/MiniCPM5-1B",
+    "repository": "openbmb/MiniCPM5-1B",
+    "resolved_at": "2026-07-26T07:20:00Z",
+    "revision": "4e9de7a0778dc1c362e983e6858f0e77542cbdca",
+    "schema_version": "1",
+    "total_model_input_bytes": "2171308155"
+  },
+  "special_tokens": {
+    "bos_token": {
+      "content": "<s>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false
+    },
+    "eos_token": {
+      "content": "</s>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false
+    },
+    "pad_token": {
+      "content": "</s>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false
+    },
+    "unk_token": {
+      "content": "<unk>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false
+    }
+  },
+  "template_sha256": "7451a05cf1e28a79d97d7c0bc951028c0b1915119bf9046acd06a0e3d931f47c",
+  "tokenizer_class": "PreTrainedTokenizerFast",
+  "tool_call_round_trip": true,
+  "vocab_size": 130560
+}
