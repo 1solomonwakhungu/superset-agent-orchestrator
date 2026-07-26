@@ -20,6 +20,9 @@
 - Review follow-up: Standalone coverage and race commands now build their
   required artifacts, the real discovery smoke test is explicitly opt-in, and
   Windows remains outside the supported compatibility envelope.
+- Companion acceptance coverage: the live stdio MCP integration now proves that
+  rejecting invalid tool input does not terminate or poison the connection; a
+  valid zero-time wait on the same client still reads exact durable batch state.
 - Verification: `npm ci`, `npm run check`, focused tests, `RACE_REPEATS=20 npm
   run test:race`, standalone `npm run schema:check`, and `git diff --check`
   passed. Fixed false-positive test labels, ambient credential leakage, stale
