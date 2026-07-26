@@ -12,12 +12,34 @@ from typing import Any
 
 SCHEMA_VERSION = 1
 REQUIRED_PROVENANCE = (
+    "contract_id",
     "checkpoint_sha",
+    "tokenizer_hash",
+    "template_hash",
     "environment_fingerprint",
+    "environment_lock",
     "corpus_hash",
+    "dataset_revisions",
     "harness_commit",
+    "command_arguments",
+    "cache_state",
+    "raw_trace_hashes",
+    "direct_io",
     "decode_config",
 )
+STRING_PROVENANCE = (
+    "contract_id",
+    "checkpoint_sha",
+    "tokenizer_hash",
+    "template_hash",
+    "environment_fingerprint",
+    "environment_lock",
+    "corpus_hash",
+    "harness_commit",
+    "cache_state",
+)
+OBJECT_PROVENANCE = ("dataset_revisions", "decode_config")
+ARRAY_PROVENANCE = ("command_arguments", "raw_trace_hashes")
 
 
 def canonical_json(value: Any) -> str:
@@ -47,13 +69,19 @@ def build_report(source: dict[str, Any], precision: int) -> tuple[dict[str, Any]
         raise ValueError(f"missing provenance fields: {', '.join(missing)}")
     invalid_strings = [
         key
-        for key in REQUIRED_PROVENANCE[:-1]
+        for key in STRING_PROVENANCE
         if not isinstance(source["provenance"][key], str) or not source["provenance"][key]
     ]
     if invalid_strings:
         raise ValueError(f"provenance fields must be non-empty strings: {', '.join(invalid_strings)}")
-    if not isinstance(source["provenance"]["decode_config"], dict):
-        raise ValueError("decode_config must be an object")
+    for key in OBJECT_PROVENANCE:
+        if not isinstance(source["provenance"][key], dict):
+            raise ValueError(f"{key} must be an object")
+    for key in ARRAY_PROVENANCE:
+        if not isinstance(source["provenance"][key], list):
+            raise ValueError(f"{key} must be an array")
+    if not isinstance(source["provenance"]["direct_io"], bool):
+        raise ValueError("direct_io must be a boolean")
 
     payload = {
         "schema_version": SCHEMA_VERSION,
@@ -67,15 +95,12 @@ def build_report(source: dict[str, Any], precision: int) -> tuple[dict[str, Any]
 
 def render_markdown(report: dict[str, Any]) -> str:
     provenance = report["provenance"]
-    rows = "\n".join(
-        f"| {key.replace('_', ' ').title()} | `{canonical_json(provenance[key])}` |"
-        for key in sorted(provenance)
-    )
     return (
         "# Baseline Result\n\n"
         f"**RESULT fingerprint:** `{report['result_fingerprint']}`\n\n"
-        "## Provenance\n\n| Field | Value |\n| --- | --- |\n"
-        f"{rows}\n\n## Canonical Results\n\n```json\n"
+        "## Provenance\n\n```json\n"
+        f"{json.dumps(provenance, ensure_ascii=True, sort_keys=True, indent=2)}\n```\n\n"
+        "## Canonical Results\n\n```json\n"
         f"{json.dumps(report['results'], ensure_ascii=True, sort_keys=True, indent=2)}\n```\n"
     )
 

@@ -11,12 +11,21 @@
     "provenance": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["checkpoint_sha", "environment_fingerprint", "corpus_hash", "harness_commit", "decode_config"],
+      "required": ["contract_id", "checkpoint_sha", "tokenizer_hash", "template_hash", "environment_fingerprint", "environment_lock", "corpus_hash", "dataset_revisions", "harness_commit", "command_arguments", "cache_state", "raw_trace_hashes", "direct_io", "decode_config"],
       "properties": {
+        "contract_id": { "const": "disklm-eval-v1" },
         "checkpoint_sha": { "type": "string", "minLength": 1 },
+        "tokenizer_hash": { "type": "string", "minLength": 1 },
+        "template_hash": { "type": "string", "minLength": 1 },
         "environment_fingerprint": { "type": "string", "minLength": 1 },
+        "environment_lock": { "type": "string", "minLength": 1 },
         "corpus_hash": { "type": "string", "minLength": 1 },
+        "dataset_revisions": { "type": "object" },
         "harness_commit": { "type": "string", "minLength": 1 },
+        "command_arguments": { "type": "array" },
+        "cache_state": { "type": "string", "minLength": 1 },
+        "raw_trace_hashes": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "direct_io": { "type": "boolean" },
         "decode_config": { "type": "object" }
       }
     },
