@@ -2,7 +2,7 @@
 name = "minicpm5-baseline"
 version = "0.1.0"
 description = "Reproducible MiniCPM5-1B baseline environment"
-requires-python = "==3.12.*"
+requires-python = "==3.12.11"
 dependencies = [
   "huggingface-hub==0.34.4",
   "numpy==2.3.2",

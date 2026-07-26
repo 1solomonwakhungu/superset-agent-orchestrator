@@ -9,7 +9,7 @@ matrix requires verification on its target hosts.
 
 - Model: `openbmb/MiniCPM5-1B`
 - Model revision: `4e9de7a0778dc1c362e983e6858f0e77542cbdca`
-- Python: `3.12.*`
+- Python: `3.12.11`
 - uv: `0.8.3`
 - Python resolution and artifact hashes: `minicpm5/uv.lock`
 - Recorded llama.cpp and MLX source revisions: `minicpm5/toolchains.lock`
