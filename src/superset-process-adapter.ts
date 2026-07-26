@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { z } from "zod";
 import { childEnvironment } from "./child-environment.js";
 import type {
@@ -106,36 +106,64 @@ export class SupersetProcessAdapter implements AgentAdapter {
   private async invoke<T>(command: string, payload: unknown, schema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
     const input = JSON.stringify(payload);
     const stdout = await new Promise<string>((resolve, reject) => {
-      const child = execFile(
-        this.options.executable,
-        [...(this.options.args ?? []), command],
-        {
-          env: this.options.env ?? childEnvironment(),
-          encoding: "utf8",
-          timeout: this.options.timeoutMs ?? 30_000,
-          maxBuffer: 1024 * 1024,
-          signal,
-        },
-        (error, stdout, stderr) => {
-          if (error !== null) {
-            if (signal?.aborted) {
-              reject(signal.reason instanceof Error ? signal.reason : new Error("Provider operation aborted"));
-              return;
-            }
-            const processError = error as NodeJS.ErrnoException & { killed?: boolean; signal?: NodeJS.Signals };
-            const declared = parseProcessError(stderr);
-            const code: SupersetProcessErrorCode = declared?.code
-              ?? (processError.code === "ENOENT" || processError.killed || processError.signal
-                ? "PROVIDER_UNAVAILABLE"
-                : command === "launch" ? "LAUNCH_REJECTED" : "PROVIDER_UNAVAILABLE");
-            reject(new SupersetProcessError(code, `${command} provider command failed`, { cause: error }));
-            return;
-          }
-          resolve(stdout);
-        },
-      );
-      child.stdin?.on("error", () => undefined);
-      child.stdin?.end(input);
+      let escalation: NodeJS.Timeout | undefined;
+      let timedOut = false;
+      const stdoutChunks: Buffer[] = [];
+      const stderrChunks: Buffer[] = [];
+      let outputBytes = 0;
+      const child = spawn(this.options.executable, [...(this.options.args ?? []), command], {
+        env: this.options.env ?? childEnvironment(),
+        detached: true,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        terminate();
+      }, this.options.timeoutMs ?? 30_000);
+      timeout.unref();
+      const terminate = () => {
+        terminateProcessGroup(child.pid, "SIGTERM");
+        escalation = setTimeout(() => {
+          terminateProcessGroup(child.pid, "SIGKILL");
+        }, 250);
+        escalation.unref();
+      };
+      const collect = (chunks: Buffer[], chunk: Buffer) => {
+        outputBytes += chunk.length;
+        if (outputBytes > 1024 * 1024) terminate();
+        else chunks.push(chunk);
+      };
+      child.stdout.on("data", (chunk: Buffer) => collect(stdoutChunks, chunk));
+      child.stderr.on("data", (chunk: Buffer) => collect(stderrChunks, chunk));
+      child.on("error", (error) => {
+        clearTimeout(timeout);
+        signal?.removeEventListener("abort", terminate);
+        reject(new SupersetProcessError("PROVIDER_UNAVAILABLE", `${command} provider command failed`, { cause: error }));
+      });
+      child.on("close", (code, childSignal) => {
+        clearTimeout(timeout);
+        if (escalation !== undefined) clearTimeout(escalation);
+        signal?.removeEventListener("abort", terminate);
+        if (signal?.aborted) {
+          reject(signal.reason instanceof Error ? signal.reason : new Error("Provider operation aborted"));
+          return;
+        }
+        const stderr = Buffer.concat(stderrChunks).toString("utf8");
+        if (code !== 0 || childSignal !== null || timedOut || outputBytes > 1024 * 1024) {
+          const declared = parseProcessError(stderr);
+          const errorCode: SupersetProcessErrorCode = declared?.code
+            ?? (timedOut || childSignal !== null || outputBytes > 1024 * 1024
+              ? "PROVIDER_UNAVAILABLE"
+              : command === "launch" ? "LAUNCH_REJECTED" : "PROVIDER_UNAVAILABLE");
+          reject(new SupersetProcessError(errorCode, `${command} provider command failed`));
+          return;
+        }
+        resolve(Buffer.concat(stdoutChunks).toString("utf8"));
+      });
+      signal?.addEventListener("abort", terminate, { once: true });
+      if (signal?.aborted) terminate();
+      child.stdin.on("error", () => undefined);
+      child.stdin.end(input);
     });
 
     try {
@@ -147,6 +175,15 @@ export class SupersetProcessAdapter implements AgentAdapter {
         { cause: error },
       );
     }
+  }
+}
+
+function terminateProcessGroup(pid: number | undefined, signal: NodeJS.Signals): void {
+  if (pid === undefined) return;
+  try {
+    process.kill(-pid, signal);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
   }
 }
 
