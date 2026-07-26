@@ -248,6 +248,10 @@ function successScript() {
   return { statuses: ["succeeded"], result: { status: "succeeded", output: "ok" } };
 }
 
+function adapterRequest(idempotencyKey: string, prompt: string, workspacePath: string) {
+  return { idempotencyKey, prompt, workspacePath, environment: {}, revalidateWorkspace: async () => undefined };
+}
+
 async function withHarness(
   scenario: object,
   run: (harness: {
