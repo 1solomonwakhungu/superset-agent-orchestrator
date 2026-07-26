@@ -122,7 +122,7 @@ test("concurrent result deliveries store exactly one authoritative result", asyn
       id: `${accepted.assignmentId}:launch_reserved`, assignmentId: accepted.assignmentId,
       type: "launch_reserved", occurredAt: clock().toISOString(),
     });
-    const assignment = await store.recordLaunchEvent(accepted.assignmentId, "launched", {
+    const { assignment } = await store.recordLaunchEvent(accepted.assignmentId, "launched", {
       id: `${accepted.assignmentId}:execution_started`, assignmentId: accepted.assignmentId,
       type: "execution_started", occurredAt: clock().toISOString(), runId: "run-1",
     });
@@ -168,6 +168,10 @@ test("concurrent launch bookkeeping records one execution start", async () => {
       prompt: "Do the work",
       workspaceId: "workspace-1",
       workspacePath: "/tmp/events",
+    });
+    await store.recordLaunchEvent(accepted.assignmentId, "launching", {
+      id: `${accepted.assignmentId}:launch_reserved`, assignmentId: accepted.assignmentId,
+      type: "launch_reserved", occurredAt: AT,
     });
 
     const writers = Array.from({ length: CONTENDERS }, () => new DurableStore(path));

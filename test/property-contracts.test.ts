@@ -51,7 +51,7 @@ test("failed launch-intent persistence leaves in-memory state unchanged", async 
       idempotencyKey: "failure-key", requestHash: "a".repeat(64), sessionId: "session-1",
       batchId: "batch-1", workerId: "worker-1", attribution: { agent: "codex", task: "test" },
     });
-    const store = new DurableStore(path, undefined, undefined, undefined, async () => {
+    const store = new DurableStore(path, undefined, undefined, undefined, undefined, async () => {
       throw new Error("injected persistence failure");
     });
     await assert.rejects(store.updateLaunch("failure-key", "dispatching"), /injected persistence failure/);
