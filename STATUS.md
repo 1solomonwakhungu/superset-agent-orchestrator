@@ -1,5 +1,6 @@
 # Status
 
+## PER-346 final integration, 2026-07-26
 ## PER-347 provider cancellation contract, 2026-07-26
 
 - Mapped a subprocess provider's declared `CANCEL_UNSUPPORTED` failure to the
@@ -9,6 +10,69 @@
 - Focused regression, typecheck, lint, and diff checks passed. After integrating
   the latest PR head, the full check reached 369 tests with one unrelated
   filesystem cleanup race; that lifecycle test passed immediately in isolation.
+
+## PER-345 integration with current main, 2026-07-26
+
+- Integrated exact `origin/main` `76ac850d70b42cafeaaf2c058916b0d8f7e5abfe` into rewritten integration head `26351a418ab06e81457ddbc82e6fc36df484eb74`.
+- Retained main's merged PER-342 lifecycle validation and cancellation semantics together with PER-345 security, PER-343 lease/fencing, and PER-351 load behavior.
+- Verification: `npm run check` passed 299 tests with 298 passing and one explicit live-discovery skip, 92.46% statement coverage, six Python tests with one skip, schema no-diff, provenance verification, and DiskLM research verification of 28 cited works.
+
+## PER-345/PER-342 current-head integration, 2026-07-26
+
+- Preserved primary PR ancestry by merging exact PR head `e7db756cf45bf71caedae2a07c8d7071571d62c1`, then integrated exact current main `6791ae4cc5f74a187495dfe2bb63ac8b0ce06fe7`.
+- Composed PER-345 authorization, revalidation, environment isolation, redaction, private state, and atomic security audits with PER-342 lifecycle contracts, PER-343 transactional lease fencing, and PER-351 bounded load validation.
+- Updated the synthetic load benchmark to resolve opaque workspace IDs through an authorizer rather than accepting client-supplied canonical paths.
+- Focused security, lifecycle, launch idempotency, lease/fencing, concurrency, repository, and load tests passed 176/176.
+- `npm run check` passed 297 tests with 296 passing and one explicit live-discovery skip, 92.38% statement coverage, six Python tests with one skip, schema no-diff, and provenance verification.
+
+## PER-345/PER-342 final integration, 2026-07-26
+
+- Integrated current `origin/main` and exact PER-342 head `13f88233b898ab0ed04119155499ef05b7c26363`.
+- Preserved cross-process idempotent launch dispatch together with workspace authorization and revalidation, isolated child environments, redaction, private state paths, and atomic hash-chained security audits.
+- Connected PER-342 lifecycle workers atomically to secured launch acceptance and retained strict provider cancellation, timeout, bounded-wait, result, and late-observation contracts.
+- Verification: `npm ci` passed with two moderate advisories; the focused launch, lifecycle, protocol, result, security, concurrency, and resilience suite passed 145/145; `npm run check` passed 275 tests with 274 passing and one explicit live-discovery skip, coverage, six Python tests with one skip, schema no-diff, and provenance verification.
+
+## PER-345 canonical hash and PER-342 tool compatibility, 2026-07-26
+
+- Strictly schema-normalized launch requests before versioned canonical hashing;
+  unknown top-level and nested fields now fail closed.
+- Added equality and inequality coverage for optional normalization, key order,
+  every semantic field, and the intentionally excluded idempotency key.
+- Reviewed the five PER-342 lifecycle tools into an exact post-merge snapshot
+  without relaxing the command, path, filesystem, process, or plugin deny policy.
+- Verification: focused security/idempotency tests passed 54/54; `npm run verify`
+  passed 167 tests with 1 explicit optional skip, coverage, Python 3/3, and schema
+  checks; `git diff --check` passed.
+- Next: open and merge the companion PR into the primary PER-345 branch. Linear
+  remains owned by the final integrator.
+
+## PER-345 companion state/auth/hash hardening, 2026-07-26
+
+- Added fail-closed absolute state-path checks for a dedicated owner-only `0700`
+  directory and existing owner-only `0600` regular state file, rejecting symlink,
+  nonregular, permissive, and wrong-owner objects before lock/read/write boundaries.
+- Added exact external Superset worktree grants bound to workspace ID, project ID,
+  and canonical path while retaining local registration, owner, path, device, and
+  inode revalidation.
+- Added domain-separated recursive canonical launch-request hashing and adversarial
+  tests for insertion-order equivalence, exact grants, identity drift, retargeting,
+  state permissions, symlinks, nonregular files, and relative paths.
+- Verification: focused security/idempotency tests passed 52/52; `npm run verify`
+  passed 165 tests with one explicit skip, coverage, schema, and Python checks.
+- Next: deliver the companion PR into the primary PER-345 branch and verify its CI.
+
+## PER-345 companion redaction hardening, 2026-07-26
+
+- Added bounded structured redaction with 20-level and 1,000-entry limits,
+  accessor-safe traversal, and prototype-pollution-safe output construction.
+- Added common password/API, AWS access/session, Slack, npm, JWT, GitHub,
+  authorization, private-key, sensitive-key, and configured-canary redaction.
+- Audit fields now strip Unicode bidi and zero-width formatting controls, and
+  every persisted state object schema rejects unknown fields.
+- Verification: focused security tests passed 33/33; `npm run verify` passed
+  159 tests with one explicit skip, coverage and generated-schema checks, and
+  3/3 Python tests; lint, typecheck, build, and `git diff --check` passed.
+- Next: merge the companion PR into the primary PER-345 branch after CI.
 
 ## PER-344 post-merge recovery accounting, 2026-07-26
 
