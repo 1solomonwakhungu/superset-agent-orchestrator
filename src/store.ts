@@ -915,6 +915,7 @@ export class DurableStore {
       this.state.assignments.push(...input.assignments);
       this.state.workers.push(...input.workers);
       this.state.auditEvents.push(...input.events);
+      this.rebuildIndexes();
       await this.persist();
       return { assignments: structuredClone(input.assignments), created: true };
     });
