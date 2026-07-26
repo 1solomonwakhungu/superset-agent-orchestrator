@@ -56,6 +56,7 @@ export interface Worker {
   cancelRequestedAt?: string;
   preCancelStatus?: WorkerStatus;
   deadlineAt?: string;
+  lifecycleReconcilePending?: boolean;
   lateObservations?: LateObservation[];
 }
 
@@ -230,6 +231,7 @@ const workerSchema = z.object({
   stopReason: z.string().min(1).optional(), stopDetail: z.string().min(1).optional(),
   cancelRequestedAt: z.iso.datetime().optional(), preCancelStatus: workerStatusSchema.optional(),
   deadlineAt: z.iso.datetime().optional(),
+  lifecycleReconcilePending: z.boolean().optional(),
   lateObservations: z.array(z.object({
     observedAt: z.iso.datetime(), status: z.string().min(1), retainedResult: z.boolean(),
   })).optional(),
@@ -531,6 +533,12 @@ export class DurableStore {
       .filter((worker) => worker.status === "canceling" && worker.runId !== undefined)));
   }
 
+  /** Returns timed-out executions whose eventual provider result has not yet been observed. */
+  async workersPendingLifecycleReconciliation(): Promise<Worker[]> {
+    return this.withFreshState(() => structuredClone(this.state.workers
+      .filter((worker) => worker.lifecycleReconcilePending === true && worker.runId !== undefined)));
+  }
+
   /**
    * Withdraws unconfirmed cancellation intent, restoring the pre-cancel status. Used when a backend
    * that advertised cancellation rejects the command as unsupported, so state stays honest.
@@ -561,11 +569,13 @@ export class DurableStore {
         const retainedResult = options.result !== undefined && worker.result === undefined;
         if (retainedResult) worker.result = options.result;
         (worker.lateObservations ??= []).push({ observedAt: at.toISOString(), status, retainedResult });
+        delete worker.lifecycleReconcilePending;
         return;
       }
       const cancellationRequested = worker.status === "canceling";
       worker.status = status;
       worker.completedAt = at.toISOString();
+      delete worker.lifecycleReconcilePending;
       if (options.result !== undefined) worker.result = options.result;
       delete worker.preCancelStatus;
       const stopReason = options.stopReason
@@ -586,10 +596,19 @@ export class DurableStore {
     const at = options.at ?? new Date();
     let claimed = false;
     const worker = await this.updateWorker(workerId, (candidate) => {
+      if (DurableStore.isTerminal(candidate.status) && candidate.lifecycleReconcilePending === true) {
+        const retainedResult = options.result !== undefined && candidate.result === undefined;
+        if (retainedResult) candidate.result = options.result;
+        (candidate.lateObservations ??= []).push({ observedAt: at.toISOString(), status, retainedResult });
+        delete candidate.lifecycleReconcilePending;
+        return;
+      }
+      if (DurableStore.isTerminal(candidate.status)) return;
       if (candidate.status !== "canceling") return;
       claimed = true;
       candidate.status = status;
       candidate.completedAt = at.toISOString();
+      delete candidate.lifecycleReconcilePending;
       if (options.result !== undefined) candidate.result = options.result;
       delete candidate.preCancelStatus;
       const stopReason = options.stopReason
@@ -619,6 +638,7 @@ export class DurableStore {
       candidate.status = "failed";
       candidate.stopReason = "deadline_exceeded";
       candidate.completedAt = at.toISOString();
+      if (candidate.runId !== undefined) candidate.lifecycleReconcilePending = true;
       delete candidate.preCancelStatus;
     });
     return { worker, claimed };

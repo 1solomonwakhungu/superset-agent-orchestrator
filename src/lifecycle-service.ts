@@ -11,6 +11,8 @@ import {
 /** Hard ceiling on any single bounded wait, so a client can never park an MCP call indefinitely. */
 export const MAX_LIFECYCLE_WAIT_MS = 30_000;
 const DEFAULT_POLL_INTERVAL_MS = 25;
+export const PROVIDER_OPERATION_TIMEOUT_MS = 5_000;
+const PROVIDER_UNAVAILABLE_MESSAGE = "The backend lifecycle operation is temporarily unavailable";
 
 export type LifecycleErrorCode =
   | "SESSION_NOT_FOUND"
@@ -143,7 +145,7 @@ export class LifecycleService {
     }
     const handle = { runId: intent.worker.runId! };
     try {
-      const outcome = await this.adapter.cancel(handle, detail ?? reason);
+      const outcome = await this.providerCall((signal) => this.adapter.cancel(handle, detail ?? reason, signal));
       if (outcome !== undefined && outcome.status === "unsupported") {
         const restored = await this.store.clearWorkerCancellation(sessionId);
         return {
@@ -159,7 +161,7 @@ export class LifecycleService {
       return {
         sessionId,
         error: "PROVIDER_UNAVAILABLE",
-        message: error instanceof Error ? error.message : String(error),
+        message: PROVIDER_UNAVAILABLE_MESSAGE,
         status: "canceling",
       };
     }
@@ -171,9 +173,7 @@ export class LifecycleService {
    */
   async cancelBatch(batchId: string, reason: CancellationReason = "user_requested", detail?: string): Promise<CancellationResult[]> {
     const workers = await this.store.workersInBatch(batchId);
-    const results: CancellationResult[] = [];
-    for (const worker of workers) results.push(await this.cancelSession(worker.id, reason, detail));
-    return results;
+    return Promise.all(workers.map((worker) => this.cancelSession(worker.id, reason, detail)));
   }
 
   /**
@@ -182,46 +182,60 @@ export class LifecycleService {
    */
   async enforceDeadlines(now = this.wallClockNow()): Promise<ExpiredWorker[]> {
     const overdue = await this.store.overdueWorkers(now);
-    const expired: ExpiredWorker[] = [];
-    for (const worker of overdue) {
+    const outcomes = await Promise.all(overdue.map(async (worker): Promise<ExpiredWorker | undefined> => {
       // The deadline is claimed before the provider is touched, so concurrent sweeps expire and report
       // each session exactly once. Stopping the run afterwards is best-effort cleanup.
       const { worker: settled, claimed } = await this.store.expireWorker(worker.id, { at: now });
-      if (!claimed || !DurableStore.isTerminal(settled.status)) continue;
+      if (!claimed || !DurableStore.isTerminal(settled.status)) return undefined;
       let providerStopError: string | undefined;
       if (this.adapter.cancellation === "supported" && settled.runId !== undefined) {
         try {
-          await this.adapter.cancel({ runId: settled.runId }, "deadline_exceeded");
+          await this.providerCall((signal) => this.adapter.cancel({ runId: settled.runId! }, "deadline_exceeded", signal));
+          await this.settleFromProvider(worker.id, { runId: settled.runId });
         } catch (error) {
-          providerStopError = error instanceof Error ? error.message : String(error);
+          providerStopError = PROVIDER_UNAVAILABLE_MESSAGE;
         }
       }
-      expired.push({
+      return {
         sessionId: worker.id,
         deadlineAt: settled.deadlineAt!,
         status: settled.status,
         ...(providerStopError === undefined ? {} : { providerStopError }),
-      });
-    }
-    return expired;
+      };
+    }));
+    return outcomes.filter((outcome): outcome is ExpiredWorker => outcome !== undefined);
   }
 
   /** Advances accepted asynchronous cancellations from the provider's latest durable observation. */
   async reconcileCancellations(): Promise<CancellationResult[]> {
-    const results: CancellationResult[] = [];
-    for (const worker of await this.store.cancelingWorkers()) {
+    return Promise.all((await this.store.cancelingWorkers()).map(async (worker): Promise<CancellationResult> => {
       try {
-        results.push(await this.settleFromProvider(worker.id, { runId: worker.runId! }));
+        return await this.settleFromProvider(worker.id, { runId: worker.runId! });
       } catch (error) {
-        results.push({
+        return {
           sessionId: worker.id,
           error: "PROVIDER_UNAVAILABLE",
-          message: error instanceof Error ? error.message : String(error),
+          message: PROVIDER_UNAVAILABLE_MESSAGE,
           status: "canceling",
-        });
+        };
       }
-    }
-    return results;
+    }));
+  }
+
+  /** Retains terminal provider evidence that arrives after an orchestrator deadline won the race. */
+  async reconcileTimedOutResults(): Promise<CancellationResult[]> {
+    return Promise.all((await this.store.workersPendingLifecycleReconciliation()).map(async (worker): Promise<CancellationResult> => {
+      try {
+        return await this.settleFromProvider(worker.id, { runId: worker.runId! });
+      } catch {
+        return {
+          sessionId: worker.id,
+          error: "PROVIDER_UNAVAILABLE",
+          message: PROVIDER_UNAVAILABLE_MESSAGE,
+          status: worker.status,
+        };
+      }
+    }));
   }
 
   /**
@@ -268,7 +282,10 @@ export class LifecycleService {
     handle: { runId: string },
     intentClaimed = false,
   ): Promise<CancellationResult> {
-    const observed = await this.adapter.status(handle);
+    const observed = await this.providerCall((signal) => this.adapter.status(handle, signal));
+    if (observed.runId !== handle.runId) {
+      throw new Error("Provider returned a different execution identity");
+    }
     if (observed.status === "queued" || observed.status === "running") {
       const worker = await this.store.worker(sessionId);
       return {
@@ -278,7 +295,7 @@ export class LifecycleService {
         changed: intentClaimed,
       };
     }
-    const result = await this.adapter.result(handle);
+    const result = await this.providerCall((signal) => this.adapter.result(handle, signal));
     // `cancelled` keeps the reason already persisted with the intent; `succeeded` is classified by the
     // store so a completion that beat cancellation becomes succeeded_before_cancellation.
     const stopReason = observed.status === "failed" ? "execution_error" : undefined;
@@ -303,6 +320,23 @@ export class LifecycleService {
       ...(settled.stopReason === undefined ? {} : { stopReason: settled.stopReason }),
       changed: claimed,
     };
+  }
+
+
+  private async providerCall<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), PROVIDER_OPERATION_TIMEOUT_MS);
+    timeout.unref();
+    try {
+      return await Promise.race([
+        operation(controller.signal),
+        new Promise<never>((_, reject) => controller.signal.addEventListener("abort", () => {
+          reject(new Error("Provider lifecycle operation timed out"));
+        }, { once: true })),
+      ]);
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 }
 

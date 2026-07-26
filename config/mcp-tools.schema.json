@@ -1809,128 +1809,48 @@
                               "minLength": 1,
                               "maxLength": 200
                             },
-                            "session": {
-                              "type": "object",
-                              "properties": {
-                                "session_id": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 200
-                                },
-                                "batch_id": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 200
-                                },
-                                "assignment_id": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 200
-                                },
-                                "workspace_id": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 200
-                                },
-                                "agent_preset_id": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 200
-                                },
-                                "state": {
-                                  "type": "string",
-                                  "enum": [
-                                    "requested",
-                                    "launching",
-                                    "running",
-                                    "canceling",
-                                    "lost",
-                                    "completed",
-                                    "failed",
-                                    "canceled"
-                                  ]
-                                },
-                                "version": {
-                                  "type": "integer",
-                                  "minimum": 0,
-                                  "maximum": 9007199254740991
-                                },
-                                "execution": {
-                                  "type": "object",
-                                  "properties": {
-                                    "adapter": {
-                                      "type": "string",
-                                      "minLength": 1,
-                                      "maxLength": 200
-                                    },
-                                    "execution_id": {
-                                      "type": "string",
-                                      "minLength": 1,
-                                      "maxLength": 200
-                                    },
-                                    "resume_token": {
-                                      "type": "string",
-                                      "minLength": 1
-                                    }
-                                  },
-                                  "required": [
-                                    "adapter",
-                                    "execution_id"
-                                  ],
-                                  "additionalProperties": false
-                                },
-                                "stop_reason": {
-                                  "type": "string",
-                                  "enum": [
-                                    "succeeded",
-                                    "succeeded_before_cancellation",
-                                    "invalid_request",
-                                    "policy_denied",
-                                    "dependency_unavailable",
-                                    "launch_error",
-                                    "launch_timeout",
-                                    "execution_error",
-                                    "worker_crash",
-                                    "resource_exhausted",
-                                    "deadline_exceeded",
-                                    "artifact_error",
-                                    "user_requested",
-                                    "orchestrator_shutdown",
-                                    "superseded",
-                                    "policy_revoked"
-                                  ]
-                                },
-                                "artifact_manifest_id": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 200
-                                },
-                                "created_at": {
-                                  "type": "string",
-                                  "format": "date-time",
-                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
-                                },
-                                "updated_at": {
-                                  "type": "string",
-                                  "format": "date-time",
-                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
-                                }
-                              },
-                              "required": [
-                                "session_id",
-                                "workspace_id",
-                                "agent_preset_id",
-                                "state",
-                                "version",
-                                "created_at",
-                                "updated_at"
-                              ],
-                              "additionalProperties": false
+                            "state": {
+                              "type": "string",
+                              "enum": [
+                                "requested",
+                                "launching",
+                                "running",
+                                "canceling",
+                                "lost",
+                                "completed",
+                                "failed",
+                                "canceled"
+                              ]
+                            },
+                            "stop_reason": {
+                              "type": "string",
+                              "enum": [
+                                "succeeded",
+                                "succeeded_before_cancellation",
+                                "invalid_request",
+                                "policy_denied",
+                                "dependency_unavailable",
+                                "launch_error",
+                                "launch_timeout",
+                                "execution_error",
+                                "worker_crash",
+                                "resource_exhausted",
+                                "deadline_exceeded",
+                                "artifact_error",
+                                "user_requested",
+                                "orchestrator_shutdown",
+                                "superseded",
+                                "policy_revoked"
+                              ]
+                            },
+                            "changed": {
+                              "type": "boolean"
                             }
                           },
                           "required": [
                             "session_id",
-                            "session"
+                            "state",
+                            "changed"
                           ],
                           "additionalProperties": false
                         },
