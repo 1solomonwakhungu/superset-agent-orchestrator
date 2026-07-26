@@ -151,6 +151,7 @@ test("acceptance evidence must identify the accepted assignment and event type",
       assignment: { ...state.assignments[0]!, id: "forged-assignment", idempotencyKey: "forged-key" },
       session: { ...state.sessions[0]!, id: "forged-session" },
       batch: { ...state.batches[0]!, id: "forged-batch" },
+      worker: { ...state.workers[0]!, id: "forged-session", sessionId: "forged-session", batchId: "forged-batch" },
       event: { ...state.auditEvents[0]!, id: "forged-event" },
     };
 
