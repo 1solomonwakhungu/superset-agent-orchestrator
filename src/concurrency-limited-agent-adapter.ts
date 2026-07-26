@@ -11,12 +11,17 @@ import type { ConcurrencyScheduler, ConcurrencyScope } from "./concurrency-sched
 export type ScopeResolver = (request: Readonly<LaunchRequest>) => ConcurrencyScope;
 export type RecoveryScopeResolver = (
   idempotencyKey: string,
-  handle: Readonly<RunHandle>,
-) => ConcurrencyScope | Promise<ConcurrencyScope>;
+) => ConcurrencyScope;
+
+interface HeldPermit {
+  idempotencyKey: string;
+  release: () => void;
+}
 
 export class ConcurrencyLimitedAgentAdapter implements AgentAdapter {
-  private readonly releases = new Map<string, () => void>();
+  private readonly releases = new Map<string, HeldPermit>();
   private readonly unresolvedLaunches = new Map<string, () => void>();
+  private readonly unresolvedRecoveries = new Map<string, () => void>();
   private readonly recoveries = new Map<string, Promise<RunHandle | undefined>>();
   private readonly recoveringRuns = new Set<string>();
   private readonly terminalRuns = new Set<string>();
@@ -42,16 +47,19 @@ export class ConcurrencyLimitedAgentAdapter implements AgentAdapter {
 
   async launch(request: LaunchRequest): Promise<RunHandle> {
     const release = await this.scheduler.acquire({
-      id: request.idempotencyKey,
       ...this.resolveScope(request),
+      id: request.idempotencyKey,
     });
     try {
       const handle = await this.adapter.launch(request);
       const existing = this.releases.get(handle.runId);
       if (existing !== undefined) {
+        if (existing.idempotencyKey !== request.idempotencyKey) {
+          throw new Error(`Run ${handle.runId} is already bound to another idempotency key`);
+        }
         release();
       } else {
-        this.releases.set(handle.runId, release);
+        this.releases.set(handle.runId, { idempotencyKey: request.idempotencyKey, release });
       }
       return handle;
     } catch (error) {
@@ -83,6 +91,8 @@ export class ConcurrencyLimitedAgentAdapter implements AgentAdapter {
 
   async cancel(handle: RunHandle, reason?: string): Promise<void> {
     await this.adapter.cancel(handle, reason);
+    this.markTerminalDuringRecovery(handle.runId);
+    this.release(handle.runId);
   }
 
   resumeMetadata(handle: RunHandle): Promise<ResumeMetadata | undefined> {
@@ -90,28 +100,47 @@ export class ConcurrencyLimitedAgentAdapter implements AgentAdapter {
   }
 
   private async recover(idempotencyKey: string): Promise<RunHandle | undefined> {
-    const handle = await this.adapter.findByIdempotencyKey(idempotencyKey);
     const unresolvedRelease = this.unresolvedLaunches.get(idempotencyKey);
+    const retainedRecoveryRelease = this.unresolvedRecoveries.get(idempotencyKey);
+    const recoveryRelease = unresolvedRelease === undefined && retainedRecoveryRelease === undefined
+      ? this.scheduler.acquireExisting({ ...this.resolveRecoveryScope(idempotencyKey), id: idempotencyKey })
+      : retainedRecoveryRelease;
+    let handle: RunHandle | undefined;
+    try {
+      handle = await this.adapter.findByIdempotencyKey(idempotencyKey);
+    } catch (error) {
+      if (recoveryRelease !== undefined) this.unresolvedRecoveries.set(idempotencyKey, recoveryRelease);
+      throw error;
+    }
     if (handle === undefined) {
       unresolvedRelease?.();
+      recoveryRelease?.();
       this.unresolvedLaunches.delete(idempotencyKey);
+      this.unresolvedRecoveries.delete(idempotencyKey);
       return undefined;
     }
     if (unresolvedRelease !== undefined) {
       this.unresolvedLaunches.delete(idempotencyKey);
-      if (this.releases.has(handle.runId)) unresolvedRelease();
-      else this.releases.set(handle.runId, unresolvedRelease);
+      const existing = this.releases.get(handle.runId);
+      if (existing !== undefined) {
+        if (existing.idempotencyKey !== idempotencyKey) throw new Error(`Run ${handle.runId} is already bound to another idempotency key`);
+        unresolvedRelease();
+      } else this.releases.set(handle.runId, { idempotencyKey, release: unresolvedRelease });
       return this.inspectRecoveredRun(handle);
     }
-    if (this.releases.has(handle.runId)) return handle;
+    const existing = this.releases.get(handle.runId);
+    if (existing !== undefined) {
+      recoveryRelease?.();
+      this.unresolvedRecoveries.delete(idempotencyKey);
+      if (existing.idempotencyKey !== idempotencyKey) throw new Error(`Run ${handle.runId} is already bound to another idempotency key`);
+      return handle;
+    }
     this.recoveringRuns.add(handle.runId);
     try {
-      const release = await this.scheduler.acquire({
-        id: idempotencyKey,
-        ...await this.resolveRecoveryScope(idempotencyKey, handle),
-      });
-      if (this.terminalRuns.has(handle.runId) || this.releases.has(handle.runId)) release();
-      else this.releases.set(handle.runId, release);
+      if (recoveryRelease === undefined) throw new Error("Recovery permit was not reserved");
+      this.unresolvedRecoveries.delete(idempotencyKey);
+      if (this.terminalRuns.has(handle.runId)) recoveryRelease();
+      else this.releases.set(handle.runId, { idempotencyKey, release: recoveryRelease });
       return await this.inspectRecoveredRun(handle);
     } finally {
       this.recoveringRuns.delete(handle.runId);
@@ -135,7 +164,7 @@ export class ConcurrencyLimitedAgentAdapter implements AgentAdapter {
   }
 
   private release(runId: string): void {
-    this.releases.get(runId)?.();
+    this.releases.get(runId)?.release();
     this.releases.delete(runId);
   }
 }

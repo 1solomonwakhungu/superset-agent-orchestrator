@@ -16,15 +16,17 @@
   acknowledgements retain capacity until a terminal state is observed.
 - Recovery now reserves capacity before status inspection, fails closed on
   status errors or identity mismatches, and releases terminal runs safely.
+- Existing runs are accounted before backend lookup without deadlocking startup,
+  acknowledged cancellation releases capacity, and pressure hooks are bounded.
 - Added deterministic tests proving retries and batches hold capacity,
   cancellation frees capacity, every scope is enforced, and overload stays
   bounded or fails structurally when waiting is disabled.
-- Verification: the focused concurrency suite passed 19/19; build, typecheck,
+- Verification: the focused concurrency suite passed 25/25; build, typecheck,
   schema generation, the 3-test configuration contract, strict local-routing
   verification, and `git diff --check` passed. The full 120-test suite passed
   119 tests; only the prohibited live Superset smoke test could not run because
   its external executable is unavailable.
-- Next: push pull request 23 and verify its exact head.
+- Next: push pull request 23 and verify its exact head and checks.
 
 ## PER-258 agency availability monitoring
 
