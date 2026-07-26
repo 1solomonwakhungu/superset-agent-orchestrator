@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { realpathSync } from "node:fs";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { chmod, copyFile, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -8,7 +7,11 @@ import { DurableStore } from "../src/store.js";
 import { SecurityError } from "../src/security.js";
 import { runProcess, SupersetDiscoveryError } from "../src/superset-discovery.js";
 
-const NODE_EXECUTABLE = realpathSync(process.execPath);
+const NODE_FIXTURE_DIRECTORY = await mkdtemp(join(tmpdir(), "orchestrator-portable-node-"));
+const NODE_EXECUTABLE = join(NODE_FIXTURE_DIRECTORY, "node");
+await copyFile(process.execPath, NODE_EXECUTABLE);
+await chmod(NODE_EXECUTABLE, 0o700);
+test.after(async () => rm(NODE_FIXTURE_DIRECTORY, { recursive: true, force: true }));
 
 test("durable state supports nested paths with spaces and non-ASCII characters", async () => {
   const directory = await mkdtemp(join(tmpdir(), "orchestrator portability "));
