@@ -259,6 +259,28 @@ test("report verifier rejects forged throughput and admission arithmetic", async
     stages[1]!.admitted += 1;
     await writeFile(`${stageOutput}.json`, `${JSON.stringify(stage)}\n`, "utf8");
     await assert.rejects(verifyReport(stageOutput), /Admission and backpressure arithmetic is inconsistent/);
+
+    const prefixOutput = join(directory, "stage-prefix");
+    const prefix = await runRealLoad({
+      execute: true, workspaceIds: Array.from({ length: 30 }, (_, index) => `workspace-${index}`),
+      agent: "fake", prompt: "safe test", output: prefixOutput, launchTimeoutMs: 10,
+      maxRssBytes: 10_000, maxCpuMs: 10_000, maxDescriptors: 100, maxInFlight: 1, measurements: measurements(),
+      launch: async (workspaceId) => workspaceId === "workspace-4"
+        ? Promise.reject(new Error("expected failure"))
+        : Promise.resolve({ sessionId: `session-${workspaceId}`, kind: "terminal" }),
+    });
+    const admission = prefix.admission as { offered: number; admitted: number; failed: number; withheld: number;
+      stages: Array<{ offered: number; admitted: number; failed: number; withheld: number }> };
+    admission.stages[0]!.offered -= 1;
+    admission.stages[0]!.admitted -= 1;
+    admission.stages[0]!.withheld += 1;
+    admission.stages[1]!.offered += 1;
+    admission.stages[1]!.admitted += 1;
+    admission.stages[1]!.withheld -= 1;
+    const accepted = (prefix.launch as { acceptedSessions: Array<{ stage: number }> }).acceptedSessions;
+    accepted[accepted.length - 1]!.stage = 2;
+    await writeFile(`${prefixOutput}.json`, `${JSON.stringify(prefix)}\n`, "utf8");
+    await assert.rejects(verifyReport(prefixOutput), /Admission and backpressure arithmetic is inconsistent/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
