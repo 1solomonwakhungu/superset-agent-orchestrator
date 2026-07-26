@@ -15,7 +15,15 @@
   six concurrency-sensitive suites passed. Fixed one load-sensitive flake in
   `test/launch-service.test.ts` that raced temporary-directory cleanup against a
   background durable write.
-- Next: Merge after exact-head CI and verify merged `main`.
+- Review follow-up: Standalone coverage and race commands now build their
+  required artifacts, the real discovery smoke test is explicitly opt-in, and
+  Windows remains outside the supported compatibility envelope.
+- Verification: `npm run verify` passed 163/163 active tests with 1 opt-in smoke
+  test skipped and all 10 race runs; focused Markdown lint, PER-323 policy
+  verification, and `git diff --check` passed.
+- Pushed head: `f4f2cd6a52684ad1467f39990f3bddce9fe65273`.
+- Next: External branch protection remains blocked with no checks reported;
+  merge after the required external approval or policy gate is satisfied.
 
 ## PER-258 agency availability monitoring
 
