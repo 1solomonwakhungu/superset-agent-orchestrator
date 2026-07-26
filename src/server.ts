@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { assertDataOperand, RegisteredWorkspaceAuthorizer, RedactionPolicy, type WorkspaceAuthorizer } from "./security.js";
+import { assertDataOperand, RegisteredWorkspaceAuthorizer, RedactionPolicy, SecurityError, type WorkspaceAuthorizer } from "./security.js";
 import { BatchQueryError, DurableStore } from "./store.js";
 import { LaunchService } from "./launch-service.js";
 import { ResultCaptureService } from "./result-capture.js";
@@ -125,14 +125,23 @@ async function main(): Promise<void> {
     : new SupersetDiscoveryAdapter({ executable: providerExecutable, args: providerArgs });
   const integrationToolsEnabled = process.env.SUPERSET_ORCHESTRATOR_ENABLE_PROVIDER_TEST_TOOLS === "1";
   const integrationWorkspaceRoot = process.env.SUPERSET_ORCHESTRATOR_PROVIDER_TEST_WORKSPACE_ROOT;
+  const canonicalIntegrationWorkspaceRoot = !integrationToolsEnabled || integrationWorkspaceRoot === undefined
+    ? undefined
+    : await realpath(integrationWorkspaceRoot);
   const workspaceAuthorizer: WorkspaceAuthorizer | undefined = integrationToolsEnabled && integrationWorkspaceRoot !== undefined
     ? {
         authorize: async (workspaceId) => {
           const canonicalPath = assertDataOperand(await realpath(join(integrationWorkspaceRoot, workspaceId)), "workspace path");
+          const rootRelativePath = relative(canonicalIntegrationWorkspaceRoot!, canonicalPath);
+          if (rootRelativePath === "" || rootRelativePath === ".." || rootRelativePath.startsWith(`..${sep}`) || isAbsolute(rootRelativePath)) {
+            throw new SecurityError("POLICY_DENIED", "Integration workspace must be a child of the configured test root");
+          }
           return {
             workspaceId, projectId: "provider-integration", canonicalPath,
             revalidate: async () => {
-              if (await realpath(join(integrationWorkspaceRoot, workspaceId)) !== canonicalPath) {
+              const revalidatedPath = await realpath(join(integrationWorkspaceRoot, workspaceId));
+              const revalidatedRelativePath = relative(canonicalIntegrationWorkspaceRoot!, revalidatedPath);
+              if (revalidatedPath !== canonicalPath || revalidatedRelativePath === "" || revalidatedRelativePath === ".." || revalidatedRelativePath.startsWith(`..${sep}`) || isAbsolute(revalidatedRelativePath)) {
                 throw new Error("Integration workspace identity changed before launch");
               }
             },
@@ -488,6 +497,8 @@ function providerError(requestId: string, code: ErrorCode, message: string) {
 function processFailure(requestId: string, error: unknown) {
   return error instanceof SupersetProcessError
     ? providerError(requestId, error.code, error.message)
+    : error instanceof SecurityError
+    ? providerError(requestId, asErrorCode(error.code), error.message)
     : providerError(requestId, "PROVIDER_UNAVAILABLE", error instanceof Error ? error.message : String(error));
 }
 
