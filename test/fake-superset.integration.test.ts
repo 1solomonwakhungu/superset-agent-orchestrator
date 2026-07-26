@@ -7,9 +7,18 @@ import { LaunchService, type LaunchAcceptance } from "../src/launch-service.js";
 import { ResultCaptureService } from "../src/result-capture.js";
 import { DurableStore } from "../src/store.js";
 import { SupersetProcessAdapter, SupersetProcessError } from "../src/superset-process-adapter.js";
+import type { WorkspaceAuthorizer } from "../src/security.js";
 
 const fixture = resolve("test/fixtures/fake-superset.mjs");
 const now = () => new Date("2000-01-01T00:00:00.000Z");
+const authorizer: WorkspaceAuthorizer = {
+  authorize: async (workspaceId) => ({
+    workspaceId,
+    projectId: "fake-project",
+    canonicalPath: `/workspaces/${workspaceId.replace("workspace-", "")}`,
+    revalidate: async () => undefined,
+  }),
+};
 
 test("fake Superset proves completion, failure, cancellation, restart recovery, and exact attribution", async () => {
   await withHarness({
@@ -99,9 +108,9 @@ test("accepted launches recover after one-shot timeout and malformed responses w
       assert.equal(assignment.runId, "fake-001");
 
       const ledger = await calls();
-      assert.deepEqual(ledger.map(({ command }) => command), ["find", "launch", "find"]);
-      assert.deepEqual(ledger[1]?.fault, { id: `first-launch-${action}`, action });
-      assert.deepEqual(ledger[1]?.response, { runId: "fake-001" });
+      assert.deepEqual(ledger.map(({ command }) => command), ["launch", "find"]);
+      assert.deepEqual(ledger[0]?.fault, { id: `first-launch-${action}`, action });
+      assert.deepEqual(ledger[0]?.response, { runId: "fake-001" });
       assert.equal(Object.keys((await fakeState()).runs).length, 1);
     }, action === "hang" ? 250 : 10_000);
   }
@@ -207,7 +216,6 @@ test("fake Superset completes and attributes a deterministic 100-session batch",
           attribution: item.attribution,
           prompt: item.prompt,
           workspaceId: item.workspaceId,
-          workspacePath: item.workspacePath,
         };
       }),
     });
@@ -231,7 +239,7 @@ function request(index: number, task: string) {
   return {
     idempotencyKey: `key-${index}`, clientId: "integration", batchName: "fake-superset",
     attribution: { agent: `agent-${index}`, task }, prompt: `prompt-${index}`,
-    workspaceId: `workspace-${index}`, workspacePath: `/workspaces/${index}`,
+    workspaceId: `workspace-${index}`,
   };
 }
 
@@ -292,11 +300,3 @@ async function withHarness(
     await rm(directory, { recursive: true, force: true });
   }
 }
-const authorizer = {
-  authorize: async (workspaceId: string) => ({
-    workspaceId,
-    projectId: "fake-project",
-    canonicalPath: `/workspaces/${workspaceId.replace("workspace-", "")}`,
-    revalidate: async () => undefined,
-  }),
-};

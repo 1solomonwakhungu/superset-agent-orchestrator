@@ -36,7 +36,6 @@ export interface AsynchronousLaunchRequest {
   attribution: WorkerAttribution;
   prompt: string;
   workspaceId: string;
-  workspacePath?: string;
 }
 
 export interface LaunchAcceptance {
@@ -246,7 +245,16 @@ export class LaunchService {
 
   /** Stops scheduled work and waits for an in-flight background dispatch. */
   async close(): Promise<void> {
-    await this.stop();
+    this.stopped = true;
+    if (this.dispatchTimer !== undefined) {
+      clearTimeout(this.dispatchTimer);
+      this.dispatchTimer = undefined;
+    }
+    await this.dispatching?.catch(() => undefined);
+    if (this.dispatchTimer !== undefined) {
+      clearTimeout(this.dispatchTimer);
+      this.dispatchTimer = undefined;
+    }
   }
 
   async dispatchPending(): Promise<void> {
@@ -307,9 +315,12 @@ export class LaunchService {
     await this.store.withLaunchDispatchLock(assignment.id, async () => {
       assignment = await this.store.assignmentForResult(assignment.id);
       if (assignment.status !== "accepted" && assignment.status !== "launching") return;
+      const recovering = assignment.status === "launching";
       let grant: WorkspaceGrant;
       try {
-        if (assignment.workspaceId === undefined) throw new SecurityError("INVALID_ARGUMENT", "Launch has no workspace identity");
+        if (assignment.workspaceId === undefined) {
+          throw new SecurityError("INVALID_ARGUMENT", "Launch has no workspace identity");
+        }
         grant = await this.workspaceAuthorizer.authorize(assignment.workspaceId);
         await grant.revalidate();
         if (grant.canonicalPath !== assignment.workspacePath) {
@@ -320,11 +331,18 @@ export class LaunchService {
           await this.auditAssignment(assignment, "denied", reasonCode(error));
           throw error;
         }
-        const failedAt = this.now().toISOString();
+        if (assignment.status === "accepted") {
+          const reserved = await this.store.recordLaunchEvent(
+            assignment.id,
+            "launching",
+            event(assignment.id, "launch_reserved", this.now().toISOString()),
+          );
+          if (!reserved.transitioned) return;
+        }
         await this.store.recordLaunchEvent(
           assignment.id,
           "failed",
-          event(assignment.id, "launch_failed", failedAt, { error: this.store.safeError(error) }),
+          event(assignment.id, "launch_failed", this.now().toISOString(), { error: this.store.safeError(error) }),
           this.auditAssignmentInput(assignment, "denied", reasonCode(error)),
         );
         return;
@@ -343,10 +361,10 @@ export class LaunchService {
       this.injectCrash("before_adapter_launch");
       let handle: RunHandle | undefined;
       try {
-        await this.auditAssignment(assignment, "allowed", "launch_intent", grant.projectId);
-        handle = assignment.status === "launching"
+        handle = recovering
           ? validRunHandle(await this.adapter.findByIdempotencyKey(assignment.idempotencyKey))
           : undefined;
+        if (handle === undefined) await this.auditAssignment(assignment, "allowed", "launch_intent", grant.projectId);
         handle ??= await this.adapter.launch({
           idempotencyKey: assignment.idempotencyKey,
           prompt: assignment.prompt,
@@ -360,15 +378,18 @@ export class LaunchService {
         let recovered: RunHandle | undefined;
         try {
           recovered = validRunHandle(await this.adapter.findByIdempotencyKey(assignment.idempotencyKey));
-        } catch (lookupError) {
-          if (!(lookupError instanceof MalformedRunHandleError)) throw lookupError;
-          await this.recordLaunchFailure(
-            assignment,
-            "Provider returned a malformed run handle",
-            "INVALID_PROVIDER_RESPONSE",
-            grant.projectId,
-          );
-          return;
+        } catch (recoveryError) {
+          if (recoveryError instanceof MalformedRunHandleError) {
+            await this.recordLaunchFailure(
+              assignment,
+              "Provider returned a malformed run handle",
+              "INVALID_PROVIDER_RESPONSE",
+              grant.projectId,
+            );
+            return;
+          }
+          await this.auditAssignment(assignment, "failed", reasonCode(recoveryError), grant.projectId);
+          throw recoveryError;
         }
         if (recovered !== undefined) {
           const launchedAt = this.now().toISOString();
@@ -381,13 +402,19 @@ export class LaunchService {
           return;
         }
         if (error instanceof MalformedRunHandleError) {
-          await this.recordLaunchFailure(assignment, error.message, "INVALID_PROVIDER_RESPONSE", grant.projectId);
+          await this.recordLaunchFailure(
+            assignment,
+            "Provider returned a malformed run handle",
+            "INVALID_PROVIDER_RESPONSE",
+            grant.projectId,
+          );
           return;
         }
+        if (!hasErrorCode(error, "LAUNCH_REJECTED")) throw error;
         await this.recordLaunchFailure(
           assignment,
           this.store.safeError(error),
-          hasErrorCode(error, "LAUNCH_REJECTED") ? error.code : reasonCode(error),
+          error.code,
           grant.projectId,
         );
         return;
