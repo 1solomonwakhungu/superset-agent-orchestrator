@@ -8,23 +8,49 @@ in [performance and load testing](docs/performance-and-load-testing.md).
 
 ## Product status
 
-The backend-neutral core and fake adapter exercise complete lifecycle semantics,
-but the stable public Superset interface currently supports only local discovery
-and launch. It does not provide agent status, exact results, stop reasons,
-cancellation, or backend recovery. Superset is therefore limited to a
-launch-ledger technical preview that reports unobservable work as
-`unknown_outcome`; it is not a general-availability orchestration backend.
+This is an unofficial, experimental launch-ledger technical preview, not a
+supported release. The backend-neutral core and deterministic fixtures exercise
+complete lifecycle semantics, but the public Superset interface currently
+supports only local discovery and launch. Launch acceptance is not completion.
+Status, exact results, stop reasons, cancellation, and backend recovery are not
+observable and are reported honestly as unsupported or `unknown_outcome`.
+Public writer launch remains disabled pending additional workspace safety
+controls. An explicitly enabled provider-fixture route can launch only child
+workspaces beneath its configured test root and is not a production surface.
 
-See the [product boundary and measurable release gates](docs/adr/0002-product-boundary-and-mvp-gates.md).
+The supported development matrix is macOS and Linux with Node.js 22 or 24.
+Windows, HTTP transport, remote hosts, relay fallback, package publication, and
+general-availability support are out of scope. Internal `0.1.0` package/server
+metadata and contract version `1.0` are identifiers, not a published release;
+release versioning and changelog policy remain deferred.
+
+See the [public readiness decision](docs/public-readiness.md) and
+[product boundary and measurable release gates](docs/adr/0002-product-boundary-and-mvp-gates.md).
 
 The repository also contains the [MiniCPM5-1B reproducibility environment](docs/minicpm5-reproducible-environment.md).
 
-## Development
+## Quick start
 
-Requirements: Node.js 22, npm 10 or later, and Python 3.11.
+Requirements: Node.js 22 or 24, npm 10 or later, and Python 3.11.
 
 ```sh
 npm ci
+npm run build
+npm start
+```
+
+Configure any stdio-capable MCP client with the compiled server for its durable
+ledger and lifecycle tools. Production MCP handlers do not yet expose Superset
+discovery or launch; separate adapters and opt-in harnesses exercise those
+capabilities. The project has
+no Hermes package, API, prompt, memory, skill, or runtime dependency; Hermes may
+be used only as an ordinary MCP client. See
+[setup and troubleshooting](docs/setup-and-troubleshooting.md) for a
+client-neutral configuration and workflow.
+
+## Development
+
+```sh
 npm audit --audit-level=high
 npm run check
 ```
@@ -100,6 +126,9 @@ The portable configuration schema is published at
 [`config/orchestrator.schema.json`](config/orchestrator.schema.json). Discovery,
 precedence, environment isolation, diagnostics, and redaction behavior are defined
 in [`docs/configuration-and-discovery.md`](docs/configuration-and-discovery.md).
+The compiled server reads the runtime environment variables documented in
+[setup and troubleshooting](docs/setup-and-troubleshooting.md); not every field
+in the portable schema is wired into `src/server.ts` yet.
 
 Run the zero-dependency contract checks with:
 
@@ -109,6 +138,8 @@ node --test test/configuration-contract.test.mjs
 
 ## Architecture
 
+- [Public readiness, traceability, and known limitations](docs/public-readiness.md)
+- [Setup, client-neutral examples, and troubleshooting](docs/setup-and-troubleshooting.md)
 - [Product boundary and MVP decision gates](docs/adr/0002-product-boundary-and-mvp-gates.md)
 - [Authoritative session state machine](docs/session-state-machine.md)
 - [Versioned client-independent MCP tool contract](docs/mcp-tool-contract.md)
@@ -148,8 +179,6 @@ Run that suite independently with:
 npx tsx --test test/fake-superset.integration.test.ts
 ```
 
-Run `npm run verify` to type-check the complete implementation and execute all
-tests.
 Run `npm run verify` to build, type-check, run the full suite with enforced
 coverage thresholds, and repeat the concurrency-sensitive suites.
 
