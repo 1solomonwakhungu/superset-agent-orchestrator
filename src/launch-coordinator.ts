@@ -113,20 +113,18 @@ export class LaunchCoordinator {
       throw new Error(`Launch ${request.idempotencyKey} remains ${intent.status}; backend acceptance is unresolved`);
     }
 
-    await this.store.updateLaunch(request.idempotencyKey, "dispatching");
     try {
       await grant.revalidate();
     } catch (error) {
       await this.audit(request, "denied", reasonCode(error), grant.projectId);
-      await this.store.updateLaunch(request.idempotencyKey, "reserved", { diagnostic: this.store.safeError(error) });
       throw sanitizedError(this.store, error);
     }
     try {
       await this.audit(request, "allowed", "launch_intent", grant.projectId);
     } catch (error) {
-      await this.store.updateLaunch(request.idempotencyKey, "reserved", { diagnostic: this.store.safeError(error) });
       throw sanitizedError(this.store, error);
     }
+    await this.store.updateLaunch(request.idempotencyKey, "dispatching");
     try {
       const handle = await this.adapter.launch({
         idempotencyKey: request.idempotencyKey,
