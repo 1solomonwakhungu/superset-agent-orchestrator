@@ -276,7 +276,7 @@ test("expiry alone never releases a writer lease", async () => {
   });
 });
 
-test("read-only leases share a workspace and cleanup reclaims finished leases", async () => {
+test("read-only leases share a workspace and cleanup preserves unreleased writers", async () => {
   await withTemporaryDirectory("orchestrator-lease", async (directory) => {
     const storage = new OrchestratorStorage(join(directory, "registry.sqlite"));
     try {
@@ -294,8 +294,12 @@ test("read-only leases share a workspace and cleanup reclaims finished leases", 
       insertLease(storage, "expired-reader", "read-only", null, AT, "2026-07-01T00:00:01.000Z");
       insertLease(storage, "released-reader", "read-only", LATER);
       const summary = storage.cleanup(new Date("2026-07-02T00:00:00.000Z"));
-      assert.equal(summary.leasesDeleted, 2, "expired and released leases are reclaimed together");
-      assert.equal(storage.database.prepare("SELECT COUNT(*) count FROM workspace_leases").get()?.count, 3);
+      assert.equal(summary.leasesDeleted, 1, "cleanup reclaims released leases but cannot infer writer death from expiry");
+      assert.equal(storage.database.prepare("SELECT COUNT(*) count FROM workspace_leases").get()?.count, 4);
+      assert.equal(
+        storage.database.prepare("SELECT COUNT(*) count FROM workspace_leases WHERE id = 'expired-reader'").get()?.count,
+        1,
+      );
     } finally {
       storage.close();
     }

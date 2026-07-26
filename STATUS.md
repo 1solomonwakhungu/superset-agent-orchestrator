@@ -9,9 +9,10 @@
   tests, and adversarial security-control tests. Added enforced coverage
   thresholds, a repeated race-test runner, a testing strategy document, and a
   flaky-test policy. No product code was added to satisfy a test.
-- Key results after integration with `main@cbd44e1`: 173 active JS/TS tests and
+- Key results after integrating `main@cbd44e1` and its subsequent persistence
+  dependency: 185 active JS/TS tests and
   3 Python tests pass, with one explicit Superset Desktop smoke skip. C8 reports
-  97.05% lines/statements, 89.51% branches, and 95.52% functions across all
+  97.02% lines/statements, 88.07% branches, and 92.71% functions across all
   source files. Twenty repeated race runs and 75 focused domain, schema,
   contract, persistence, and safety tests passed.
 - Review follow-up: Standalone coverage and race commands now build their
