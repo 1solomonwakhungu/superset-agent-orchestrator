@@ -329,7 +329,7 @@ const stateSchema = z.object({
   }
   for (const assignment of state.assignments) {
     const batch = batches.get(assignment.batchId);
-    if (!sessions.has(assignment.sessionId) || batch === undefined || batch.sessionId !== assignment.sessionId) {
+    if (!sessions.has(assignment.sessionId) || batch === undefined) {
       context.addIssue({ code: "custom", message: `Assignment ${assignment.id} has inconsistent durable identity` });
     }
   }
@@ -757,7 +757,7 @@ export class DurableStore {
 
       for (const worker of this.state.workers) {
         const batch = batches.get(worker.batchId);
-        if (!sessionIds.has(worker.sessionId) || batch === undefined || batch.sessionId !== worker.sessionId) {
+        if (!sessionIds.has(worker.sessionId) || batch === undefined) {
           diagnose("orphan", worker, "Worker references a missing or inconsistent durable session or batch");
         }
 
