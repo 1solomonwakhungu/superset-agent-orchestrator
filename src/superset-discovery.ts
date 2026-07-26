@@ -117,8 +117,9 @@ export const runProcess: ProcessRunner = async (executable, args, timeoutMs, sig
         action();
       };
       const terminate = () => {
+        if (child.pid === undefined) return;
         try {
-          process.kill(useProcessGroup ? -child.pid! : child.pid!, "SIGKILL");
+          process.kill(useProcessGroup ? -child.pid : child.pid, "SIGKILL");
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
         }
