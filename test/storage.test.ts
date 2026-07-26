@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import { Worker } from "node:worker_threads";
 import { CURRENT_SCHEMA_VERSION, OrchestratorStorage } from "../src/storage.js";
 
 async function temporaryDirectory(run: (directory: string) => void | Promise<void>): Promise<void> {
@@ -29,6 +30,22 @@ function seed(storage: OrchestratorStorage, terminalAt = "2026-05-01T00:00:00.00
 }
 
 const permissions = async (path: string): Promise<number> => (await stat(path)).mode & 0o777;
+
+function concurrentExportWorker(database: string, output: string): { worker: Worker; ready: Promise<void>; result: Promise<{ ok: boolean; error?: string }> } {
+  const worker = new Worker(new URL("fixtures/concurrent-storage-export-worker.ts", import.meta.url), {
+    execArgv: ["--import", "tsx"],
+    workerData: { database, output },
+  });
+  const ready = new Promise<void>((resolve, reject) => {
+    worker.once("message", (message) => message === "ready" ? resolve() : reject(new Error(`unexpected worker message: ${String(message)}`)));
+    worker.once("error", reject);
+  });
+  const result = ready.then(() => new Promise<{ ok: boolean; error?: string }>((resolve, reject) => {
+    worker.once("message", resolve);
+    worker.once("error", reject);
+  }));
+  return { worker, ready, result };
+}
 
 test("creates and migrates an empty product-owned registry", async () => {
   await temporaryDirectory((directory) => {
@@ -334,11 +351,63 @@ test("reserved, aliased, and dangling output paths fail closed", async () => {
       assert.throws(() => storage.exportJson(alias), /aliases the live registry/);
       const walAlias = join(directory, "wal-alias.sqlite");
       await import("node:fs/promises").then(({ link }) => link(`${path}-wal`, walAlias));
+      const sourceMode = await permissions(`${path}-wal`);
       assert.throws(() => storage.exportJson(walAlias), /SQLite sidecar/);
       assert.throws(() => storage.backup(walAlias), /SQLite sidecar/);
+      assert.equal(await permissions(`${path}-wal`), sourceMode);
+      assert.equal(await permissions(walAlias), sourceMode);
       const dangling = join(directory, "dangling-export.json");
       await import("node:fs/promises").then(({ symlink }) => symlink(join(directory, "missing"), dangling));
       assert.throws(() => storage.exportJson(dangling), /non-symlink/);
     } finally { storage.close(); }
+  });
+});
+
+test("preexisting backup and export destinations remain byte-for-byte and mode-for-mode unchanged", async () => {
+  await temporaryDirectory(async (directory) => {
+    const path = join(directory, "registry.sqlite");
+    const storage = new OrchestratorStorage(path);
+    try {
+      const backupPath = join(directory, "existing-backup.sqlite");
+      const exportPath = join(directory, "existing-export.json");
+      const original = Buffer.from("unrelated existing bytes");
+      await writeFile(backupPath, original, { mode: 0o640 });
+      await writeFile(exportPath, original, { mode: 0o640 });
+      await chmod(backupPath, 0o640);
+      await chmod(exportPath, 0o640);
+      assert.throws(() => storage.backup(backupPath), /already exists/);
+      assert.throws(() => OrchestratorStorage.exportJson(path, exportPath), /already exists/);
+      for (const destination of [backupPath, exportPath]) {
+        assert.deepEqual(await readFile(destination), original);
+        assert.equal(await permissions(destination), 0o640);
+      }
+    } finally { storage.close(); }
+  });
+});
+
+test("concurrent static exports publish exactly one owner-only valid output", async () => {
+  await temporaryDirectory(async (directory) => {
+    const path = join(directory, "registry.sqlite");
+    const outputDirectory = join(directory, "exports");
+    const output = join(outputDirectory, "snapshot.json");
+    const storage = new OrchestratorStorage(path);
+    seed(storage);
+    storage.close();
+    await mkdir(outputDirectory, { mode: 0o700 });
+    const first = concurrentExportWorker(path, output);
+    const second = concurrentExportWorker(path, output);
+    await Promise.all([first.ready, second.ready]);
+    first.worker.postMessage("start");
+    second.worker.postMessage("start");
+    const results = await Promise.all([first.result, second.result]);
+    await Promise.all([first.worker.terminate(), second.worker.terminate()]);
+    assert.equal(results.filter(({ ok }) => ok).length, 1);
+    assert.equal(results.filter(({ ok }) => !ok).length, 1);
+    assert.match(results.find(({ ok }) => !ok)?.error ?? "", /EEXIST|already exists/);
+    assert.equal(await permissions(output), 0o600);
+    const exported = JSON.parse(await readFile(output, "utf8")) as { format: string; schemaVersion: number; tables: { batches: unknown[] } };
+    assert.equal(exported.format, "superset-agent-orchestrator-export");
+    assert.equal(exported.schemaVersion, CURRENT_SCHEMA_VERSION);
+    assert.equal(exported.tables.batches.length, 1);
   });
 });

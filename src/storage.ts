@@ -382,6 +382,7 @@ export class OrchestratorStorage {
     if (pathExists(outputPath)) throw new Error("Export destination already exists");
     const database = new DatabaseSync(path, { readOnly: true });
     try {
+      database.exec("PRAGMA busy_timeout = 5000");
       database.exec("BEGIN");
       const report = inspectIntegrity(database);
       if (!report.ok) throw new Error(`Cannot export invalid registry: ${[...report.databaseErrors, ...report.schemaErrors, ...report.foreignKeyErrors.map((error) => JSON.stringify(error))].join("; ")}`);
@@ -403,6 +404,7 @@ export class OrchestratorStorage {
     try {
       validateSecureSqliteFiles(path);
       database = new DatabaseSync(path, { readOnly: true });
+      database.exec("PRAGMA busy_timeout = 5000");
       return inspectIntegrity(database);
     } catch (error) {
       return { ok: false, databaseErrors: [(error as Error).message], foreignKeyErrors: [], schemaErrors: [] };
