@@ -6,6 +6,7 @@ import {
   type Batch,
   type LaunchAuditEvent,
   type Session,
+  type Worker,
   type WorkerAttribution,
 } from "./store.js";
 
@@ -99,14 +100,14 @@ export class LaunchService {
         acceptedAt, updatedAt: acceptedAt,
       };
     });
-    const workers = assignments.map((assignment, index) => ({
+    const workers = assignments.map((assignment, position): Worker => ({
       id: assignment.sessionId,
       batchId,
       sessionId: assignment.sessionId,
-      status: "requested" as const,
+      status: "requested",
       attribution: assignment.attribution,
       startedAt: acceptedAt,
-      position: index,
+      position,
     }));
     const stored = await this.store.acceptLaunchBatch({
       assignments, sessions, batch, workers,
@@ -258,6 +259,10 @@ export class LaunchService {
             "launched",
             event(assignment.id, "execution_started", launchedAt, { runId: recovered.runId }),
           );
+          return;
+        }
+        if (error instanceof MalformedRunHandleError) {
+          await this.recordLaunchFailure(assignment, error.message);
           return;
         }
         if (!hasErrorCode(error, "LAUNCH_REJECTED")) throw error;
