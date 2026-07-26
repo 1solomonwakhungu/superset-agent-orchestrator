@@ -24,6 +24,9 @@ Superset CLI, and no shared machine state between cases.
    test. Where a control is absent, the gap is recorded in the relevant ADR or
    threat model rather than mocked into existence.
 
+The real discovery integration smoke test is excluded from default runs. Set
+`SUPERSET_ORCHESTRATOR_EXECUTABLE` to an explicit executable path to opt in.
+
 ## Layers
 
 | Layer | Files | What it pins down |
@@ -43,10 +46,10 @@ Superset CLI, and no shared machine state between cases.
 | Command | Purpose |
 | --- | --- |
 | `npm test` | Full suite, no coverage instrumentation |
-| `npm run test:coverage` | Full suite with enforced coverage thresholds |
-| `npm run test:race` | Repeats the concurrency-sensitive suites (`RACE_REPEATS`, default 10) |
+| `npm run test:coverage` | Builds, then runs the full suite with enforced coverage thresholds |
+| `npm run test:race` | Builds, then repeats the concurrency-sensitive suites (`RACE_REPEATS`, default 10) |
 | `npm run check` | Type checking with no emit |
-| `npm run verify` | `build` then `check` then `test:coverage` then `test:race` |
+| `npm run verify` | `check` then `test:coverage` then `test:race` (both test commands build first) |
 
 ## Coverage threshold
 
@@ -57,8 +60,8 @@ reflects product code only.
 The thresholds sit just under the measured values rather than at them. The
 margin is deliberate and bounded:
 
-- Two POSIX file-mode cases skip on Windows, which the compatibility matrix
-  supports, so a Windows run legitimately measures slightly lower.
+- Two POSIX file-mode cases skip on Windows as a defensive portability measure,
+  although Windows is outside the compatibility matrix's supported envelope.
 - A threshold pinned exactly at the current number turns any unrelated refactor
   into a red build, which trains people to raise the number rather than write
   the missing test.
