@@ -5,6 +5,7 @@ export interface ConcurrencyPolicy {
   perAgent: number;
   perWorkspace: number;
   maxQueued: number;
+  pressureHookTimeoutMs: number;
   overload: "queue" | "reject";
 }
 
@@ -74,6 +75,7 @@ const DEFAULT_POLICY: ConcurrencyPolicy = {
   perAgent: 2,
   perWorkspace: 1,
   maxQueued: 100,
+  pressureHookTimeoutMs: 30_000,
   overload: "queue",
 };
 
@@ -98,6 +100,7 @@ export class ConcurrencyScheduler {
     if (this.policy.overload !== "queue" && this.policy.overload !== "reject") {
       throw new Error('overload must be either "queue" or "reject"');
     }
+    if (this.policy.pressureHookTimeoutMs === 0) throw new Error("pressureHookTimeoutMs must be greater than zero");
     for (const name of ["global", "perHost", "perProject", "perAgent", "perWorkspace"] as const) {
       if (this.policy[name] === 0) throw new Error(`${name} must be greater than zero`);
     }
@@ -158,6 +161,15 @@ export class ConcurrencyScheduler {
     });
   }
 
+  acquireExisting(request: AdmissionRequest): () => void {
+    validateRequest(request);
+    request = { id: request.id, ...scope(request) };
+    if (this.active.has(request.id) || this.queue.some(({ request: queued }) => queued.id === request.id)) {
+      throw new Error(`Admission ID ${request.id} is already active or queued`);
+    }
+    return this.activate(request);
+  }
+
   snapshot(): SchedulerSnapshot {
     return {
       active: this.active.size,
@@ -191,15 +203,12 @@ export class ConcurrencyScheduler {
         try {
           pressure = this.pressureHooks.length === 0
             ? { ready: true }
-            : await Promise.race([
-                this.checkPressure(pending.request),
-                pending.pressureInterrupted.then(() => undefined),
-              ]);
+            : await this.checkPressureBounded(pending);
         } catch (error) {
           pressure = {
             ready: false,
             retryAfterMs: 1_000,
-            reason: error instanceof Error ? `pressure_hook_error:${error.message}` : "pressure_hook_error",
+            reason: "pressure_hook_error",
           };
         }
         if (this.queue[0] !== pending) continue;
@@ -219,14 +228,7 @@ export class ConcurrencyScheduler {
         }
         this.queue.shift();
         pending.removeAbortListener?.();
-        this.active.set(pending.request.id, pending.request);
-        let released = false;
-        pending.resolve(() => {
-          if (released) return;
-          released = true;
-          this.active.delete(pending.request.id);
-          void this.drain();
-        });
+        pending.resolve(this.activate(pending.request));
       }
     } finally {
       this.draining = false;
@@ -239,6 +241,25 @@ export class ConcurrencyScheduler {
       if (!decision.ready) return decision;
     }
     return { ready: true };
+  }
+
+  private async checkPressureBounded(pending: PendingRequest): Promise<PressureDecision | undefined> {
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<PressureDecision>((resolve) => {
+      timer = setTimeout(
+        () => resolve({ ready: false, reason: "pressure_hook_timeout" }),
+        this.policy.pressureHookTimeoutMs,
+      );
+    });
+    try {
+      return await Promise.race([
+        this.checkPressure(pending.request),
+        pending.pressureInterrupted.then(() => undefined),
+        timeout,
+      ]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
 
   private scheduleDrain(delayMs: number): void {
@@ -273,9 +294,20 @@ export class ConcurrencyScheduler {
   }
 
   private countBy(key: keyof ConcurrencyScope): Record<string, number> {
-    const counts: Record<string, number> = {};
+    const counts: Record<string, number> = Object.create(null) as Record<string, number>;
     for (const request of this.active.values()) counts[request[key]] = (counts[request[key]] ?? 0) + 1;
     return counts;
+  }
+
+  private activate(request: AdmissionRequest): () => void {
+    this.active.set(request.id, request);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.active.delete(request.id);
+      void this.drain();
+    };
   }
 }
 

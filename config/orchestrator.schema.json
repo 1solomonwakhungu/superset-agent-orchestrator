@@ -63,6 +63,11 @@
           "minimum": 0,
           "maximum": 10000
         },
+        "pressureHookTimeoutMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
         "overload": {
           "type": "string",
           "enum": ["queue", "reject"]

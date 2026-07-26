@@ -69,6 +69,22 @@ test("holds one permit across retries and complete batch operations", async () =
   assert.equal(scheduler.snapshot().active, 0);
 });
 
+test("preserves FIFO order under sustained contention", async () => {
+  const scheduler = new ConcurrencyScheduler({ global: 1, maxQueued: 100 });
+  const order: number[] = [];
+  await Promise.all(Array.from({ length: 100 }, (_, index) => scheduler.run({
+    ...base,
+    id: `stress-${index}`,
+    workspaceId: `workspace-${index}`,
+  }, async () => {
+    order.push(index);
+    await new Promise((resolve) => setImmediate(resolve));
+  })));
+  assert.deepEqual(order, Array.from({ length: 100 }, (_, index) => index));
+  assert.equal(scheduler.snapshot().active, 0);
+  assert.equal(scheduler.snapshot().queued.length, 0);
+});
+
 test("cancellation removes queued work and releases running capacity", async () => {
   const scheduler = new ConcurrencyScheduler({ global: 1 });
   const runningAbort = new AbortController();
@@ -205,6 +221,25 @@ test("cancellation unblocks the queue when a pressure hook does not settle", asy
   release();
 });
 
+test("a non-settling pressure hook times out with a structural reason", async () => {
+  const scheduler = new ConcurrencyScheduler(
+    { overload: "reject", pressureHookTimeoutMs: 5 },
+    [() => new Promise(() => undefined)],
+  );
+  await assert.rejects(
+    scheduler.acquire(base),
+    (error: unknown) => error instanceof ConcurrencyError
+      && error.detail.limits?.includes("pressure_hook_timeout") === true,
+  );
+});
+
+test("snapshot counts arbitrary scope identifiers safely", async () => {
+  const scheduler = new ConcurrencyScheduler();
+  const release = await scheduler.acquire({ ...base, hostId: "__proto__" });
+  assert.equal(scheduler.snapshot().activeByHost.__proto__, 1);
+  release();
+});
+
 test("agent adapter holds capacity until terminal status, including after cancellation", async () => {
   const scheduler = new ConcurrencyScheduler({ global: 1 });
   const delegate = new FakeAgentAdapter([
@@ -228,9 +263,8 @@ test("agent adapter holds capacity until terminal status, including after cancel
   const second = await secondPromise;
   assert.equal(delegate.launches.length, 2);
   await adapter.cancel(second, "operator request");
-  assert.equal(scheduler.snapshot().active, 1);
-  assert.equal((await adapter.status(second)).status, "cancelled");
   assert.equal(scheduler.snapshot().active, 0);
+  assert.equal((await adapter.status(second)).status, "cancelled");
 });
 
 test("retains an indeterminate launch permit until lookup resolves the outcome", async () => {
@@ -301,6 +335,60 @@ test("recovered running retries reacquire capacity without duplicate permits", a
   (await queued)();
 });
 
+test("recovery reserves capacity before a delayed backend lookup", async () => {
+  const scheduler = new ConcurrencyScheduler({ global: 1 });
+  const delegate = new FakeAgentAdapter([
+    { statuses: ["running", "cancelled"], result: { status: "cancelled" } },
+  ]);
+  const handle = await delegate.launch({ idempotencyKey: "recovered", prompt: "first", workspacePath: "/first" });
+  const lookup = deferred();
+  const find = delegate.findByIdempotencyKey.bind(delegate);
+  delegate.findByIdempotencyKey = async (key) => {
+    await lookup.promise;
+    return find(key);
+  };
+  const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => base, () => base);
+  const recovery = adapter.findByIdempotencyKey("recovered");
+  const fresh = scheduler.acquire({ ...base, id: "fresh", workspaceId: "fresh" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(scheduler.snapshot().active, 1);
+  assert.equal(scheduler.snapshot().queued[0]?.id, "fresh");
+  lookup.resolve();
+  assert.deepEqual(await recovery, handle);
+  await adapter.cancel(handle);
+  (await fresh)();
+});
+
+test("recovery accounts existing runs without deadlocking above the configured limit", async () => {
+  const scheduler = new ConcurrencyScheduler({ global: 1 });
+  const delegate = new FakeAgentAdapter([
+    { statuses: ["running", "cancelled"], result: { status: "cancelled" } },
+    { statuses: ["running", "cancelled"], result: { status: "cancelled" } },
+  ]);
+  const one = await delegate.launch({ idempotencyKey: "one", prompt: "one", workspacePath: "/one" });
+  const two = await delegate.launch({ idempotencyKey: "two", prompt: "two", workspacePath: "/two" });
+  const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => base, () => base);
+  assert.deepEqual(await adapter.findByIdempotencyKey("one"), one);
+  assert.deepEqual(await adapter.findByIdempotencyKey("two"), two);
+  assert.equal(scheduler.snapshot().active, 2);
+  await adapter.cancel(one);
+  await adapter.cancel(two);
+});
+
+test("rejects a recovered run ID bound to a different idempotency key", async () => {
+  const scheduler = new ConcurrencyScheduler({ global: 2 });
+  const delegate = new FakeAgentAdapter([
+    { statuses: ["running", "cancelled"], result: { status: "cancelled" } },
+  ]);
+  const handle = await delegate.launch({ idempotencyKey: "one", prompt: "one", workspacePath: "/one" });
+  const find = delegate.findByIdempotencyKey.bind(delegate);
+  delegate.findByIdempotencyKey = async (key) => key === "two" ? handle : find(key);
+  const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => base, () => base);
+  assert.deepEqual(await adapter.findByIdempotencyKey("one"), handle);
+  await assert.rejects(adapter.findByIdempotencyKey("two"), /another idempotency key/);
+  await adapter.cancel(handle);
+});
+
 test("does not consume capacity for recovered terminal runs", async () => {
   const scheduler = new ConcurrencyScheduler({ global: 1 });
   const delegate = new FakeAgentAdapter([
@@ -313,7 +401,7 @@ test("does not consume capacity for recovered terminal runs", async () => {
   assert.equal(scheduler.snapshot().active, 0);
 });
 
-test("recovery releases capacity when a queued run becomes terminal", async () => {
+test("recovery retains over-limit capacity until the run becomes terminal", async () => {
   const scheduler = new ConcurrencyScheduler({ global: 1 });
   const delegate = new FakeAgentAdapter([
     { statuses: ["running", "succeeded"], result: { status: "succeeded", output: "complete" } },
@@ -329,11 +417,12 @@ test("recovery releases capacity when a queued run becomes terminal", async () =
   const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => scope, () => scope);
   const recovery = adapter.findByIdempotencyKey("recovered");
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(scheduler.snapshot().queued[0]?.id, "recovered");
+  assert.equal(scheduler.snapshot().active, 2);
 
-  assert.equal((await delegate.status(handle)).status, "running");
   blocker();
   assert.deepEqual(await recovery, handle);
+  assert.equal(scheduler.snapshot().active, 1);
+  assert.equal((await adapter.status(handle)).status, "succeeded");
   assert.equal(scheduler.snapshot().active, 0);
 });
 
