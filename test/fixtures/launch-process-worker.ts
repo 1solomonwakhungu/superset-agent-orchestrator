@@ -4,6 +4,7 @@ import { LaunchService, type AsynchronousLaunchRequest, type LaunchBoundary } fr
 import { DurableStore } from "../../src/store.js";
 
 const [mode, statePath, providerPath, boundary] = process.argv.slice(2) as [string, string, string, LaunchBoundary?];
+const workspacePath = "/tmp/per-348-process-fixture";
 
 const request: AsynchronousLaunchRequest = {
   idempotencyKey: "per-348-process-death",
@@ -12,6 +13,13 @@ const request: AsynchronousLaunchRequest = {
   attribution: { agent: "synthetic", task: "process-death" },
   prompt: "synthetic",
   workspaceId: "fixture",
+};
+
+const authorizer = {
+  authorize: async (workspaceId: string) => ({
+    workspaceId, projectId: "project-per-348", canonicalPath: workspacePath,
+    revalidate: async () => undefined,
+  }),
 };
 
 async function existingRun(): Promise<RunHandle | undefined> {
@@ -42,13 +50,13 @@ const adapter: AgentAdapter = {
 const crash = (current: LaunchBoundary): void => {
   if (current === boundary) process.kill(process.pid, "SIGKILL");
 };
-const authorizer = {
-  authorize: async () => ({
-    workspaceId: "fixture", projectId: "project", canonicalPath: "/tmp/per-348-process-fixture",
-    revalidate: async () => undefined,
-  }),
-};
-const service = new LaunchService(new DurableStore(statePath, undefined, undefined, undefined, undefined, 2_000), adapter, authorizer, () => new Date(), crash);
+const service = new LaunchService(
+  new DurableStore(statePath, undefined, undefined, undefined, 2_000),
+  adapter,
+  authorizer,
+  () => new Date(),
+  crash,
+);
 
 if (mode === "crash") await service.launch(request);
 else if (mode === "recover") await service.dispatchPending();

@@ -108,9 +108,9 @@ async function main(): Promise<void> {
     lifecycleSweep = lifecycle.enforceDeadlines().then(async (expired) => {
       await lifecycle.reconcileCancellations();
       await lifecycle.reconcileTimedOutResults();
-      if (expired.length > 0) console.error(`Deadlines enforced: ${JSON.stringify(expired)}`);
+      if (expired.length > 0) console.error(`Deadlines enforced: ${JSON.stringify(store.redactValue(expired))}`);
     }).catch((error: unknown) => {
-      console.error("Lifecycle enforcement failed:", error);
+      console.error("Lifecycle enforcement failed:", store.safeError(error));
     }).finally(() => {
       lifecycleSweep = undefined;
     });
