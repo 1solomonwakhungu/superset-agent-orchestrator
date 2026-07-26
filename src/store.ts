@@ -258,15 +258,15 @@ export interface ReconciliationSummary {
   reconciledAt: string;
 }
 
-const attributionSchema = z.object({ agent: z.string().min(1), task: z.string().min(1) }).strict();
-const sessionSchema = z.object({
+const attributionSchema = z.strictObject({ agent: z.string().min(1), task: z.string().min(1) });
+const sessionSchema = z.strictObject({
   id: z.string().min(1), clientId: z.string().min(1), createdAt: z.iso.datetime(), lastSeenAt: z.iso.datetime(),
-}).strict();
-const batchSchema = z.object({
+});
+const batchSchema = z.strictObject({
   id: z.string().min(1), name: z.string().min(1), sessionId: z.string().min(1),
   createdAt: z.iso.datetime(), updatedAt: z.iso.datetime(), idempotencyKey: z.string().min(1).optional(),
-  clientId: z.string().min(1).optional(), requestFingerprint: z.string().min(1).optional(),
-}).strict();
+  clientId: z.string().min(1).optional(), requestFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+});
 const workerStatusSchema = z.enum([
   "requested", "running", "canceling", "succeeded", "failed", "canceled", "unknown_outcome",
 ]);
@@ -284,7 +284,7 @@ const STOP_REASONS_BY_STATUS = {
   canceled: new Set(["user_requested", "orchestrator_shutdown", "superseded", "policy_revoked"]),
 } as const;
 const CANCELLATION_REASONS: ReadonlySet<string> = STOP_REASONS_BY_STATUS.canceled;
-const workerSchema = z.object({
+const workerSchema = z.strictObject({
   id: z.string().min(1), batchId: z.string().min(1), sessionId: z.string().min(1),
   pid: z.number().int().positive().optional(),
   processStartedAt: z.string().min(1).optional(),
@@ -313,39 +313,39 @@ const workerSchema = z.object({
     context.addIssue({ code: "custom", message: `${worker.status} cannot use stop reason ${JSON.stringify(worker.stopReason)}` });
   }
 });
-const diagnosticSchema = z.object({
+const diagnosticSchema = z.strictObject({
   id: z.string().min(1), kind: z.enum(["orphan", "unknown_outcome", "missing_result"]),
   workerId: z.string().min(1), message: z.string().min(1), detectedAt: z.iso.datetime(),
-}).strict();
-const assignmentSchema = z.object({
-  id: z.string().min(1), idempotencyKey: z.string().min(1), requestFingerprint: z.string().min(1),
+});
+const assignmentSchema = z.strictObject({
+  id: z.string().min(1), idempotencyKey: z.string().min(1), requestFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   batchId: z.string().min(1), sessionId: z.string().min(1),
   status: z.enum(["accepted", "launching", "launched", "failed"]), attribution: attributionSchema,
   prompt: z.string().min(1), workspaceId: z.string().min(1).optional(), workspacePath: z.string().min(1),
   attemptId: z.string().min(1).optional(), attempt: z.number().int().positive().optional(), acceptedAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(), runId: z.string().min(1).optional(), error: z.string().min(1).optional(),
   errorCode: z.string().min(1).optional(),
-}).strict();
+});
 const resultClaimSchema = z.object({
   status: z.enum(["succeeded", "failed", "cancelled", "stopped_without_result", "malformed"]),
   completeness: z.enum(["complete", "empty", "partial", "missing", "malformed"]),
   output: z.string().optional(), error: z.string().min(1).optional(), retryable: z.boolean().optional(),
   stopReason: z.string().min(1).optional(),
-  resume: z.object({ adapter: z.string().min(1), token: z.string().min(1) }).strict().optional(),
-}).strict();
-const capturedResultSchema = z.object({
+  resume: z.strictObject({ adapter: z.string().min(1), token: z.string().min(1) }).optional(),
+});
+const capturedResultSchema = z.strictObject({
   deliveryId: z.string().min(1), deliveryFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   assignmentId: z.string().min(1), batchId: z.string().min(1), sessionId: z.string().min(1),
   workspaceId: z.string().min(1), workspacePath: z.string().min(1), attemptId: z.string().min(1),
   attempt: z.number().int().positive(), runId: z.string().min(1), attribution: attributionSchema,
   claim: resultClaimSchema, verifiedArtifacts: z.tuple([]), capturedAt: z.iso.datetime(),
-}).strict();
-const auditEventSchema = z.object({
+});
+const auditEventSchema = z.strictObject({
   id: z.string().min(1), assignmentId: z.string().min(1),
   type: z.enum(["launch_accepted", "launch_reserved", "execution_started", "launch_failed"]),
   occurredAt: z.iso.datetime(), runId: z.string().min(1).optional(), error: z.string().min(1).optional(),
   errorCode: z.string().min(1).optional(),
-}).strict();
+});
 const securityAuditEventSchema = z.object({
   id: z.string().min(1), sequence: z.number().int().positive(), occurredAt: z.iso.datetime(),
   requesterId: z.string().min(1),
@@ -355,7 +355,7 @@ const securityAuditEventSchema = z.object({
   assignmentId: z.string().min(1).optional(),
   previousEventHash: z.string().regex(/^[a-f0-9]{64}$/), eventHash: z.string().regex(/^[a-f0-9]{64}$/),
 }).strict();
-const launchIntentSchema = z.object({
+const launchIntentSchema = z.strictObject({
   idempotencyKey: z.string().min(1), requestHash: z.string().regex(/^[a-f0-9]{64}$/),
   sessionId: z.string().min(1), batchId: z.string().min(1), workerId: z.string().min(1), workspaceId: z.string().min(1).optional(),
   attribution: attributionSchema,
@@ -367,7 +367,7 @@ const launchIntentSchema = z.object({
     context.addIssue({ code: "custom", message: "Bound launch intents require a run ID" });
   }
 });
-const stateSchema = z.object({
+const stateSchema = z.strictObject({
   version: z.literal(1), sessions: z.array(sessionSchema), batches: z.array(batchSchema),
   workers: z.array(workerSchema), diagnostics: z.array(diagnosticSchema),
   assignments: z.array(assignmentSchema).default([]), auditEvents: z.array(auditEventSchema).default([]),
@@ -399,34 +399,82 @@ const stateSchema = z.object({
     deliveries.add(result.deliveryId);
     attempts.add(result.attemptId);
   }
+  const sessionIds = new Set(state.sessions.map(({ id }) => id));
+  const batchById = new Map(state.batches.map((batch) => [batch.id, batch]));
+  const workerById = new Map(state.workers.map((worker) => [worker.id, worker]));
+  const assignmentById = new Map(state.assignments.map((assignment) => [assignment.id, assignment]));
+  const batchKeys = new Set<string>();
   for (const assignment of state.assignments.filter(({ workspaceId }) => workspaceId !== undefined)) {
     if (!state.securityAuditEvents.some((event) => event.assignmentId === assignment.id
       && event.reasonCode === "launch_accepted" && event.decision === "allowed")) {
       context.addIssue({ code: "custom", message: `Security-controlled assignment ${assignment.id} requires an acceptance audit event` });
     }
   }
-  const sessions = new Set(state.sessions.map(({ id }) => id));
-  const batches = new Map(state.batches.map((batch) => [batch.id, batch]));
-  const assignments = new Map(state.assignments.map((assignment) => [assignment.id, assignment]));
   for (const batch of state.batches) {
-    if (!sessions.has(batch.sessionId)) context.addIssue({ code: "custom", message: `Batch ${batch.id} references a missing session` });
+    if (!sessionIds.has(batch.sessionId)) context.addIssue({ code: "custom", message: `Batch ${batch.id} references an unknown session` });
+    if ((batch.clientId === undefined) !== (batch.requestFingerprint === undefined)
+      || (batch.idempotencyKey !== undefined && batch.clientId === undefined)) {
+      context.addIssue({ code: "custom", message: `Batch ${batch.id} has an incomplete idempotency identity` });
+    }
+    if (batch.idempotencyKey !== undefined && batch.clientId !== undefined) {
+      const key = `${batch.clientId}\0${batch.idempotencyKey}`;
+      if (batchKeys.has(key)) context.addIssue({ code: "custom", message: `Duplicate batch idempotency identity: ${batch.clientId}/${batch.idempotencyKey}` });
+      batchKeys.add(key);
+    }
+  }
+  for (const worker of state.workers) {
+    const batch = batchById.get(worker.batchId);
+    const hasSession = sessionIds.has(worker.sessionId);
+    // Fully orphaned historical workers remain recoverable. Partial or
+    // contradictory relationships are corruption rather than recovery state.
+    if ((batch === undefined) !== !hasSession || (batch !== undefined && batch.sessionId !== worker.sessionId)) {
+      context.addIssue({ code: "custom", message: `Worker ${worker.id} has contradictory batch or session identity` });
+    }
+  }
+  for (const diagnostic of state.diagnostics) {
+    if (!workerById.has(diagnostic.workerId) || diagnostic.id !== `${diagnostic.kind}:${diagnostic.workerId}`) {
+      context.addIssue({ code: "custom", message: `Diagnostic ${diagnostic.id} has invalid worker identity` });
+    }
   }
   for (const assignment of state.assignments) {
-    const batch = batches.get(assignment.batchId);
-    if (!sessions.has(assignment.sessionId) || batch === undefined) {
+    const batch = batchById.get(assignment.batchId);
+    if (!sessionIds.has(assignment.sessionId) || batch === undefined) {
       context.addIssue({ code: "custom", message: `Assignment ${assignment.id} has inconsistent durable identity` });
     }
   }
   for (const event of state.auditEvents) {
-    if (!assignments.has(event.assignmentId)) context.addIssue({ code: "custom", message: `Audit event ${event.id} references a missing assignment` });
+    const assignment = assignmentById.get(event.assignmentId);
+    if (assignment === undefined) context.addIssue({ code: "custom", message: `Audit event ${event.id} references an unknown assignment` });
+    if (event.type === "execution_started" && (event.runId === undefined || event.runId !== assignment?.runId)) {
+      context.addIssue({ code: "custom", message: `Audit event ${event.id} has invalid run identity` });
+    }
   }
-  for (const result of state.capturedResults ?? []) {
-    const assignment = assignments.get(result.assignmentId);
-    if (assignment === undefined || result.batchId !== assignment.batchId || result.sessionId !== assignment.sessionId
-      || result.workspaceId !== assignment.workspaceId || result.workspacePath !== assignment.workspacePath
-      || result.attemptId !== assignment.attemptId || result.attempt !== assignment.attempt
-      || result.runId !== assignment.runId) {
-      context.addIssue({ code: "custom", message: `Captured result ${result.deliveryId} has inconsistent durable identity` });
+  for (const intent of state.launchIntents) {
+    const batch = batchById.get(intent.batchId);
+    const worker = workerById.get(intent.workerId);
+    // Reservations may precede durable session creation, and historical bound
+    // intents may predate workers. Once either relation exists, all identities
+    // must agree rather than partially linking unrelated durable records.
+    if ((batch !== undefined && (!sessionIds.has(intent.sessionId) || batch.sessionId !== intent.sessionId))
+      || (worker !== undefined && (batch === undefined || worker.batchId !== intent.batchId || worker.sessionId !== intent.sessionId
+        || worker.attribution.agent !== intent.attribution.agent || worker.attribution.task !== intent.attribution.task))) {
+      context.addIssue({ code: "custom", message: `Launch intent ${intent.idempotencyKey} has invalid durable identity` });
+    }
+  }
+  for (const result of state.capturedResults) {
+    const assignment = assignmentById.get(result.assignmentId);
+    if (assignment === undefined
+      || assignment.status !== "launched"
+      || result.batchId !== assignment.batchId
+      || result.sessionId !== assignment.sessionId
+      || result.runId !== assignment.runId
+      || result.workspaceId !== assignment.workspaceId
+      || result.workspacePath !== assignment.workspacePath
+      || result.attemptId !== assignment.attemptId
+      || result.attempt !== assignment.attempt
+      || result.attribution.agent !== assignment.attribution.agent
+      || result.attribution.task !== assignment.attribution.task) {
+      context.addIssue({ code: "custom", message: `Captured result ${result.deliveryId} does not match its assignment` });
     }
   }
 });
@@ -456,11 +504,12 @@ export class DurableStore {
 
   constructor(
     private readonly path: string,
-    private readonly isProcessAlive: (pid: number, processStartedAt?: string) => boolean = DurableStore.isProcessAlive.bind(DurableStore),
+    private readonly isProcessAlive: (pid: number, processStartedAt?: string) => boolean = (...args) => DurableStore.isProcessAlive(...args),
     private readonly observeQuery: (measurement: QueryMeasurement) => void = () => undefined,
     private readonly now: () => number = performance.now.bind(performance),
     redactionOrDispatchLockStaleMs: RedactionPolicy | number = new RedactionPolicy(),
     dispatchLockStaleMs = 10_000,
+    private readonly persistOverride?: (state: DurableState) => Promise<void>,
   ) {
     this.redaction = redactionOrDispatchLockStaleMs instanceof RedactionPolicy
       ? redactionOrDispatchLockStaleMs
@@ -1079,26 +1128,33 @@ export class DurableStore {
   ): Promise<LaunchIntent> {
     return this.withLock(async () => {
       await this.load();
-      const intent = this.state.launchIntents?.find((candidate) => candidate.idempotencyKey === idempotencyKey);
+      const nextState = structuredClone(this.state);
+      const intent = nextState.launchIntents?.find((candidate) => candidate.idempotencyKey === idempotencyKey);
       if (intent === undefined) throw new Error(`Unknown launch idempotency key: ${idempotencyKey}`);
-      if (intent.status === "bound" && (status !== "bound" || options.runId !== undefined && options.runId !== intent.runId)) {
-        throw new Error("A bound launch cannot be rebound or regressed");
+      const transitions: Record<LaunchStatus, readonly LaunchStatus[]> = {
+        reserved: ["reserved", "dispatching", "unknown_outcome"],
+        dispatching: ["dispatching", "unknown_outcome", "bound"],
+        unknown_outcome: ["unknown_outcome", "bound"],
+        bound: ["bound"],
+      };
+      if (!transitions[intent.status].includes(status)) {
+        throw new Error(`Invalid launch transition: ${intent.status} -> ${status}`);
       }
-      const previousState = structuredClone(this.state);
-      try {
-        intent.status = status;
-        intent.updatedAt = now.toISOString();
-        if (options.runId !== undefined) intent.runId = options.runId;
-        if (options.diagnostic !== undefined) intent.diagnostic = this.redaction.text(options.diagnostic);
-        if (options.securityAudit !== undefined) this.appendSecurityAuditToState(options.securityAudit, now);
-        await this.persist();
-      } catch (error) {
-        await this.load().catch(() => {
-          this.state = previousState;
-          this.rebuildIndexes();
-        });
-        throw error;
+      const updated = launchIntentSchema.parse({
+        ...intent,
+        status,
+        updatedAt: now.toISOString(),
+        ...(options.runId === undefined ? {} : { runId: options.runId }),
+        ...(options.diagnostic === undefined ? {} : { diagnostic: this.redaction.text(options.diagnostic) }),
+      });
+      if (intent.status === "bound" && updated.runId !== intent.runId) {
+        throw new Error("A bound launch cannot be rebound");
       }
+      Object.assign(intent, updated);
+      if (options.securityAudit !== undefined) this.appendSecurityAuditToState(options.securityAudit, now, nextState);
+      if (this.persistOverride === undefined) await this.persist(nextState);
+      else await this.persistOverride(nextState);
+      this.state = nextState;
       return structuredClone(intent);
     });
   }
@@ -1255,8 +1311,8 @@ export class DurableStore {
   }
 
   /** Detects any edit, deletion, or reordering of the persisted audit sequence. */
-  verifySecurityAuditChain(): SecurityAuditChainVerification {
-    const events = this.state.securityAuditEvents ?? [];
+  verifySecurityAuditChain(state: DurableState = this.state): SecurityAuditChainVerification {
+    const events = state.securityAuditEvents ?? [];
     let previousHash = GENESIS_AUDIT_HASH;
     for (const [index, event] of events.entries()) {
       const { eventHash, ...body } = event;
@@ -1266,7 +1322,7 @@ export class DurableStore {
       }
       previousHash = eventHash;
     }
-    const head = this.state.securityAuditHead;
+    const head = state.securityAuditHead;
     if ((events.length > 0 && head === undefined)
       || (head !== undefined && (head.sequence !== events.length || head.eventHash !== previousHash))) {
       return { valid: false, length: events.length, brokenAtSequence: events.length + 1 };
@@ -1274,8 +1330,8 @@ export class DurableStore {
     return { valid: true, length: events.length };
   }
 
-  private assertSecurityAuditChain(): void {
-    const verification = this.verifySecurityAuditChain();
+  private assertSecurityAuditChain(state: DurableState = this.state): void {
+    const verification = this.verifySecurityAuditChain(state);
     if (!verification.valid) {
       throw new SecurityError("INTEGRITY_FAILURE", `Security audit integrity failure at sequence ${verification.brokenAtSequence}`);
     }
@@ -1396,9 +1452,13 @@ export class DurableStore {
     });
   }
 
-  private appendSecurityAuditToState(input: SecurityAuditInput, now: Date): SecurityAuditEvent {
-    const audit = this.state.securityAuditEvents ??= [];
-    this.assertSecurityAuditChain();
+  private appendSecurityAuditToState(
+    input: SecurityAuditInput,
+    now: Date,
+    state: DurableState = this.state,
+  ): SecurityAuditEvent {
+    const audit = state.securityAuditEvents ??= [];
+    this.assertSecurityAuditChain(state);
     const previous = audit.at(-1);
     const body = {
       id: randomUUID(),
@@ -1418,7 +1478,7 @@ export class DurableStore {
     const event: SecurityAuditEvent = { ...body, eventHash: securityAuditEventHash(body) };
     securityAuditEventSchema.parse(event);
     audit.push(event);
-    this.state.securityAuditHead = { sequence: event.sequence, eventHash: event.eventHash };
+    state.securityAuditHead = { sequence: event.sequence, eventHash: event.eventHash };
     return event;
   }
 
@@ -1613,15 +1673,15 @@ export class DurableStore {
     }
   }
 
-  private async persist(): Promise<void> {
+  private async persist(state: DurableState = this.state): Promise<void> {
     await assertPrivateStatePath(this.path);
-    stateSchema.parse(this.state);
+    stateSchema.parse(state);
     await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
     preparePrivateDirectory(dirname(this.path));
     const temporaryPath = `${this.path}.${process.pid}.${randomUUID()}.tmp`;
     const file = await open(temporaryPath, "wx", 0o600);
     try {
-      await file.writeFile(`${JSON.stringify(this.state, null, 2)}\n`, "utf8");
+      await file.writeFile(`${JSON.stringify(state, null, 2)}\n`, "utf8");
       await file.sync();
     } finally {
       await file.close();
