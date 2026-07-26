@@ -453,6 +453,30 @@ test("retries recovery after a transient status failure without duplicating its 
   assert.equal(scheduler.snapshot().active, 0);
 });
 
+test("sequential recovery succeeds when terminal status releases its retained permit during lookup", async () => {
+  const scheduler = new ConcurrencyScheduler({ global: 1 });
+  const delegate = new FakeAgentAdapter([
+    { statuses: ["running", "succeeded"], result: { status: "succeeded", output: "recovered" } },
+  ]);
+  const handle = await delegate.launch({ idempotencyKey: "recovered", prompt: "first", workspacePath: "/first" });
+  const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => base, () => base);
+  assert.deepEqual(await adapter.findByIdempotencyKey("recovered"), handle);
+
+  const lookup = deferred();
+  const find = delegate.findByIdempotencyKey.bind(delegate);
+  delegate.findByIdempotencyKey = async (key) => {
+    await lookup.promise;
+    return find(key);
+  };
+  const recovery = adapter.findByIdempotencyKey("recovered");
+  assert.equal((await adapter.status(handle)).status, "succeeded");
+  assert.equal(scheduler.snapshot().active, 0);
+  lookup.resolve();
+
+  assert.deepEqual(await recovery, handle);
+  assert.equal(scheduler.snapshot().active, 0);
+});
+
 test("recovery reserves capacity before a delayed backend lookup", async () => {
   const scheduler = new ConcurrencyScheduler({ global: 1 });
   const delegate = new FakeAgentAdapter([
