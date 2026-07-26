@@ -31,45 +31,46 @@
   partial output with exact completeness.
 - Added MCP tools `batches_cancel`, `batches_wait`, `sessions_set_deadline`, and
   `deadlines_enforce`, plus a background deadline sweep.
-- Merged current `main` (`90cef0d`); the only conflict was additive `STATUS.md`
-  sections and both sides were kept.
-- Made offline verification deterministic: the live Superset smoke test now skips
-  only when the executable is genuinely absent (spawn `ENOENT`). A present but
-  broken, unhealthy, or malformed CLI still fails, and the run is mandatory when
-  `SUPERSET_ORCHESTRATOR_EXECUTABLE` is set or
-  `SUPERSET_ORCHESTRATOR_REQUIRE_LIVE_SMOKE=1`.
 - Kept real discovery schema coverage offline by recording sanitized Superset
   1.16.1 responses in `test/fixtures/`, replaying them through the real adapter
   against the same contract assertions, and pinning the real CLI key sets plus
   observed optional-field variation.
-- Verification: `npm run verify` passed 136/136 with the Superset CLI present and
-  135/136 with 1 declared skip and exit code 0 with the CLI absent from `PATH`;
-  focused lifecycle and race tests passed 33/33 across 10 consecutive runs;
-  `npm run check` and `git diff --check` passed.
-- Addressed all five PR review findings: atomic local cancellation, asynchronous
-  provider reconciliation, locked deadline rechecks, immediate all-error waits,
-  and the dedicated batch-cancellation response schema.
-- Final verification: `npm run verify` passed 143 tests with 1 expected live-CLI
-  skip; `npm run check`, schema generation, strict routing verification, and
-  `git diff --check` passed.
 - Independent review fixed published-schema/runtime drift for cancellation and
   wait, bounded and sanitized provider lifecycle calls, provider identity
   validation, single-flight background sweeps, parallel batch controls, and a
   production reconciliation path that retains results arriving after timeout.
-- Current verification: `npm run verify` passed 145 tests with 1 expected
-  live-CLI skip; focused lifecycle/MCP tests passed 42/42 across 10 runs (420
-  checks); typecheck, schema generation/diff, strict routing, and diff checks
-  passed.
 - Integrated signed quality-gate baseline `cbd44e1` and connected asynchronous
   launch acceptance/binding to lifecycle workers, including cancellation while
   provider launch is in flight. Added versioned deadline contracts, bounded
   provider abort coverage, limited batch cancellation concurrency, sequential
   reconciliation phases, protocol-identity errors, and pre-persist validation.
-- Post-integration verification: `npm ci` passed; `npm run check` passed 153/154
-  tests with 1 declared live smoke skip, 3/3 Python tests, schema no-diff, and
-  94.78% statement / 87.47% branch / 92.47% function coverage. Focused
-  launch/lifecycle/MCP tests passed 52/52 across 10 runs (520 checks), and
-  `git diff --check` passed.
+- Verifier hardening adds truthful launch-failure settlement, durable late-bound
+  stop handoff after deadline/cancellation, terminal settlement despite result
+  retrieval failure, runtime provider payload validation, bounded lifecycle
+  fan-out, restart-safe stop retry flags, and terminal deadline refusal.
+- Integrated merged PER-336 security hotfix `d0b57fe`; lifecycle projection files
+  now use fail-closed owner-only, no-follow, single-link validation and secure
+  atomic publication. Final local gates passed 197/198 tests with one declared
+  live smoke skip, Python 3/3, schema no-diff, and 93.36% statement / 87.13%
+  branch / 87.39% function coverage. Focused lifecycle/result tests passed 78/78
+  across 10 runs (780 checks).
+- Follow-up verification hardened terminal-result retries across cancellation,
+  deadline, restart, replica-lag, and concurrent-reconciler races; fenced stop
+  delivery through crash and unsupported-response races; and bounded durable
+  observation history and deadline sweeps with explicit `has_more` continuation.
+- Follow-up focused lifecycle/MCP tests passed 72/72. Full pre-commit verification
+  passed 299 runnable Node tests with 1 intentional skip, coverage, and 5 Python
+  tests with 1 intentional skip; clean-commit verification follows.
+- PR #66 follow-up integrated current `main`, retained both state-path security
+  layers, and keeps terminal reconciliation pending when the provider result is
+  temporarily absent. Focused lifecycle, launch, and security tests passed
+  111/111; the complete quality gate passed 343/344 TypeScript tests with one
+  declared live smoke skip, 6 Python tests with one model-dependent skip, schema
+  no-diff, provenance, and research verification.
+- Final review hardening also makes normal cancellation result failures retryable,
+  reports a deadline that wins the delivery-claim race from durable state, and
+  records `launch_failed` evidence when local cancellation beats stale dispatch.
+
 ## PER-351 performance and load validation
 
 - Added reproducible 100-session fake-backend and staged 30-agent controlled-load
