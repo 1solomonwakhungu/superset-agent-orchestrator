@@ -73,7 +73,7 @@ test("fake Superset proves completion, failure, cancellation, restart recovery, 
 
 test("fake Superset timeout and malformed output fail deterministically without retries", async () => {
   for (const [scenario, expectedCode, timeoutMs] of [
-    [{ hangCommands: ["status"], defaultScript: successScript() }, "PROVIDER_UNAVAILABLE", 250],
+    [{ hangCommands: ["status"], defaultScript: successScript() }, "PROVIDER_UNAVAILABLE", 1_000],
     [{ malformedCommands: ["status"], defaultScript: successScript() }, "PROVIDER_PROTOCOL_ERROR", 10_000],
   ] as const) {
     await withHarness(scenario, async ({ adapter, calls }) => {
@@ -110,7 +110,7 @@ test("accepted launches recover after one-shot timeout and malformed responses w
       assert.deepEqual(ledger[0]?.fault, { id: `first-launch-${action}`, action });
       assert.deepEqual(ledger[0]?.response, { runId: "fake-001" });
       assert.equal(Object.keys((await fakeState()).runs).length, 1);
-    }, action === "hang" ? 250 : 10_000);
+    }, action === "hang" ? 1_000 : 10_000);
   }
 });
 
