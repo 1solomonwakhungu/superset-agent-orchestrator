@@ -220,10 +220,12 @@ export class OrchestratorStorage {
       throw new Error(`Unsupported schema version ${targetVersion}`);
     }
     this.database.exec("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL) STRICT;");
-    const current = this.schemaVersion();
-    if (current > targetVersion) throw new Error("Use rollback() to move to an older schema");
-    for (const migration of migrations.filter(({ version }) => version > current && version <= targetVersion)) {
+    if (this.schemaVersion() > targetVersion) throw new Error("Use rollback() to move to an older schema");
+    for (const migration of migrations.filter(({ version }) => version <= targetVersion)) {
       this.transaction(() => {
+        // Re-read under the write lock: another process may have migrated while
+        // this connection waited to begin its transaction.
+        if (this.schemaVersion() >= migration.version) return;
         this.database.exec(migration.up);
         this.database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
           .run(migration.version, new Date().toISOString());
@@ -465,6 +467,11 @@ export class OrchestratorStorage {
   workspaceLeaseStatus(workspaceId: string): WorkspaceLeaseStatus | null {
     const row = this.database.prepare(`SELECT ${LEASE_COLUMNS} FROM workspace_leases
       WHERE workspace_id = ? ORDER BY generation DESC LIMIT 1`).get(workspaceId);
+    return (row as WorkspaceLeaseStatus | undefined) ?? null;
+  }
+
+  workspaceLeaseById(leaseId: string): WorkspaceLeaseStatus | null {
+    const row = this.database.prepare(`SELECT ${LEASE_COLUMNS} FROM workspace_leases WHERE id = ?`).get(leaseId);
     return (row as WorkspaceLeaseStatus | undefined) ?? null;
   }
 

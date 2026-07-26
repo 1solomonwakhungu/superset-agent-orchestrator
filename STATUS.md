@@ -19,6 +19,13 @@
 - Additional verification: configuration contract 3/3 and strict local-routing
   evidence verification passed. Whole-file Markdown lint remains blocked by
   pre-existing violations in historical README and status content.
+- Merge-readiness review removed 15 generated Python build/cache artifacts, made
+  concurrent migration startup recheck schema state under the write lock, and
+  prevented local PID evidence from retiring foreign-host leases. Quarantine
+  repair now verifies the durable lease, OS lock, host, PID, and start token itself.
+- Final local verification: build, typecheck, schema generation, configuration
+  contract 3/3, routing contract, and diff checks pass; repository tests pass
+  110/111, with only the live Superset smoke test blocked by the absent executable.
 - Outstanding for writer launch: canonical workspace identity resolution
   (`WORKSPACE_IDENTITY_CHANGED`), read-only sandbox sentinel enforcement, and
   process-group descendant reconciliation. Writer launch stays disabled.

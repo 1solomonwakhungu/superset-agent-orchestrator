@@ -1,2 +1,0 @@
-[console_scripts]
-workspace-safety = superset_agent_orchestrator.workspace_safety:main

@@ -6,7 +6,6 @@ import test from "node:test";
 import {
   LeaseFencedError,
   LeaseRecoveryAmbiguousError,
-  LeaseStateCorruptError,
   OrchestratorStorage,
   WorkspaceWriterBusyError,
   type LeaseAuthority,
@@ -187,17 +186,43 @@ test("a live owner is quarantined rather than displaced, and repair is evidence-
     assert.throws(() => storage.heartbeatWriterLease(lease, 30_000, after(5_000)), LeaseFencedError);
     assert.throws(() => storage.releaseWriterLease(lease, after(5_000)), LeaseFencedError);
 
-    assert.throws(() => restarted.repairQuarantine(lease.leaseId, false, "operator", after(7_000)),
+    assert.throws(() => restarted.repairQuarantine(lease.leaseId, "operator", after(7_000)),
       LeaseRecoveryAmbiguousError);
     probe.running.delete(4_242);
-    restarted.repairQuarantine(lease.leaseId, true, "operator", after(7_000));
-    assert.throws(() => restarted.repairQuarantine(lease.leaseId, true, "operator", after(7_100)),
-      LeaseStateCorruptError);
+    restarted.repairQuarantine(lease.leaseId, "operator", after(7_000));
+    assert.throws(() => restarted.repairQuarantine(lease.leaseId, "operator", after(7_100)),
+      LeaseRecoveryAmbiguousError);
 
     assert.equal(restarted.acquireWriter({ workspaceId: "ws", ownerBatchId: "batch-2", ttlMs: 30_000 }).generation, 2);
     assert.deepEqual(storage.database.prepare(
       "SELECT event_type FROM events WHERE event_type IN ('lease_quarantined', 'lease_repaired') ORDER BY sequence")
       .all().map((row) => (row as { event_type: string }).event_type), ["lease_quarantined", "lease_repaired"]);
+  });
+});
+
+test("a foreign-host owner is never inferred absent from the local process table", async () => {
+  await withWorkspace(({ storage, probe, directory }) => {
+    probe.running.set(4_242, "different-local-process");
+    const owner = new WorkspaceSafetyTool(storage, {
+      lockDirectory: join(directory, "locks"), serverInstanceId: "server-a",
+      hostId: "remote-host", processProbe: probe,
+    });
+    const lease = owner.bindProcess(
+      owner.acquireWriter({ workspaceId: "ws", ownerBatchId: "batch-1", ttlMs: 1_000, now: acquiredAt }),
+      4_242, acquiredAt);
+    owner.close();
+
+    const restarted = new WorkspaceSafetyTool(storage, {
+      lockDirectory: join(directory, "locks"), serverInstanceId: "server-b",
+      hostId: "test-host", processProbe: probe,
+    });
+    assert.equal(restarted.inspect("ws", after(5_000)).ownerProcess, "unverifiable");
+    assert.throws(() => restarted.recoverWorkspace("ws", "operator", after(5_000)),
+      LeaseRecoveryAmbiguousError);
+    assert.throws(() => restarted.repairQuarantine(lease.leaseId, "operator", after(6_000)),
+      LeaseRecoveryAmbiguousError);
+    assert.equal(storage.workspaceLeaseStatus("ws")?.state, "quarantined");
+    restarted.close();
   });
 });
 
