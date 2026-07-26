@@ -98,6 +98,7 @@ test("production MCP server exposes every provider error once without retries", 
   const cases = [
     [{ launchError: "rejected", defaultScript: successScript() }, "launch", "LAUNCH_REJECTED"],
     [{ cancelUnsupported: true, defaultScript: runningScript() }, "cancel", "CANCEL_UNSUPPORTED"],
+    [{ malformedCommands: ["cancel"], defaultScript: runningScript() }, "cancel", "PROVIDER_PROTOCOL_ERROR"],
     [{ malformedCommands: ["status"], defaultScript: successScript() }, "result", "PROVIDER_PROTOCOL_ERROR"],
     [{ hangCommands: ["status"], defaultScript: successScript() }, "result", "PROVIDER_UNAVAILABLE"],
   ] as const;

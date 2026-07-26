@@ -10,6 +10,9 @@
   response buffer after integrating current main.
 - Verification passed: focused fake-provider suite 15/15; full `npm run check`
   with 434 passing and one explicit live-smoke skip; race suite 10/10.
+- Resolved final review blockers by applying the configured provider timeout to
+  lifecycle cancellation and preserving adapter protocol-error classification;
+  focused lifecycle/MCP tests passed 75/75, followed by full checks and 10/10 races.
 
 ## PER-346 deadline claim serialization, 2026-07-26
 
