@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Worker } from "node:worker_threads";
 
 /**
  * Seeded generators for property-style tests. Every case is reproducible from
@@ -61,8 +62,16 @@ export async function withTemporaryDirectory(
   try {
     await run(directory);
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   }
+}
+
+export async function terminateWorkers(workers: readonly Worker[]): Promise<void> {
+  const results = await Promise.allSettled(workers.map(async (worker) => {
+    if (worker.threadId !== -1) await worker.terminate();
+  }));
+  const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+  if (failure !== undefined) throw failure.reason;
 }
 
 /** Clock that advances by a fixed step, so timestamps are ordered but fixed. */

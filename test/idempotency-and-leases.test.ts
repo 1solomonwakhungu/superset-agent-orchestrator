@@ -5,8 +5,8 @@ import { Worker } from "node:worker_threads";
 import { FakeAgentAdapter } from "../src/fake-agent-adapter.js";
 import { LaunchService } from "../src/launch-service.js";
 import { OrchestratorStorage } from "../src/storage.js";
-import { BatchQueryError, DurableStore, type CapturedResult } from "../src/store.js";
-import { steadyClock, withTemporaryDirectory } from "./support/deterministic.js";
+import { DurableStore, type CapturedResult } from "../src/store.js";
+import { steadyClock, terminateWorkers, withTemporaryDirectory } from "./support/deterministic.js";
 
 /**
  * Concurrency and exclusivity. These are the focused race tests: they contend
@@ -24,19 +24,19 @@ const LATER = "2026-08-01T00:00:00.000Z";
 test("concurrent identical batch creations produce exactly one batch", async () => {
   await withTemporaryDirectory("orchestrator-race", async (directory) => {
     const path = join(directory, "state.json");
-    const stores = Array.from({ length: CONTENDERS }, () => new DurableStore(path));
     const assignments = [{ agent: "codex", task: "one" }, { agent: "opencode", task: "two" }];
+    const outcomes = await contendForBatchCreation(path, false);
 
-    const outcomes = await Promise.all(stores.map((store) =>
-      store.createBatch("contended", "client-1", assignments, "shared-key", new Date(AT))));
-
-    const created = outcomes.filter(({ duplicate }) => !duplicate);
+    assert.ok(outcomes.every((outcome) => outcome.ok));
+    const created = outcomes.filter((outcome) => outcome.ok && !outcome.duplicate);
     assert.equal(created.length, 1, "exactly one caller may create the batch");
-    const batchIds = new Set(outcomes.map(({ batch }) => batch.id));
+    const batchIds = new Set(outcomes.flatMap((outcome) => outcome.ok ? [outcome.batchId] : []));
     assert.equal(batchIds.size, 1, "every caller observes the same batch identity");
     for (const outcome of outcomes) {
+      assert.equal(outcome.ok, true);
+      if (!outcome.ok) continue;
       assert.deepEqual(
-        outcome.sessions.map(({ attribution }) => attribution),
+        outcome.attributions,
         assignments,
         "duplicates return the original attributed sessions",
       );
@@ -54,16 +54,11 @@ test("concurrent identical batch creations produce exactly one batch", async () 
 test("concurrent conflicting batch creations reject every loser without corrupting state", async () => {
   await withTemporaryDirectory("orchestrator-race", async (directory) => {
     const path = join(directory, "state.json");
-    const stores = Array.from({ length: CONTENDERS }, () => new DurableStore(path));
-
-    const outcomes = await Promise.allSettled(stores.map((store, index) =>
-      store.createBatch("contended", "client-1", [{ agent: "codex", task: `task-${index}` }], "shared-key", new Date(AT))));
-
-    const fulfilled = outcomes.filter((outcome) => outcome.status === "fulfilled");
+    const outcomes = await contendForBatchCreation(path, true);
+    const fulfilled = outcomes.filter((outcome) => outcome.ok);
     assert.equal(fulfilled.length, 1, "only the first distinct request may win the key");
-    for (const outcome of outcomes.filter((candidate) => candidate.status === "rejected")) {
-      const reason: unknown = outcome.reason;
-      assert.ok(reason instanceof BatchQueryError && reason.code === "idempotency_conflict");
+    for (const outcome of outcomes.filter((candidate) => !candidate.ok)) {
+      assert.equal(outcome.code, "idempotency_conflict");
     }
 
     const verifier = new DurableStore(path);
@@ -400,4 +395,63 @@ async function contendForWriterLease(
   });
   if (typeof outcome !== "string") throw new Error(outcome.error);
   return outcome;
+}
+
+type BatchContentionOutcome =
+  | { type: "result"; ok: true; duplicate: boolean; batchId: string; attributions: Array<{ agent: string; task: string }> }
+  | { type: "result"; ok: false; code?: string; error: string };
+
+async function contendForBatchCreation(path: string, conflicting: boolean): Promise<BatchContentionOutcome[]> {
+  const gate = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
+  const workers = Array.from({ length: CONTENDERS }, (_, index) => new Worker(
+    new URL("fixtures/concurrent-durable-store-worker.ts", import.meta.url),
+    { execArgv: ["--import", "tsx"], workerData: { path, index, conflicting, gate } },
+  ));
+  try {
+    const ready = workers.map((worker, index) => workerMessage(worker, index, "ready"));
+    const results = workers.map((worker, index) => workerMessage<BatchContentionOutcome>(worker, index, "result"));
+    await Promise.all(ready);
+    Atomics.store(new Int32Array(gate), 0, 1);
+    Atomics.notify(new Int32Array(gate), 0, CONTENDERS);
+    const outcomes = await Promise.all(results);
+    await Promise.all(workers.map((worker, index) => workerExit(worker, index)));
+    return outcomes;
+  } finally {
+    await terminateWorkers(workers);
+  }
+}
+
+function workerMessage<T extends { type: string }>(worker: Worker, index: number, type: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`batch contender ${index} timed out waiting for ${type}`)), 10_000);
+    const onMessage = (message: T): void => {
+      if (message.type !== type) return;
+      clearTimeout(timer);
+      worker.off("error", onError);
+      resolve(message);
+    };
+    const onError = (error: Error): void => {
+      clearTimeout(timer);
+      worker.off("message", onMessage);
+      reject(error);
+    };
+    worker.on("message", onMessage);
+    worker.once("error", onError);
+  });
+}
+
+function workerExit(worker: Worker, index: number): Promise<void> {
+  if (worker.threadId === -1) return Promise.resolve();
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`batch contender ${index} did not exit`)), 10_000);
+    worker.once("exit", (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolve();
+      else reject(new Error(`batch contender ${index} exited with code ${code}`));
+    });
+    worker.once("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+  });
 }

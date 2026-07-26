@@ -38,8 +38,8 @@ function validState(): JsonState {
       },
     ],
     diagnostics: [{
-      id: "orphan:worker-3", kind: "orphan", workerId: "worker-3",
-      message: "Worker references a missing durable batch", detectedAt: AT,
+      id: "unknown_outcome:worker-1", kind: "unknown_outcome", workerId: "worker-1",
+      message: "Worker outcome needs reconciliation", detectedAt: AT,
     }],
     assignments: [{
       id: "assignment-1", idempotencyKey: "key-1", requestFingerprint: HEX64,
@@ -135,9 +135,37 @@ const rejectedStates: Array<[string, unknown]> = [
     (first(state, "workers").attribution as JsonState).policyOverride = true;
   })],
   ["a batch referencing an unknown session", mutate((state) => { first(state, "batches").sessionId = "missing"; })],
+  ["a partial batch idempotency identity", mutate((state) => { delete first(state, "batches").requestFingerprint; })],
+  ["a malformed batch request fingerprint", mutate((state) => { first(state, "batches").requestFingerprint = "not-a-digest"; })],
+  ["a duplicate client-scoped batch idempotency identity", mutate((state) => {
+    array(state, "batches").push({ ...first(state, "batches"), id: "batch-2" });
+  })],
+  ["a worker contradicting its existing batch session", mutate((state) => {
+    array(state, "sessions").push({ ...first(state, "sessions"), id: "session-2" });
+    first(state, "workers").sessionId = "session-2";
+  })],
+  ["a worker with only a missing batch", mutate((state) => { first(state, "workers").batchId = "missing"; })],
+  ["a diagnostic referencing an unknown worker", mutate((state) => { first(state, "diagnostics").workerId = "missing"; })],
+  ["a diagnostic whose ID contradicts its identity", mutate((state) => { first(state, "diagnostics").id = "unknown_outcome:other"; })],
   ["an assignment referencing an unknown session", mutate((state) => { first(state, "assignments").sessionId = "missing"; })],
+  ["an assignment referencing another valid session", mutate((state) => {
+    array(state, "sessions").push({ ...first(state, "sessions"), id: "session-2" });
+    first(state, "assignments").sessionId = "session-2";
+  })],
+  ["a malformed assignment request fingerprint", mutate((state) => { first(state, "assignments").requestFingerprint = "not-a-digest"; })],
   ["an audit event referencing an unknown assignment", mutate((state) => { first(state, "auditEvents").assignmentId = "missing"; })],
+  ["an execution-start audit event contradicting its run", mutate((state) => {
+    Object.assign(first(state, "auditEvents"), { type: "execution_started", runId: "other-run" });
+  })],
+  ["a launch intent referencing an unknown batch", mutate((state) => { first(state, "launchIntents").batchId = "missing"; })],
+  ["a launch intent contradicting its worker attribution", mutate((state) => {
+    (first(state, "launchIntents").attribution as JsonState).task = "other-task";
+  })],
   ["a captured result contradicting its assignment", mutate((state) => { first(state, "capturedResults").runId = "other-run"; })],
+  ["a captured result contradicting assignment attribution", mutate((state) => {
+    (first(state, "capturedResults").attribution as JsonState).agent = "opencode";
+  })],
+  ["a captured result attached to a non-launched assignment", mutate((state) => { first(state, "assignments").status = "launching"; })],
 ];
 
 test("valid durable state loads with every record kind intact", async () => {
