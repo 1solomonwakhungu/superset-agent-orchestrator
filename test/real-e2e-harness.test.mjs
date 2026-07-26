@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { access, chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { setTimeout } from "node:timers";
 import { promisify } from "node:util";
 import { test } from "node:test";
 
