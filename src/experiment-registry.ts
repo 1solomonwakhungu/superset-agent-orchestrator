@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, open, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { realpath } from "node:fs/promises";
 import lockfile from "proper-lockfile";
 import { z } from "zod";
 
@@ -17,18 +18,30 @@ const jsonValue: z.ZodType<JsonValue> = z.lazy(() =>
     z.record(z.string(), jsonValue),
   ]),
 );
+const nonEmptyJsonObject = z
+  .record(z.string(), jsonValue)
+  .refine((value) => Object.keys(value).length > 0, "Must not be empty");
 
 export type JsonValue =
   string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
 export const experimentRecordSchema = z.strictObject({
   schemaVersion: z.literal(1),
-  experimentId: z.string().regex(/^exp_[0-9a-f-]{36}$/),
+  experimentId: z
+    .string()
+    .regex(
+      /^exp_[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    ),
   parentBaselineFingerprint: hash,
+  lineage: z.enum(["baseline", "disklm", "callforge", "fgguf"]),
   hypothesis: z.string().trim().min(1).max(1_000),
   config: z.record(z.string(), jsonValue),
   checkpointSha: checkpoint,
-  env: z.record(z.string(), jsonValue),
+  env: nonEmptyJsonObject,
+  hardware: nonEmptyJsonObject,
+  codeRevision: checkpoint,
+  tokenizerHash: hash,
+  chatTemplateHash: hash,
   corpusHash: hash,
   metrics: z.record(z.string(), z.number().finite()),
   artifactLinks: z.array(z.string().url()),
@@ -36,6 +49,22 @@ export const experimentRecordSchema = z.strictObject({
   timestamp: z.iso.datetime(),
   ownerAgent: z.string().trim().min(1).max(200),
 });
+
+export const baselineCatalogSchema = z.array(
+  z.strictObject({
+    fingerprint: hash,
+    config: z.record(z.string(), jsonValue),
+    checkpointSha: checkpoint,
+    env: nonEmptyJsonObject,
+    hardware: nonEmptyJsonObject,
+    codeRevision: checkpoint,
+    tokenizerHash: hash,
+    chatTemplateHash: hash,
+    corpusHash: hash,
+    metrics: z.record(z.string(), z.number().finite()),
+  }),
+);
+type BaselineRecord = z.infer<typeof baselineCatalogSchema>[number];
 
 export type ExperimentRecord = z.infer<typeof experimentRecordSchema>;
 export type ExperimentInput = Omit<
@@ -57,7 +86,7 @@ export type ExperimentQuery = Partial<
 >;
 
 export interface ExperimentDiff {
-  baselineExperimentId: string;
+  baselineFingerprint: string;
   experimentId: string;
   changes: Array<{
     path: string;
@@ -109,6 +138,9 @@ export class ExperimentRegistry {
 
   constructor(
     path: string,
+    private readonly baselineCatalogPath: string = resolve(
+      "minicpm5/baseline-fingerprints.json",
+    ),
     private readonly now: () => Date = () => new Date(),
     private readonly createId: () => string = randomUUID,
   ) {
@@ -124,6 +156,17 @@ export class ExperimentRegistry {
         experimentId: input.experimentId ?? `exp_${this.createId()}`,
         timestamp: input.timestamp ?? this.now().toISOString(),
       });
+      const baselines = await this.readBaselines();
+      if (
+        !baselines.some(
+          (baseline) =>
+            baseline.fingerprint === record.parentBaselineFingerprint,
+        )
+      ) {
+        throw new Error(
+          `Unknown baseline fingerprint: ${record.parentBaselineFingerprint}`,
+        );
+      }
       if (
         records.some(
           (existing) => existing.experimentId === record.experimentId,
@@ -162,26 +205,23 @@ export class ExperimentRegistry {
   }
 
   async diff(
-    baselineExperimentId: string,
+    baselineFingerprint: string,
     experimentId: string,
   ): Promise<ExperimentDiff> {
     return this.withLock(async () => {
       const records = await this.readUnlocked();
-      const baseline = records.find(
-        (record) => record.experimentId === baselineExperimentId,
+      const baseline = (await this.readBaselines()).find(
+        (record) => record.fingerprint === baselineFingerprint,
       );
       const experiment = records.find(
         (record) => record.experimentId === experimentId,
       );
       if (!baseline)
-        throw new Error(`Unknown baseline experiment: ${baselineExperimentId}`);
+        throw new Error(`Unknown baseline fingerprint: ${baselineFingerprint}`);
       if (!experiment) throw new Error(`Unknown experiment: ${experimentId}`);
-      if (
-        baseline.parentBaselineFingerprint !==
-        experiment.parentBaselineFingerprint
-      )
+      if (baseline.fingerprint !== experiment.parentBaselineFingerprint)
         throw new Error(
-          "Experiments reference different baseline fingerprints",
+          "Experiment references a different baseline fingerprint",
         );
       const changes: ExperimentDiff["changes"] = [];
       for (const key of [
@@ -189,12 +229,28 @@ export class ExperimentRegistry {
         "config",
         "corpusHash",
         "env",
+        "hardware",
+        "codeRevision",
+        "tokenizerHash",
+        "chatTemplateHash",
         "metrics",
       ] as const) {
         diffValues(`/${key}`, baseline[key], experiment[key], changes);
       }
-      return { baselineExperimentId, experimentId, changes };
+      return { baselineFingerprint, experimentId, changes };
     });
+  }
+
+  private async readBaselines(): Promise<BaselineRecord[]> {
+    try {
+      return baselineCatalogSchema.parse(
+        JSON.parse(await readFile(this.baselineCatalogPath, "utf8")),
+      );
+    } catch (error) {
+      throw new Error(`Invalid baseline catalog: ${this.baselineCatalogPath}`, {
+        cause: error,
+      });
+    }
   }
 
   private async readUnlocked(): Promise<ExperimentRecord[]> {
@@ -225,18 +281,18 @@ export class ExperimentRegistry {
     await mkdir(dirname(this.path), { recursive: true });
     const handle = await open(this.path, "a", 0o600);
     await handle.close();
-    const previous = queues.get(this.path) ?? Promise.resolve();
+    const canonicalPath = await realpath(this.path);
+    const previous = queues.get(canonicalPath) ?? Promise.resolve();
     let releaseQueue!: () => void;
     const queued = new Promise<void>((resolveQueue) => {
       releaseQueue = resolveQueue;
     });
     const tail = previous.then(() => queued);
-    queues.set(this.path, tail);
+    queues.set(canonicalPath, tail);
     await previous;
     let release: (() => Promise<void>) | undefined;
     try {
-      release = await lockfile.lock(this.path, {
-        realpath: false,
+      release = await lockfile.lock(canonicalPath, {
         stale: 10_000,
         update: 2_000,
         retries: { retries: 50, minTimeout: 20, maxTimeout: 100 },
@@ -245,7 +301,7 @@ export class ExperimentRegistry {
     } finally {
       if (release) await release();
       releaseQueue();
-      if (queues.get(this.path) === tail) queues.delete(this.path);
+      if (queues.get(canonicalPath) === tail) queues.delete(canonicalPath);
     }
   }
 }

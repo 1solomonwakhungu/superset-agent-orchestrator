@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
@@ -16,10 +16,15 @@ const HASH_B = "b".repeat(64);
 function input(overrides: Partial<ExperimentInput> = {}): ExperimentInput {
   return {
     parentBaselineFingerprint: HASH_A,
+    lineage: "disklm",
     hypothesis: "Page alignment reduces reads",
     config: { pages: 4 },
     checkpointSha: "c".repeat(40),
     env: { os: "linux" },
+    hardware: { cpu: "test" },
+    codeRevision: "d".repeat(40),
+    tokenizerHash: "e".repeat(64),
+    chatTemplateHash: "f".repeat(64),
     corpusHash: HASH_B,
     metrics: { accuracy: 0.75 },
     artifactLinks: ["https://example.test/result.json"],
@@ -29,11 +34,36 @@ function input(overrides: Partial<ExperimentInput> = {}): ExperimentInput {
   };
 }
 
-test("appends immutable records and queries by hypothesis or checkpoint", async () => {
+async function paths(): Promise<{ path: string; catalog: string }> {
   const directory = await mkdtemp(join(tmpdir(), "experiment-registry-"));
   const path = join(directory, "experiments.jsonl");
+  const catalog = join(directory, "baselines.json");
+  await writeFile(
+    catalog,
+    JSON.stringify([
+      {
+        fingerprint: HASH_A,
+        config: { pages: 4 },
+        checkpointSha: "c".repeat(40),
+        env: { os: "linux" },
+        hardware: { cpu: "test" },
+        codeRevision: "d".repeat(40),
+        tokenizerHash: "e".repeat(64),
+        chatTemplateHash: "f".repeat(64),
+        corpusHash: HASH_B,
+        metrics: { accuracy: 0.75 },
+      },
+    ]),
+    "utf8",
+  );
+  return { path, catalog };
+}
+
+test("appends immutable records and queries by hypothesis or checkpoint", async () => {
+  const { path, catalog } = await paths();
   const registry = new ExperimentRegistry(
     path,
+    catalog,
     () => new Date("2026-07-26T00:00:00Z"),
     () => "00000000-0000-4000-8000-000000000001",
   );
@@ -65,8 +95,8 @@ test("appends immutable records and queries by hypothesis or checkpoint", async 
 });
 
 test("diffs nested experiment data deterministically", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "experiment-registry-"));
-  const registry = new ExperimentRegistry(join(directory, "experiments.jsonl"));
+  const { path, catalog } = await paths();
+  const registry = new ExperimentRegistry(path, catalog);
   await registry.add(
     input({
       experimentId: "exp_00000000-0000-4000-8000-000000000001",
@@ -82,12 +112,8 @@ test("diffs nested experiment data deterministically", async () => {
     }),
   );
   assert.deepEqual(
-    (
-      await registry.diff(
-        "exp_00000000-0000-4000-8000-000000000001",
-        "exp_00000000-0000-4000-8000-000000000002",
-      )
-    ).changes,
+    (await registry.diff(HASH_A, "exp_00000000-0000-4000-8000-000000000002"))
+      .changes,
     [
       { path: "/config/pages", baseline: 4, experiment: 8 },
       { path: "/metrics/accuracy", baseline: 0.75, experiment: 0.8 },
@@ -95,9 +121,32 @@ test("diffs nested experiment data deterministically", async () => {
   );
 });
 
+test("rejects unknown baselines and path aliases share one lock", async () => {
+  const { path, catalog } = await paths();
+  await assert.rejects(
+    new ExperimentRegistry(path, catalog).add(
+      input({ parentBaselineFingerprint: "9".repeat(64) }),
+    ),
+    /Unknown baseline fingerprint/,
+  );
+  const alias = join(dirname(path), "alias.jsonl");
+  await symlink(path, alias);
+  const duplicate = input({
+    experimentId: "exp_00000000-0000-4000-8000-000000000009",
+  });
+  const results = await Promise.allSettled([
+    new ExperimentRegistry(path, catalog).add(duplicate),
+    new ExperimentRegistry(alias, catalog).add(duplicate),
+  ]);
+  assert.equal(
+    results.filter((result) => result.status === "fulfilled").length,
+    1,
+  );
+  assert.equal((await new ExperimentRegistry(path, catalog).query()).length, 1);
+});
+
 test("parallel processes do not lose records", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "experiment-registry-"));
-  const path = join(directory, "experiments.jsonl");
+  const { path, catalog } = await paths();
   const writer = fileURLToPath(
     new URL("fixtures/experiment-registry-writer.ts", import.meta.url),
   );
@@ -118,6 +167,7 @@ test("parallel processes do not lose records", async () => {
               "tsx",
               writer,
               path,
+              catalog,
               Buffer.from(JSON.stringify(record)).toString("base64url"),
             ],
             { stdio: ["ignore", "ignore", "pipe"] },
@@ -135,20 +185,22 @@ test("parallel processes do not lose records", async () => {
         }),
     ),
   );
-  assert.equal((await new ExperimentRegistry(path).query()).length, 12);
+  assert.equal(
+    (await new ExperimentRegistry(path, catalog).query()).length,
+    12,
+  );
 });
 
 test("fails closed on malformed and truncated existing records", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "experiment-registry-"));
-  const path = join(directory, "experiments.jsonl");
+  const { path, catalog } = await paths();
   await writeFile(path, '{"partial":true}', "utf8");
   await assert.rejects(
-    new ExperimentRegistry(path).query(),
+    new ExperimentRegistry(path, catalog).query(),
     /truncated final line/,
   );
   await writeFile(path, "{}\n", "utf8");
   await assert.rejects(
-    new ExperimentRegistry(path).add(input()),
+    new ExperimentRegistry(path, catalog).add(input()),
     /Invalid registry record on line 1/,
   );
   assert.equal(await readFile(path, "utf8"), "{}\n");
