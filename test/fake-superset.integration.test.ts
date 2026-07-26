@@ -88,7 +88,7 @@ test("fake Superset timeout and malformed output fail deterministically without 
 });
 
 test("caller cancellation terminates a hung fake Superset process before its provider timeout", async () => {
-  await withHarness({ hangCommands: ["status"], defaultScript: successScript() }, async ({ adapter }) => {
+  await withHarness({ hangCommands: ["status"], ignoreSigtermCommands: ["status"], defaultScript: successScript() }, async ({ adapter }) => {
     const handle = await adapter.launch(adapterRequest("abort", "abort", "/tmp/abort"));
     const controller = new AbortController();
     const reason = new Error("lifecycle deadline exceeded");
