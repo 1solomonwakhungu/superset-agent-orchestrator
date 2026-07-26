@@ -15,24 +15,32 @@ const terminate = (signal) => {
     if (error.code !== "ESRCH") throw error;
   }
 };
-let timedOut = false;
+let stopping = false;
+let exitCode;
+let escalation;
+const stop = (signal, code) => {
+  if (stopping) return;
+  stopping = true;
+  exitCode = code;
+  terminate(signal);
+  escalation = setTimeout(() => terminate("SIGKILL"), 1_000);
+};
 const timer = setTimeout(() => {
-  timedOut = true;
-  terminate("SIGTERM");
+  console.error(`race run exceeded ${timeoutMs}ms and was terminated`);
+  stop("SIGTERM", 124);
 }, timeoutMs);
-const escalation = setTimeout(() => {
-  if (timedOut && child.exitCode === null) terminate("SIGKILL");
-}, timeoutMs + 1_000);
+for (const [signal, code] of [["SIGINT", 130], ["SIGTERM", 143], ["SIGHUP", 129]]) {
+  process.once(signal, () => stop(signal, code));
+}
 
 child.once("error", (error) => {
   clearTimeout(timer);
-  clearTimeout(escalation);
+  if (escalation !== undefined) clearTimeout(escalation);
   console.error(error.message);
   process.exitCode = 1;
 });
 child.once("exit", (code, signal) => {
   clearTimeout(timer);
-  clearTimeout(escalation);
-  if (timedOut) console.error(`race run exceeded ${timeoutMs}ms and was terminated`);
-  process.exitCode = timedOut ? 124 : (code ?? (signal === null ? 1 : 128));
+  if (!stopping && escalation !== undefined) clearTimeout(escalation);
+  process.exitCode = exitCode ?? code ?? (signal === null ? 1 : 128);
 });
