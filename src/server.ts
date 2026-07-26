@@ -60,6 +60,11 @@ function contractError(code: ErrorCode, message: string) {
 }
 
 async function main(): Promise<void> {
+  if (process.platform !== "darwin" && process.platform !== "linux") {
+    throw new Error(
+      `Unsupported platform ${process.platform}; supported platforms are darwin and linux. See docs/compatibility.md.`,
+    );
+  }
   const reconciliation = await store.reconcile();
   console.error(`Startup reconciliation complete: ${JSON.stringify(reconciliation)}`);
   const reconciliationTimer = setInterval(() => {
