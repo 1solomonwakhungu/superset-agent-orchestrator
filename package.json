@@ -13,7 +13,8 @@
     }
   },
   "bin": {
-    "superset-agent-orchestrator": "dist/src/server.js"
+    "superset-agent-orchestrator": "dist/src/server.js",
+    "superset-agent-orchestrator-storage": "dist/src/storage-cli.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -24,6 +25,7 @@
     "schema": "npm run build && node scripts/generate-tool-schema.mjs",
     "schema:check": "npm run schema && git diff --exit-code -- config/mcp-tools.schema.json",
     "compatibility:probe": "node scripts/probe-compatibility.mjs",
+    "discovery:record": "npm run build && node scripts/record-discovery-fixture.mjs",
     "compatibility:report": "node scripts/generate-compatibility-report.mjs",
     "start": "node dist/src/server.js",
     "test": "tsx --test test/**/*.test.ts test/**/*.test.mjs",
