@@ -16,9 +16,11 @@ at 4,096, 32,768, and 131,072 tokens without committing generated filler.
 Determinism records have exact or semantic gold answers.
 
 `scripts/materialize_long_context.py` defines `counter-v1`. It emits exactly the
-declared number of space-delimited ASCII lexical tokens, ending with the sentinel
-and expected value. This portable count is not a model-tokenizer claim; each
-evaluation harness must separately record the rendered model-token count.
+declared number of space-delimited ASCII lexical tokens and inserts the sentinel
+and expected value at the deterministic midpoint, leaving filler on both sides.
+The query is appended after this stream. This portable count is not a
+model-tokenizer claim; each evaluation harness must separately record the
+rendered model-token count.
 
 All committed prompts and verifiers were authored for PER-365. CC0-1.0 is used
 for prompt-only fixtures and MIT for code, generators, and executable verifier

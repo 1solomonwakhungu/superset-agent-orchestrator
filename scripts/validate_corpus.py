@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -113,7 +115,7 @@ def _validate_evidence(evidence: dict[str, Any], context: str) -> None:
             raise CorpusValidationError(f"{context}.calls: expected a non-empty list")
         if not isinstance(typed["independent_calls_may_commute"], bool):
             raise CorpusValidationError(f"{context}.independent_calls_may_commute: expected bool")
-        tool_names: set[str] = set()
+        tool_schemas: dict[str, dict[str, Any]] = {}
         for index, tool_value in enumerate(typed["tools"]):
             tool = _closed(tool_value, {"type", "function"}, f"{context}.tools[{index}]")
             if tool["type"] != "function":
@@ -125,8 +127,10 @@ def _validate_evidence(evidence: dict[str, Any], context: str) -> None:
             )
             _non_empty_string(function["name"], f"{context}.tools[{index}].function.name")
             _non_empty_string(function["description"], f"{context}.tools[{index}].function.description")
-            _object(function["parameters"], f"{context}.tools[{index}].function.parameters")
-            tool_names.add(function["name"])
+            parameters = _object(
+                function["parameters"], f"{context}.tools[{index}].function.parameters"
+            )
+            tool_schemas[function["name"]] = parameters
         for index, call_value in enumerate(typed["calls"]):
             call = _object(call_value, f"{context}.calls[{index}]")
             if set(call) not in ({"function"}, {"condition", "function"}):
@@ -134,9 +138,16 @@ def _validate_evidence(evidence: dict[str, Any], context: str) -> None:
             function = _closed(
                 call["function"], {"name", "arguments"}, f"{context}.calls[{index}].function"
             )
-            if function["name"] not in tool_names:
+            if function["name"] not in tool_schemas:
                 raise CorpusValidationError(f"{context}.calls[{index}]: unknown tool")
-            _object(function["arguments"], f"{context}.calls[{index}].function.arguments")
+            arguments = _object(
+                function["arguments"], f"{context}.calls[{index}].function.arguments"
+            )
+            _validate_json_schema_value(
+                arguments,
+                tool_schemas[function["name"]],
+                f"{context}.calls[{index}].function.arguments",
+            )
             if "condition" in call:
                 condition = _closed(
                     call["condition"],
@@ -148,6 +159,58 @@ def _validate_evidence(evidence: dict[str, Any], context: str) -> None:
                     raise CorpusValidationError(f"{context}.calls[{index}].condition.operator: invalid")
     else:
         raise CorpusValidationError(f"{context}: unsupported evidence type {evidence_type!r}")
+
+
+def _validate_json_schema_value(value: Any, schema: dict[str, Any], context: str) -> None:
+    """Validate the closed JSON Schema subset used by corpus tool fixtures."""
+    schema_type = schema.get("type")
+    if schema_type == "object":
+        if not isinstance(value, dict):
+            raise CorpusValidationError(f"{context}: expected object")
+        properties = _object(schema.get("properties"), f"{context}.schema.properties")
+        required = schema.get("required", [])
+        if not isinstance(required, list) or not all(isinstance(name, str) for name in required):
+            raise CorpusValidationError(f"{context}.schema.required: expected string list")
+        missing = set(required) - set(value)
+        extra = set(value) - set(properties)
+        if missing or (schema.get("additionalProperties") is False and extra):
+            raise CorpusValidationError(
+                f"{context}: schema properties invalid (missing={sorted(missing)}, extra={sorted(extra)})"
+            )
+        for name, child in value.items():
+            if name in properties:
+                _validate_json_schema_value(
+                    child, _object(properties[name], f"{context}.schema.{name}"), f"{context}.{name}"
+                )
+    elif schema_type == "string":
+        if not isinstance(value, str):
+            raise CorpusValidationError(f"{context}: expected string")
+        if "enum" in schema and value not in schema["enum"]:
+            raise CorpusValidationError(f"{context}: value is not in enum")
+        if "pattern" in schema and re.fullmatch(schema["pattern"], value) is None:
+            raise CorpusValidationError(f"{context}: value does not match pattern")
+        if schema.get("format") == "date":
+            try:
+                datetime.date.fromisoformat(value)
+            except ValueError as error:
+                raise CorpusValidationError(f"{context}: invalid date") from error
+    elif schema_type == "number":
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise CorpusValidationError(f"{context}: expected number")
+    elif schema_type == "integer":
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise CorpusValidationError(f"{context}: expected integer")
+    elif schema_type == "boolean":
+        if not isinstance(value, bool):
+            raise CorpusValidationError(f"{context}: expected boolean")
+    elif schema_type == "array":
+        if not isinstance(value, list):
+            raise CorpusValidationError(f"{context}: expected array")
+        item_schema = _object(schema.get("items"), f"{context}.schema.items")
+        for index, item in enumerate(value):
+            _validate_json_schema_value(item, item_schema, f"{context}[{index}]")
+    else:
+        raise CorpusValidationError(f"{context}.schema: unsupported type {schema_type!r}")
 
 
 def _validate_item(item: dict[str, Any], expected_domain: str, context: str) -> None:

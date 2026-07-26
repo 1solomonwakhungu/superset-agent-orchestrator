@@ -48,11 +48,14 @@ class ValidateCorpusTest(unittest.TestCase):
         )
 
     def mutate_first(self, filename: str, mutate) -> None:
+        self.mutate_record(filename, 0, mutate)
+
+    def mutate_record(self, filename: str, index: int, mutate) -> None:
         path = self.corpus / filename
         lines = path.read_text(encoding="utf-8").splitlines()
-        item = json.loads(lines[0])
+        item = json.loads(lines[index])
         mutate(item)
-        lines[0] = json.dumps(item, separators=(",", ":"), sort_keys=True)
+        lines[index] = json.dumps(item, separators=(",", ":"), sort_keys=True)
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         self.rewrite_manifest()
 
@@ -115,8 +118,26 @@ class ValidateCorpusTest(unittest.TestCase):
         first = MATERIALIZER.materialize(4096, 365, "LC4096", "value-4096")
         second = MATERIALIZER.materialize(4096, 365, "LC4096", "value-4096")
         self.assertEqual(first, second)
-        self.assertEqual(len(first.split(" ")), 4096)
-        self.assertTrue(first.endswith("LC4096 value-4096"))
+        tokens = first.split(" ")
+        self.assertEqual(len(tokens), 4096)
+        self.assertEqual(tokens[2048:2050], ["LC4096", "value-4096"])
+        self.assertGreater(len(tokens[2050:]), 0)
+
+    def test_rejects_gold_arguments_that_violate_tool_schema(self) -> None:
+        def remove_required_argument(item):
+            del item["gold"]["calls"][0]["function"]["arguments"]["city"]
+
+        self.mutate_first("tool-use.jsonl", remove_required_argument)
+        with self.assertRaisesRegex(MODULE.CorpusValidationError, "missing=\['city'\]"):
+            MODULE.validate_corpus(self.corpus)
+
+    def test_rejects_gold_argument_with_wrong_enum(self) -> None:
+        def change_enum_argument(item):
+            item["gold"]["calls"][0]["function"]["arguments"]["from"] = "metres"
+
+        self.mutate_record("tool-use.jsonl", 2, change_enum_argument)
+        with self.assertRaisesRegex(MODULE.CorpusValidationError, "not in enum"):
+            MODULE.validate_corpus(self.corpus)
 
 
 if __name__ == "__main__":
