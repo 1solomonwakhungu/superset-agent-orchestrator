@@ -245,7 +245,14 @@ async function main(): Promise<void> {
             });
             continue;
           }
-          await provider.cancel({ runId: assignment.runId }, reason);
+          const cancellation = await provider.cancel({ runId: assignment.runId }, reason);
+          if (cancellation?.status === "unsupported") {
+            items.push({
+              session_id: sessionId,
+              error: contractError("CANCEL_UNSUPPORTED", "The backend rejected cancellation as unsupported"),
+            });
+            continue;
+          }
           items.push({ session_id: sessionId, canceled: true });
         } catch (error) {
           const failure = error instanceof SupersetProcessError
