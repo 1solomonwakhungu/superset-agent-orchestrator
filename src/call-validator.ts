@@ -1,5 +1,6 @@
 export type JsonSchema = {
-  type?: "object" | "array" | "string" | "number" | "integer" | "boolean" | "null";
+  type?:
+    "object" | "array" | "string" | "number" | "integer" | "boolean" | "null";
   properties?: Readonly<Record<string, JsonSchema>>;
   required?: readonly string[];
   additionalProperties?: boolean;
@@ -105,7 +106,12 @@ export function validateCallGraph(
     const node = candidate as CallNode;
     nodes.push(node);
     if (byId.has(node.id)) {
-      report("CFV002", node.id, `$.nodes[${index}].id`, "node id is duplicated");
+      report(
+        "CFV002",
+        node.id,
+        `$.nodes[${index}].id`,
+        "node id is duplicated",
+      );
     } else {
       byId.set(node.id, node);
     }
@@ -128,9 +134,14 @@ export function validateCallGraph(
       }
     }
     adjacency.set(node.id, dependencies);
-    const tool = tools[node.tool];
+    const tool = Object.hasOwn(tools, node.tool) ? tools[node.tool] : undefined;
     if (!tool) {
-      report("CFV003", node.id, `$.nodes.${node.id}.tool`, `unknown tool ${node.tool}`);
+      report(
+        "CFV003",
+        node.id,
+        `$.nodes.${node.id}.tool`,
+        `unknown tool ${node.tool}`,
+      );
       continue;
     }
     validateValue(
@@ -146,12 +157,19 @@ export function validateCallGraph(
   }
 
   detectCycles(adjacency, (nodeId) =>
-    report("CFV005", nodeId, `$.nodes.${nodeId}`, "dependency graph contains a cycle"),
+    report(
+      "CFV005",
+      nodeId,
+      `$.nodes.${nodeId}`,
+      "dependency graph contains a cycle",
+    ),
   );
   diagnostics.sort((left, right) =>
-    [left.nodeId ?? "", left.path, left.id, left.message].join("\0").localeCompare(
-      [right.nodeId ?? "", right.path, right.id, right.message].join("\0"),
-    ),
+    [left.nodeId ?? "", left.path, left.id, left.message]
+      .join("\0")
+      .localeCompare(
+        [right.nodeId ?? "", right.path, right.id, right.message].join("\0"),
+      ),
   );
   return finish(diagnostics);
 }
@@ -198,17 +216,32 @@ function validateValue(
     report("CFV101", nodeId, path, `expected ${schema.type ?? "any"}`);
     return;
   }
-  if (schema.enum && !schema.enum.some((candidate) => deepEqual(candidate, value)))
+  if (
+    schema.enum &&
+    !schema.enum.some((candidate) => deepEqual(candidate, value))
+  )
     report("CFV103", nodeId, path, "value is not in enum");
-  if (schema.format && typeof value === "string" && !matchesFormat(value, schema.format))
+  if (
+    schema.format &&
+    typeof value === "string" &&
+    !matchesFormat(value, schema.format)
+  )
     report("CFV104", nodeId, path, `value is not a valid ${schema.format}`);
   if (schema.type === "object" && isRecord(value)) {
     for (const required of schema.required ?? []) {
       if (!(required in value))
-        report("CFV102", nodeId, `${path}.${required}`, "required field is missing");
+        report(
+          "CFV102",
+          nodeId,
+          `${path}.${required}`,
+          "required field is missing",
+        );
     }
     for (const [key, child] of Object.entries(value)) {
-      const childSchema = schema.properties?.[key];
+      const childSchema =
+        schema.properties && Object.hasOwn(schema.properties, key)
+          ? schema.properties[key]
+          : undefined;
       if (childSchema) {
         validateValue(
           child,
@@ -259,7 +292,9 @@ function detectCycles(
   for (const node of adjacency.keys()) if (walk(node)) report(node);
 }
 
-function finish(diagnostics: readonly ValidationDiagnostic[]): ValidationResult {
+function finish(
+  diagnostics: readonly ValidationDiagnostic[],
+): ValidationResult {
   return {
     valid: !diagnostics.some(({ severity }) => severity === "error"),
     diagnostics,
@@ -289,17 +324,77 @@ function matchesType(value: unknown, type: JsonSchema["type"]): boolean {
 
 function compatible(source: JsonSchema, target: JsonSchema): boolean {
   if (!source.type || !target.type) return true;
-  return source.type === target.type || (source.type === "integer" && target.type === "number");
+  if (source.type === "integer" && target.type === "number") return true;
+  if (source.type !== target.type) return false;
+  if (
+    target.enum &&
+    (!source.enum ||
+      !source.enum.every((value) =>
+        target.enum!.some((item) => deepEqual(item, value)),
+      ))
+  )
+    return false;
+  if (target.format && source.format !== target.format) return false;
+  if (target.type === "array" && target.items)
+    return Boolean(source.items && compatible(source.items, target.items));
+  if (target.type === "object") {
+    const sourceProperties = source.properties ?? {};
+    const targetProperties = target.properties ?? {};
+    for (const required of target.required ?? []) {
+      if (!(source.required ?? []).includes(required)) return false;
+      if (
+        !Object.hasOwn(sourceProperties, required) ||
+        !Object.hasOwn(targetProperties, required) ||
+        !compatible(sourceProperties[required]!, targetProperties[required]!)
+      )
+        return false;
+    }
+    if (
+      target.additionalProperties === false &&
+      source.additionalProperties !== false
+    )
+      return false;
+    if (
+      target.additionalProperties === false &&
+      Object.keys(sourceProperties).some(
+        (key) => !Object.hasOwn(targetProperties, key),
+      )
+    )
+      return false;
+  }
+  return true;
 }
 
 function deepEqual(left: unknown, right: unknown): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) && Array.isArray(right))
+    return (
+      left.length === right.length &&
+      left.every((value, index) => deepEqual(value, right[index]))
+    );
+  if (isRecord(left) && isRecord(right)) {
+    const leftKeys = Object.keys(left).sort();
+    const rightKeys = Object.keys(right).sort();
+    return (
+      leftKeys.length === rightKeys.length &&
+      leftKeys.every(
+        (key, index) =>
+          key === rightKeys[index] && deepEqual(left[key], right[key]),
+      )
+    );
+  }
+  return false;
 }
 
-function matchesFormat(value: string, format: NonNullable<JsonSchema["format"]>): boolean {
+function matchesFormat(
+  value: string,
+  format: NonNullable<JsonSchema["format"]>,
+): boolean {
   if (format === "email") return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
   if (format === "uuid")
-    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      value,
+    );
   if (format === "uri") {
     try {
       return Boolean(new URL(value).protocol);
@@ -307,5 +402,28 @@ function matchesFormat(value: string, format: NonNullable<JsonSchema["format"]>)
       return false;
     }
   }
-  return !Number.isNaN(Date.parse(value)) && /T/.test(value);
+  const match =
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/.exec(
+      value,
+    );
+  if (!match) return false;
+  const [, year, month, day, hour, minute, second, zone] = match;
+  if (
+    Number(month) < 1 ||
+    Number(month) > 12 ||
+    Number(hour) > 23 ||
+    Number(minute) > 59 ||
+    Number(second) > 59
+  )
+    return false;
+  const daysInMonth = new Date(
+    Date.UTC(Number(year), Number(month), 0),
+  ).getUTCDate();
+  if (Number(day) < 1 || Number(day) > daysInMonth) return false;
+  if (!zone) return false;
+  if (zone !== "Z") {
+    const [zoneHour, zoneMinute] = zone.slice(1).split(":").map(Number);
+    if (zoneHour! > 23 || zoneMinute! > 59) return false;
+  }
+  return true;
 }
