@@ -1,0 +1,15 @@
+[
+  {"valid":true,"graph":{"nodes":[{"id":"a","tool":"lookup","arguments":{"email":"a@example.com"}}]}},
+  {"valid":true,"graph":{"nodes":[{"id":"a","tool":"lookup","arguments":{"email":"a@example.com"}},{"id":"b","tool":"notify","dependsOn":["a"],"arguments":{"user":{"$ref":"a"},"channel":"sms"}}]}},
+  {"valid":false,"expected":"CFV001","graph":{"nodes":[{"id":"a","tool":"lookup"}]}},
+  {"valid":false,"expected":"CFV002","graph":{"nodes":[{"id":"a","tool":"lookup","arguments":{"email":"a@example.com"}},{"id":"a","tool":"lookup","arguments":{"email":"b@example.com"}}]}},
+  {"valid":false,"expected":"CFV003","graph":{"nodes":[{"id":"a","tool":"missing","arguments":{}}]}},
+  {"valid":false,"expected":"CFV004","graph":{"nodes":[{"id":"a","tool":"lookup","dependsOn":["missing"],"arguments":{"email":"a@example.com"}}]}},
+  {"valid":false,"expected":"CFV005","graph":{"nodes":[{"id":"a","tool":"lookup","dependsOn":["b"],"arguments":{"email":"a@example.com"}},{"id":"b","tool":"lookup","dependsOn":["a"],"arguments":{"email":"b@example.com"}}]}},
+  {"valid":false,"expected":"CFV101","graph":{"nodes":[{"id":"a","tool":"lookup","arguments":{"email":42}}]}},
+  {"valid":false,"expected":"CFV102","graph":{"nodes":[{"id":"a","tool":"lookup","arguments":{}}]}},
+  {"valid":false,"expected":"CFV103","graph":{"nodes":[{"id":"a","tool":"notify","arguments":{"user":"a","channel":"push"}}]}},
+  {"valid":false,"expected":"CFV104","graph":{"nodes":[{"id":"a","tool":"lookup","arguments":{"email":"invalid"}}]}},
+  {"valid":false,"expected":"CFV105","graph":{"nodes":[{"id":"a","tool":"lookup","arguments":{"email":"a@example.com","extra":true}}]}},
+  {"valid":false,"expected":"CFV106","graph":{"nodes":[{"id":"a","tool":"notify","arguments":{"user":"a","channel":"email"}},{"id":"b","tool":"lookup","dependsOn":["a"],"arguments":{"email":{"$ref":"a"}}}]}}
+]
