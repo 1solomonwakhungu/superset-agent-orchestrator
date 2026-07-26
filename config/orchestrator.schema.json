@@ -48,9 +48,39 @@
           "default": {}
         }
       }
+    },
+    "concurrency": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "global": { "$ref": "#/$defs/positiveLimit" },
+        "perHost": { "$ref": "#/$defs/positiveLimit" },
+        "perProject": { "$ref": "#/$defs/positiveLimit" },
+        "perAgent": { "$ref": "#/$defs/positiveLimit" },
+        "perWorkspace": { "$ref": "#/$defs/positiveLimit" },
+        "maxQueued": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "pressureHookTimeoutMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "overload": {
+          "type": "string",
+          "enum": ["queue", "reject"]
+        }
+      }
     }
   },
   "$defs": {
+    "positiveLimit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10000
+    },
     "timeout": {
       "type": "integer",
       "minimum": 1,

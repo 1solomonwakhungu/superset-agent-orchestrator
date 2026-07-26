@@ -13,18 +13,29 @@
     }
   },
   "bin": {
-    "superset-agent-orchestrator": "dist/src/server.js"
+    "superset-agent-orchestrator": "dist/src/server.js",
+    "superset-agent-orchestrator-storage": "dist/src/storage-cli.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "provenance:verify": "node scripts/verify-provenance.mjs",
+    "build": "tsc -p tsconfig.build.json",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run build && npm test && npm run test:coverage && npm run test:python && npm run schema:check && npm run provenance:verify",
+    "format": "prettier --write '.github/**/*.yml' README.md CONTRIBUTING.md SECURITY.md docs/branch-protection.md eslint.config.js package.json tsconfig.json tsconfig.build.json",
+    "format:check": "prettier --check '.github/**/*.yml' README.md CONTRIBUTING.md SECURITY.md docs/branch-protection.md eslint.config.js package.json tsconfig.json tsconfig.build.json",
+    "lint": "eslint .",
     "schema": "npm run build && node scripts/generate-tool-schema.mjs",
+    "schema:check": "npm run schema && git diff --exit-code -- config/mcp-tools.schema.json",
     "compatibility:probe": "node scripts/probe-compatibility.mjs",
     "test:real:preflight": "node scripts/run-real-superset-codex-e2e.mjs --preflight",
     "test:real": "node scripts/run-real-superset-codex-e2e.mjs",
+    "discovery:record": "npm run build && node scripts/record-discovery-fixture.mjs",
+    "compatibility:report": "node scripts/generate-compatibility-report.mjs",
     "start": "node dist/src/server.js",
     "test": "tsx --test test/**/*.test.ts test/**/*.test.mjs",
-    "verify": "npm run build && npm test",
-    "check": "tsc -p tsconfig.json --noEmit"
+    "test:coverage": "c8 --check-coverage --branches=80 --functions=65 --lines=85 --statements=85 --reporter=text --reporter=json-summary npm test",
+    "test:python": "python3.11 -m unittest discover -s tests",
+    "typecheck": "tsc --noEmit",
+    "verify": "npm run check"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
@@ -32,14 +43,23 @@
     "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@eslint/js": "10.0.1",
     "@types/node": "^22.15.0",
     "@types/proper-lockfile": "^4.1.4",
+    "c8": "12.0.0",
+    "eslint": "10.7.0",
+    "prettier": "3.9.6",
     "tsx": "^4.19.3",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "typescript-eslint": "8.65.0"
   },
   "engines": {
     "node": ">=22 <25"
   },
+  "os": [
+    "darwin",
+    "linux"
+  ],
   "packageManager": "npm@10.9.8",
   "license": "MIT"
 }

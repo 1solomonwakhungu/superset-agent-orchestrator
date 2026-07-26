@@ -14,6 +14,24 @@ launch-ledger technical preview that reports unobservable work as
 
 See the [product boundary and measurable release gates](docs/adr/0002-product-boundary-and-mvp-gates.md).
 
+The repository also contains the [MiniCPM5-1B reproducibility environment](docs/minicpm5-reproducible-environment.md).
+
+## Development
+
+Requirements: Node.js 22, npm 10 or later, and Python 3.11.
+
+```sh
+npm ci
+npm audit --audit-level=high
+npm run check
+```
+
+The aggregate check enforces formatting for workflows and repository guidance,
+type-aware lint across production TypeScript and tests, strict type checking, the
+production build, TypeScript tests and coverage thresholds, and Python monitor
+tests. It also regenerates the MCP schema and fails if the checked-in artifact is
+stale.
+
 ## Recovery
 
 The server reconciles its durable JSON state before accepting MCP requests and periodically while
@@ -21,13 +39,34 @@ it runs. Existing worker processes remain tracked by PID and process start token
 are marked `unknown_outcome` and are never relaunched merely because a server or client restarted.
 State writes are locked, synced, and atomically renamed. A corrupt state file is left untouched.
 
+Writer admission uses two independent layers: an exclusive cross-process
+operating-system lock on a key derived from the workspace, and a transactional
+SQLite lease with a monotonically increasing generation. Generations are never
+reused. The bearer fencing token is random per generation and only its digest is
+stored, so it never reaches the prompt, audit log, or an MCP response. Heartbeat,
+release, and every controlled action compare-and-set on lease ID, generation,
+token digest, owner identity, state, and row version, so a stale owner is fenced.
+
+Expiry alone never releases a lease. `WorkspaceSafetyTool` reconciles a workspace
+only with evidence: it preserves the lease while another process may hold the
+lock, quarantines a lease whose owner is alive or whose identity is unverifiable,
+and retires a generation only when the exact owner PID and process start token
+are proven absent after expiry. Quarantine is cleared by one fixed repair flow
+that retires the old generation and never assigns an active lease. Admissions,
+denials, quarantines, repairs, and recoveries are append-only audit events.
+
+Writer launch remains disabled: canonical workspace identity resolution and
+read-only sandbox enforcement are still outstanding. See
+[the lease policy](docs/workspace-lease-and-writer-safety.md) and
+[the enforcement evidence](evidence/per-343/lease-enforcement.json).
+
 Recovery tools:
 
-* `recent_sessions` lists durable sessions independently of the connected client.
-* `reopen_batch` restores the newest exact-name batch with sessions, workers, results, and attribution.
-* `batches_create` durably accepts up to 250 attributed sessions and returns stable IDs immediately.
-* `batches_get`, `batches_status`, and `batches_results` provide indexed, ordered pagination without per-agent polling.
-* `recovery_diagnostics` reports orphan, unknown-outcome, and missing-result records.
+- `recent_sessions` lists durable sessions independently of the connected client.
+- `reopen_batch` restores the newest exact-name batch with sessions, workers, results, and attribution.
+- `batches_create` durably accepts up to 250 attributed sessions and returns stable IDs immediately.
+- `batches_get`, `batches_status`, and `batches_results` provide indexed, ordered pagination without per-agent polling.
+- `recovery_diagnostics` reports orphan, unknown-outcome, and missing-result records.
 
 Set `SUPERSET_ORCHESTRATOR_STATE` to choose the state file. By default it is stored at
 `~/.local/share/superset-agent-orchestrator/state.json`.
@@ -66,6 +105,12 @@ The MCP contract publishes typed TypeScript/Zod schemas and a client-neutral JSO
 Run `npm run verify` to type-check the complete implementation and execute all tests.
 
 Real Superset and Codex verification is opt-in because it launches an agent in an exact isolated worktree. See [the real-system harness guide](docs/real-superset-codex-e2e.md) for safety gates, commands, evidence, and currently unsupported lifecycle operations.
+
+## Contributions
+
+Changes must use pull requests. See [CONTRIBUTING.md](CONTRIBUTING.md) for the
+required checks and [SECURITY.md](SECURITY.md) for private vulnerability
+reporting.
 
 ## Superset discovery
 
@@ -116,3 +161,42 @@ names, internal addresses, credentials, or tunnel identifiers.
 
 See [`docs/incident-runbook.md`](docs/incident-runbook.md) for diagnosis and
 recovery procedures.
+
+## macOS cleanup
+
+`cleanup.py` inventories and removes stale temporary files and selected
+development caches. It is deliberately a dry-run unless `--execute` is supplied.
+
+```sh
+python3 cleanup.py
+python3 cleanup.py --execute
+```
+
+Potentially destructive or disruptive operations require separate flags:
+
+```sh
+python3 cleanup.py --execute --include-downloads
+python3 cleanup.py --execute --empty-trash
+python3 cleanup.py --execute --docker-prune
+python3 cleanup.py --execute --eject-installers
+```
+
+Review dry-run output before execution. Downloads are moved to Trash, not
+deleted. Broad `~/Library/Caches` deletion is intentionally excluded; only known
+build and package cache directories are cleaned. The Hermes task queue is
+validated and reported but not rewritten. LM Studio model locations are measured
+but never removed.
+
+Disk images are eligible for detachment only when `hdiutil` identifies a mounted
+image backed by a `.dmg` file smaller than 5 GiB and the volume contains a
+top-level `.app` or `.pkg`. Ambiguous images are reported and skipped. Physical
+external drives are never considered by this logic.
+
+The utility has no runtime dependencies beyond Python 3.9+ and standard macOS
+command-line tools. Run its tests and optional development checks with:
+
+```sh
+python3 -m unittest -v
+ruff check cleanup.py test_cleanup.py
+mypy --strict cleanup.py test_cleanup.py
+```

@@ -30,6 +30,7 @@ export type RunResult =
 export interface AgentAdapter {
   /** Returns the one run previously accepted for this key, or undefined when absence is authoritative. */
   findByIdempotencyKey(idempotencyKey: string): Promise<RunHandle | undefined>;
+  /** Atomically returns the existing run for the key or creates exactly one run. */
   launch(request: LaunchRequest): Promise<RunHandle>;
   status(handle: RunHandle): Promise<RunState>;
   result(handle: RunHandle): Promise<RunResult | undefined>;
