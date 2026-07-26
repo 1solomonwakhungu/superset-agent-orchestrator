@@ -55,6 +55,18 @@ def is_within(path: Path, root: Path) -> bool:
         return False
 
 
+def tree_older_than(path: Path, age_seconds: int, now: float) -> bool:
+    """Return true only when a path and every entry below it are stale."""
+    try:
+        if now - path.lstat().st_mtime <= age_seconds:
+            return False
+        if path.is_symlink() or not path.is_dir():
+            return True
+        return all(tree_older_than(child, age_seconds, now) for child in path.iterdir())
+    except OSError:
+        return False
+
+
 def children_older_than(root: Path, age_seconds: int, now: float) -> Iterable[Path]:
     if not root.is_dir():
         return []
@@ -65,7 +77,7 @@ def children_older_than(root: Path, age_seconds: int, now: float) -> Iterable[Pa
         return []
     for child in children:
         try:
-            if now - child.lstat().st_mtime > age_seconds:
+            if tree_older_than(child, age_seconds, now):
                 result.append(child)
         except OSError:
             continue
@@ -131,7 +143,7 @@ def move_old_downloads(downloads: Path, trash: Path, now: float, report: Report)
         suffix = 0
         while os.path.lexists(destination):
             suffix += 1
-            stamp = dt.datetime.fromtimestamp(now, dt.timezone.utc).strftime("%Y%m%d-%H%M%S")
+            stamp = dt.datetime.fromtimestamp(now, dt.UTC).strftime("%Y%m%d-%H%M%S")
             destination = trash / f"{source.stem}-{stamp}-{suffix}{source.suffix}"
         move_description = f"{source} -> {destination}"
         if report.dry_run:
@@ -265,8 +277,18 @@ def queue_status(path: Path, now: float) -> str:
         age_days = (now - path.stat().st_mtime) / DAY
         json.loads(path.read_text(encoding="utf-8"))
         return f"overnight queue valid JSON, modified {age_days:.1f} days ago; left unchanged"
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         return f"overnight queue requires manual review and was left unchanged: {exc}"
+
+
+def trusted_tmpdir(value: str) -> Path | None:
+    """Accept only the per-user temporary directory shape assigned by macOS."""
+    try:
+        path = Path(value)
+        relative = path.resolve().relative_to(Path("/private/var/folders").resolve())
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return path if len(relative.parts) >= 3 and relative.name == "T" else None
 
 
 def render(report: Report, home: Path, now: float) -> str:
@@ -315,18 +337,24 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     home = Path.home()
-    now = dt.datetime.now(dt.timezone.utc).timestamp()
+    now = dt.datetime.now(dt.UTC).timestamp()
     report = Report(dry_run=not args.execute)
     report.before_free = shutil.disk_usage("/").free
 
     cleanup_roots = [
         (Path("/tmp"), DAY),
         (Path("/var/tmp"), 7 * DAY),
-        (Path(os.environ.get("TMPDIR", "/tmp")), DAY),
         (home / ".hermes/cron/output", 7 * DAY),
         (home / ".hermes/logs", 7 * DAY),
         (home / ".hermes/tmp", DAY),
     ]
+    tmpdir_value = os.environ.get("TMPDIR")
+    if tmpdir_value:
+        tmpdir = trusted_tmpdir(tmpdir_value)
+        if tmpdir is None:
+            report.skipped.append(f"TMPDIR outside trusted macOS temporary storage: {tmpdir_value}")
+        else:
+            cleanup_roots.append((tmpdir, DAY))
     seen: set[Path] = set()
     for root, age in cleanup_roots:
         try:
