@@ -132,6 +132,13 @@
   live smoke skip, Python 3/3, schema no-diff, and 93.36% statement / 87.13%
   branch / 87.39% function coverage. Focused lifecycle/result tests passed 78/78
   across 10 runs (780 checks).
+- Follow-up verification hardened terminal-result retries across cancellation,
+  deadline, restart, replica-lag, and concurrent-reconciler races; fenced stop
+  delivery through crash and unsupported-response races; and bounded durable
+  observation history and deadline sweeps with explicit `has_more` continuation.
+- Follow-up focused lifecycle/MCP tests passed 72/72. Full pre-commit verification
+  passed 299 runnable Node tests with 1 intentional skip, coverage, and 5 Python
+  tests with 1 intentional skip; clean-commit verification follows.
 - PR #66 follow-up integrated current `main`, retained both state-path security
   layers, and keeps terminal reconciliation pending when the provider result is
   temporarily absent. Focused lifecycle, launch, and security tests passed
