@@ -13,9 +13,11 @@ The harness refuses to launch unless:
 - the harness repository is inside that workspace;
 - the authorized Superset workspace is an enclosing Git top level whose linked-worktree Git directory is distinct from its shared common directory;
 - exactly one Codex preset is configured; and
-- the target repository is clean.
+- the target repository is clean;
+- the detected Superset CLI is the capability-vetted version 1.16.1; and
+- the report path is outside the authorized worktree.
 
-Every child process uses an argument array with shell interpolation disabled. The launch prompt forbids tools and file changes. The launch command names only the authorized workspace ID. Git HEAD and complete status are compared before and after the run.
+Every child process uses an argument array with shell interpolation disabled. The launch prompt forbids tools and file changes. The launch command names only the authorized workspace ID. Git HEAD and complete status are compared during preflight and immediately before and after launch acceptance.
 
 ## Commands
 
@@ -36,10 +38,10 @@ SUPERSET_REAL_E2E_WORKSPACE_PATH='<absolute-worktree-path>' \
 npm run test:real
 ```
 
-Set `SUPERSET_REAL_E2E_REPORT` to choose the report path. The default is `artifacts/real-e2e-report.json`; `artifacts/` is not committed.
+Set `SUPERSET_REAL_E2E_REPORT` to choose the report path. It must be outside the authorized worktree. By default, each report receives a unique name under the operating system's temporary directory.
 
 ## Evidence semantics
 
 The report captures runtime and Superset versions, configured Codex preset identity, linked-worktree proof, target hashes, scenario timings, process exit details, output hashes and byte counts, selected non-secret observed output, resource usage, failures, and the launch session identity. Full discovery output and the sentinel are not persisted because they can expose unrelated local metadata. It does not invoke Codex directly. Relay access is made unavailable with dead loopback proxies while loopback itself remains in `NO_PROXY`.
 
-Superset CLI 1.16.1 supports local discovery and launch, but exposes no supported public terminal-agent status, final-result, cancellation, or session-rediscovery command. Those stages are reported as `UNSUPPORTED_OPERATION`. The suite cannot claim the exact sentinel passed until a supported result transport exists; it records a blocked classification instead of inspecting private databases, logs, or terminal scrollback.
+Superset CLI 1.16.1 supports local discovery and launch, but exposes no supported public terminal-agent status, final-result, cancellation, or session-rediscovery command. Those stages are reported as `UNSUPPORTED_OPERATION`. Because launch acceptance is asynchronous, real mode records workspace state at the launch receipt but reports post-completion isolation as unsupported. The suite cannot claim the exact sentinel passed or post-completion isolation until a supported completion and result transport exists; it records a blocked classification instead of inspecting private databases, logs, or terminal scrollback.
