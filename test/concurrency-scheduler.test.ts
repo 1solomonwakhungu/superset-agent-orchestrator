@@ -170,24 +170,32 @@ test("admits same-tick work up to available capacity before rejecting overload",
 
 test("resource and rate-limit hooks back off the FIFO head without bypass", async () => {
   let checks = 0;
+  let decidePressure: (decision: { ready: boolean; retryAfterMs: number; reason: string }) => void = () => undefined;
+  const firstDecision = new Promise<{ ready: boolean; retryAfterMs: number; reason: string }>((resolve) => {
+    decidePressure = resolve;
+  });
   const scheduler = new ConcurrencyScheduler(
     { global: 2 },
     [() => {
       checks += 1;
-      return checks === 1 ? { ready: false, retryAfterMs: 5, reason: "provider_rate_limit" } : { ready: true };
+      return checks === 1 ? firstDecision : { ready: true };
     }],
   );
-  const first = scheduler.acquire(base);
-  const second = scheduler.acquire({ ...base, id: "second", workspaceId: "workspace-2" });
+  const firstAbort = new AbortController();
+  const secondAbort = new AbortController();
+  const first = scheduler.acquire({ ...base, signal: firstAbort.signal });
+  const second = scheduler.acquire({ ...base, id: "second", workspaceId: "workspace-2", signal: secondAbort.signal });
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.deepEqual(scheduler.snapshot().queued.map(({ id }) => id), ["first", "second"]);
+  decidePressure({ ready: false, retryAfterMs: 60_000, reason: "provider_rate_limit" });
+  await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(scheduler.snapshot().queued[0]?.blockedBy, ["provider_rate_limit"]);
-  const firstRelease = await first;
-  const secondRelease = await second;
-  firstRelease();
-  secondRelease();
-  assert.ok(checks >= 3);
+  firstAbort.abort();
+  secondAbort.abort();
+  await assert.rejects(first, (error: unknown) => error instanceof ConcurrencyError && error.code === "CANCELLED");
+  await assert.rejects(second, (error: unknown) => error instanceof ConcurrencyError && error.code === "CANCELLED");
+  assert.equal(scheduler.snapshot().queued.length, 0);
 });
 
 test("pressure rejects structurally when waiting is disabled", async () => {
