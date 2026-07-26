@@ -1,10 +1,11 @@
+artifacts/
 __pycache__/
 *.py[cod]
 .pytest_cache/
 var/
 coverage/
-dist/
 node_modules/
+dist/
 src/**/*.js
 src/**/*.d.ts
 test/**/*.js
