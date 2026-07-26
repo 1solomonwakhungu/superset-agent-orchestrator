@@ -250,3 +250,33 @@ test("report verifier rejects forged throughput and admission arithmetic", async
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("report verifier rejects forged latency and unsupported resource aborts", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "per-351-test-"));
+  try {
+    const latencyOutput = join(directory, "latency-arithmetic");
+    const latency = await runRealLoad({
+      execute: true, workspaceIds: Array.from({ length: 30 }, (_, index) => `workspace-${index}`),
+      agent: "fake", prompt: "safe test", output: latencyOutput, launchTimeoutMs: 10,
+      maxRssBytes: 10_000, maxCpuMs: 10_000, maxDescriptors: 100, measurements: measurements(),
+      launch: async (workspaceId) => ({ sessionId: `session-${workspaceId}`, kind: "terminal" }),
+    });
+    (latency.launch as { latencyMs: { p95: number } }).latencyMs.p95 = 6;
+    await writeFile(`${latencyOutput}.json`, `${JSON.stringify(latency)}\n`, "utf8");
+    await assert.rejects(verifyReport(latencyOutput), /Launch latency arithmetic is inconsistent/);
+
+    const resourceOutput = join(directory, "resource-evidence");
+    const resource = await runRealLoad({
+      execute: true, workspaceIds: Array.from({ length: 30 }, (_, index) => `workspace-${index}`),
+      agent: "fake", prompt: "safe test", output: resourceOutput, launchTimeoutMs: 10,
+      maxRssBytes: 1_000, maxCpuMs: 10_000, maxDescriptors: 100,
+      measurements: measurements([{ ...SAFE_RESOURCE, rssBytes: 1_001 }]),
+      launch: async (workspaceId) => ({ sessionId: `session-${workspaceId}`, kind: "terminal" }),
+    });
+    (resource.abort as { reason: string }).reason = "RSS ceiling exceeded: 1";
+    await writeFile(`${resourceOutput}.json`, `${JSON.stringify(resource)}\n`, "utf8");
+    await assert.rejects(verifyReport(resourceOutput), /Abort is not supported by failure or ceiling evidence/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
