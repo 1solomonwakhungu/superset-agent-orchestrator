@@ -254,6 +254,31 @@ test("recovery mutations reject a stale observed lease snapshot", async () => {
   });
 });
 
+test("heartbeat renewal fences stale active recovery snapshots", async () => {
+  await withWorkspace(({ storage }) => {
+    const lease = storage.acquireWriterLease({
+      workspaceId: "ws",
+      ownerBatchId: "batch-1",
+      ttlMs: 1_000,
+      now: acquiredAt,
+    });
+    const staleActive = storage.workspaceLeaseById(lease.leaseId)!;
+
+    const renewed = storage.heartbeatWriterLease(lease, 3_000, after(500));
+    assert.equal(storage.workspaceLeaseStatus("ws")?.state, "active");
+    assert.equal(renewed.rowVersion, staleActive.rowVersion + 1);
+
+    assert.throws(() => storage.recoverExpiredWriterLease(staleActive,
+      { ownerProcessAbsent: true }, "reconciler-a", after(2_000)), LeaseFencedError);
+    assert.throws(() => storage.quarantineWriterLease(staleActive,
+      "stale owner evidence", "reconciler-b", after(2_000)), LeaseFencedError);
+
+    assert.equal(storage.workspaceLeaseStatus("ws")?.state, "active");
+    assert.equal(storage.database.prepare(`SELECT COUNT(*) count FROM events
+      WHERE event_type IN ('lease_recovered', 'lease_quarantined')`).get()?.count, 0);
+  });
+});
+
 test("a foreign-host owner is never inferred absent from the local process table", async () => {
   await withWorkspace(({ storage, probe, directory }) => {
     probe.running.set(4_242, "different-local-process");
