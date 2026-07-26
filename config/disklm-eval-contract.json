@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "contractId": "disklm-eval-v1",
+  "baseModel": "openbmb/MiniCPM5-1B",
+  "amendmentWindowClosesAt": "DNA-02-complete",
+  "seeds": [17, 29, 41],
+  "storage": {
+    "logicalPageBytes": 4096,
+    "coldCacheRequired": true,
+    "directIoRequiredWhereSupported": true
+  },
+  "decode": { "temperature": 0, "topP": 1, "mode": "greedy" },
+  "qualitySuites": [
+    {
+      "id": "wikitext-2-raw-v1-test",
+      "metric": "word_perplexity",
+      "direction": "lower",
+      "maxRelativeRegression": 0.01,
+      "fewshot": 0
+    },
+    {
+      "id": "lm-eval-arc-easy-v0",
+      "metric": "acc_norm",
+      "direction": "higher",
+      "maxAbsoluteRegression": 0.01,
+      "fewshot": 0
+    },
+    {
+      "id": "lm-eval-hellaswag-v0",
+      "metric": "acc_norm",
+      "direction": "higher",
+      "maxAbsoluteRegression": 0.01,
+      "fewshot": 0
+    },
+    {
+      "id": "disklm-tool-call-json-schema-v1",
+      "metric": "exact_schema_valid_rate",
+      "direction": "higher",
+      "maxAbsoluteRegression": 0.01,
+      "fewshot": 0
+    }
+  ],
+  "baselines": [
+    "dense-resident",
+    "dense-mmap-cold",
+    "llm-in-a-flash-style-window",
+    "activation-sparse-unpacked",
+    "page-aligned-no-lookahead"
+  ],
+  "hardwareClasses": [
+    {
+      "id": "linux-x86_64-nvme",
+      "required": ["cpu", "ramBytes", "nvmeModel", "filesystem", "kernel"]
+    },
+    {
+      "id": "macos-arm64-apple-silicon",
+      "required": ["soc", "ramBytes", "storageModel", "filesystem", "osBuild"]
+    }
+  ],
+  "primaryMetrics": [
+    "quality_delta",
+    "unique_pages_per_decode_token",
+    "storage_bytes_per_decode_token",
+    "useful_parameter_byte_ratio",
+    "decode_tokens_per_second"
+  ]
+}
