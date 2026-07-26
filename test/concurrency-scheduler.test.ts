@@ -7,7 +7,7 @@ import {
 } from "../src/concurrency-scheduler.js";
 import { ConcurrencyLimitedAgentAdapter } from "../src/concurrency-limited-agent-adapter.js";
 import { FakeAgentAdapter } from "../src/fake-agent-adapter.js";
-import type { LaunchRequest } from "../src/agent-adapter.js";
+import type { AgentAdapter, LaunchRequest } from "../src/agent-adapter.js";
 
 const base: AdmissionRequest = {
   id: "first",
@@ -311,6 +311,44 @@ test("agent adapter holds capacity until terminal status, including after cancel
   assert.equal(scheduler.snapshot().active, 0);
 });
 
+test("agent adapter preserves cancellation capability, outcomes, and abort signals", async () => {
+  const scheduler = new ConcurrencyScheduler({ global: 1 });
+  const scripted = new FakeAgentAdapter([
+    { statuses: ["running", "cancelled"], result: { status: "cancelled" } },
+  ]);
+  const delegate: AgentAdapter = {
+    cancellation: scripted.cancellation,
+    findByIdempotencyKey: (key) => scripted.findByIdempotencyKey(key),
+    launch: (request) => scripted.launch(request),
+    status: (candidate, signal) => {
+      signal?.throwIfAborted();
+      return scripted.status(candidate);
+    },
+    result: (candidate, signal) => {
+      signal?.throwIfAborted();
+      return scripted.result(candidate);
+    },
+    cancel: (candidate, reason, signal) => {
+      signal?.throwIfAborted();
+      return scripted.cancel(candidate, reason);
+    },
+    resumeMetadata: (candidate) => scripted.resumeMetadata(candidate),
+  };
+  const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => base, () => base);
+  const handle = await adapter.launch(launchRequest("first"));
+  const abort = new AbortController();
+  abort.abort();
+
+  assert.equal(adapter.cancellation, "supported");
+  await assert.rejects(adapter.status(handle, abort.signal), (error) => error === abort.signal.reason);
+  await assert.rejects(adapter.result(handle, abort.signal), (error) => error === abort.signal.reason);
+  await assert.rejects(adapter.cancel(handle, "operator request", abort.signal), (error) => error === abort.signal.reason);
+  assert.equal(scheduler.snapshot().active, 1);
+  assert.deepEqual(await adapter.cancel(handle, "operator request"), { status: "accepted" });
+  assert.equal((await adapter.status(handle)).status, "cancelled");
+  assert.equal(scheduler.snapshot().active, 0);
+});
+
 test("retains an indeterminate launch permit until lookup resolves the outcome", async () => {
   const scheduler = new ConcurrencyScheduler({ global: 1 });
   const delegate = new FakeAgentAdapter([
@@ -377,6 +415,74 @@ test("recovered running retries reacquire capacity without duplicate permits", a
   assert.equal((await adapter.status(original)).status, "running");
   assert.equal((await adapter.status(original)).status, "succeeded");
   (await queued)();
+});
+
+test("sequential recovery lookups reuse one active permit", async () => {
+  const scheduler = new ConcurrencyScheduler({ global: 1 });
+  const delegate = new FakeAgentAdapter([
+    { statuses: ["running", "running", "succeeded"], result: { status: "succeeded", output: "recovered" } },
+  ]);
+  const handle = await delegate.launch(launchRequest("recovered", "first"));
+  const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => base, () => base);
+
+  assert.deepEqual(await adapter.findByIdempotencyKey("recovered"), handle);
+  assert.deepEqual(await adapter.findByIdempotencyKey("recovered"), handle);
+  assert.equal(scheduler.snapshot().active, 1);
+  assert.equal((await adapter.status(handle)).status, "running");
+  assert.equal((await adapter.status(handle)).status, "succeeded");
+  assert.equal(scheduler.snapshot().active, 0);
+});
+
+test("terminal status can release a retained permit during a sequential recovery lookup", async () => {
+  const scheduler = new ConcurrencyScheduler({ global: 1 });
+  const delegate = new FakeAgentAdapter([
+    { statuses: ["running", "succeeded"], result: { status: "succeeded", output: "recovered" } },
+  ]);
+  const handle = await delegate.launch(launchRequest("recovered", "first"));
+  const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => base, () => base);
+
+  assert.deepEqual(await adapter.findByIdempotencyKey("recovered"), handle);
+  const lookupStarted = deferred();
+  const finishLookup = deferred();
+  const find = delegate.findByIdempotencyKey.bind(delegate);
+  delegate.findByIdempotencyKey = async (key) => {
+    lookupStarted.resolve();
+    await finishLookup.promise;
+    return find(key);
+  };
+
+  const recovery = adapter.findByIdempotencyKey("recovered");
+  await lookupStarted.promise;
+  assert.equal((await adapter.status(handle)).status, "succeeded");
+  assert.equal(scheduler.snapshot().active, 0);
+  finishLookup.resolve();
+
+  assert.deepEqual(await recovery, handle);
+  assert.equal(scheduler.snapshot().active, 0);
+});
+
+test("retries recovery after a transient status failure without duplicating its permit", async () => {
+  const scheduler = new ConcurrencyScheduler({ global: 1 });
+  const delegate = new FakeAgentAdapter([
+    { statuses: ["running", "succeeded"], result: { status: "succeeded", output: "recovered" } },
+  ]);
+  const handle = await delegate.launch(launchRequest("recovered", "first"));
+  const status = delegate.status.bind(delegate);
+  let attempts = 0;
+  delegate.status = async (candidate) => {
+    attempts += 1;
+    if (attempts === 1) throw new Error("status unavailable");
+    return status(candidate);
+  };
+  const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => base, () => base);
+
+  await assert.rejects(adapter.findByIdempotencyKey("recovered"), /status unavailable/);
+  assert.equal(scheduler.snapshot().active, 1);
+  assert.deepEqual(await adapter.findByIdempotencyKey("recovered"), handle);
+  assert.equal(scheduler.snapshot().active, 1);
+  assert.equal((await adapter.status(handle)).status, "running");
+  assert.equal((await adapter.status(handle)).status, "succeeded");
+  assert.equal(scheduler.snapshot().active, 0);
 });
 
 test("recovery reserves capacity before a delayed backend lookup", async () => {
