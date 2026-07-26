@@ -152,12 +152,14 @@ test("resource and rate-limit hooks back off the FIFO head without bypass", asyn
     { global: 2 },
     [() => {
       checks += 1;
-      return checks === 1 ? { ready: false, retryAfterMs: 5, reason: "provider_rate_limit" } : { ready: true };
+      return checks === 1 ? { ready: false, retryAfterMs: 100, reason: "provider_rate_limit" } : { ready: true };
     }],
   );
   const first = scheduler.acquire(base);
   const second = scheduler.acquire({ ...base, id: "second", workspaceId: "workspace-2" });
-  await new Promise((resolve) => setImmediate(resolve));
+  for (let attempt = 0; attempt < 100 && scheduler.snapshot().queued[0]?.blockedBy[0] !== "provider_rate_limit"; attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
 
   assert.deepEqual(scheduler.snapshot().queued.map(({ id }) => id), ["first", "second"]);
   assert.deepEqual(scheduler.snapshot().queued[0]?.blockedBy, ["provider_rate_limit"]);
