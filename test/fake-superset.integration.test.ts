@@ -99,9 +99,9 @@ test("accepted launches recover after one-shot timeout and malformed responses w
       assert.equal(assignment.runId, "fake-001");
 
       const ledger = await calls();
-      assert.deepEqual(ledger.map(({ command }) => command), ["find", "launch", "find"]);
-      assert.deepEqual(ledger[1]?.fault, { id: `first-launch-${action}`, action });
-      assert.deepEqual(ledger[1]?.response, { runId: "fake-001" });
+      assert.deepEqual(ledger.map(({ command }) => command), ["launch", "find"]);
+      assert.deepEqual(ledger[0]?.fault, { id: `first-launch-${action}`, action });
+      assert.deepEqual(ledger[0]?.response, { runId: "fake-001" });
       assert.equal(Object.keys((await fakeState()).runs).length, 1);
     }, action === "hang" ? 250 : 10_000);
   }
