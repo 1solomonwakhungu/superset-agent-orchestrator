@@ -58,6 +58,7 @@ export type ProcessRunner = (
 
 export interface SupersetDiscoveryOptions {
   executable?: string;
+  args?: readonly string[];
   timeoutMs?: number;
   runner?: ProcessRunner;
 }
@@ -168,11 +169,13 @@ export const runProcess: ProcessRunner = async (executable, args, timeoutMs, sig
 
 export class SupersetDiscoveryAdapter {
   private readonly executable: string;
+  private readonly args: readonly string[];
   private readonly timeoutMs: number;
   private readonly runner: ProcessRunner;
 
   constructor(options: SupersetDiscoveryOptions = {}) {
     this.executable = options.executable ?? discoverExecutable();
+    this.args = assertFixedArguments(options.args ?? []);
     this.timeoutMs = options.timeoutMs ?? 5_000;
     this.runner = options.runner ?? runProcess;
   }
@@ -244,7 +247,7 @@ export class SupersetDiscoveryAdapter {
   private async invoke(args: readonly string[], signal?: AbortSignal): Promise<ProcessResult> {
     let result: ProcessResult;
     try {
-      result = await this.runner(this.executable, args, this.timeoutMs, signal);
+      result = await this.runner(this.executable, [...this.args, ...args], this.timeoutMs, signal);
     } catch (error) {
       if (error instanceof SupersetDiscoveryError) throw error;
       throw new SupersetDiscoveryError("UNAVAILABLE", safeErrorMessage(error));
