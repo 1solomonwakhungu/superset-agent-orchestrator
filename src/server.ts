@@ -2,16 +2,17 @@
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { realpath } from "node:fs/promises";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { RedactionPolicy, RegisteredWorkspaceAuthorizer } from "./security.js";
+import { assertDataOperand, RegisteredWorkspaceAuthorizer, RedactionPolicy, type WorkspaceAuthorizer } from "./security.js";
 import { BatchQueryError, DurableStore } from "./store.js";
 import { LaunchService } from "./launch-service.js";
 import { ResultCaptureService } from "./result-capture.js";
 import { SupersetProcessAdapter, SupersetProcessError } from "./superset-process-adapter.js";
-import { SupersetDiscoveryAdapter } from "./superset-discovery.js";
 import { assertRegisteredToolNames, assertSafeToolNames } from "./tool-security.js";
+import { SupersetDiscoveryAdapter } from "./superset-discovery.js";
 import type { AgentAdapter } from "./agent-adapter.js";
 import { LifecycleService } from "./lifecycle-service.js";
 import {
@@ -118,22 +119,23 @@ async function main(): Promise<void> {
 
   const server = new McpServer({ name: "superset-agent-orchestrator", version: "0.1.0" });
   const integrationToolsEnabled = process.env.SUPERSET_ORCHESTRATOR_ENABLE_PROVIDER_TEST_TOOLS === "1";
-  const discovery = providerExecutable === undefined ? undefined : new SupersetDiscoveryAdapter({ executable: providerExecutable });
-  const workspaceAuthorizer = integrationToolsEnabled
+  const integrationWorkspaceRoot = process.env.SUPERSET_ORCHESTRATOR_PROVIDER_TEST_WORKSPACE_ROOT;
+  const workspaceAuthorizer: WorkspaceAuthorizer = integrationToolsEnabled && integrationWorkspaceRoot !== undefined
     ? {
-        authorize: async (workspaceId: string) => ({
-          workspaceId,
-          projectId: "provider-test-project",
-          canonicalPath: join(dirname(statePath), workspaceId),
-          revalidate: async () => undefined,
-        }),
+        authorize: async (workspaceId) => {
+          const canonicalPath = assertDataOperand(await realpath(join(integrationWorkspaceRoot, workspaceId)), "workspace path");
+          return {
+            workspaceId, projectId: "provider-integration", canonicalPath,
+            revalidate: async () => {
+              if (await realpath(join(integrationWorkspaceRoot, workspaceId)) !== canonicalPath) {
+                throw new Error("Integration workspace identity changed before launch");
+              }
+            },
+          };
+        },
       }
-    : discovery === undefined
-      ? undefined
-      : new RegisteredWorkspaceAuthorizer(() => discovery.inventory());
-  const launches = provider === undefined || workspaceAuthorizer === undefined
-    ? undefined
-    : new LaunchService(store, provider, workspaceAuthorizer);
+    : new RegisteredWorkspaceAuthorizer(() => new SupersetDiscoveryAdapter().inventory());
+  const launches = provider === undefined ? undefined : new LaunchService(store, provider, workspaceAuthorizer);
   const capture = provider === undefined ? undefined : new ResultCaptureService(store, provider);
   if (launches !== undefined) await launches.dispatchPending();
 
@@ -142,7 +144,7 @@ async function main(): Promise<void> {
     agent_preset_id: z.string().min(1), idempotency_key: z.string().min(1),
   }).strict();
   server.registerTool(
-    "provider_batches_launch",
+    tool("provider_batches_launch"),
     {
       description: "Durably launch one real batch through the configured Superset provider",
       inputSchema: {
@@ -161,7 +163,6 @@ async function main(): Promise<void> {
             idempotencyKey: assignment.idempotency_key,
             attribution: { agent: assignment.agent_preset_id, task: assignment.label },
             prompt: assignment.prompt, workspaceId: assignment.workspace_id,
-            workspacePath: assignment.workspace_id,
           })),
         });
         await launches.dispatchPending();
@@ -172,7 +173,7 @@ async function main(): Promise<void> {
     },
   );
   server.registerTool(
-    "provider_sessions_results",
+    tool("provider_sessions_results"),
     {
       description: "Refresh and return exact attributed results for up to 100 sessions",
       inputSchema: { request_id: z.string().min(1), session_ids: z.array(z.string().min(1)).min(1).max(100) },
@@ -215,7 +216,7 @@ async function main(): Promise<void> {
     },
   );
   server.registerTool(
-    "provider_sessions_cancel",
+    tool("provider_sessions_cancel"),
     {
       description: "Cancel configured Superset provider sessions without retries",
       inputSchema: {
@@ -456,7 +457,7 @@ async function main(): Promise<void> {
 }
 
 function providerError(requestId: string, code: ErrorCode, message: string) {
-  return { ...result({ request_id: requestId, error: contractError(code, message) }), isError: true };
+  return { ...result({ request_id: requestId, error: contractError(code, store.redactText(message)) }), isError: true };
 }
 
 function processFailure(requestId: string, error: unknown) {

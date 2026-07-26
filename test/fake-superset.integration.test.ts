@@ -13,13 +13,10 @@ const fixture = resolve("test/fixtures/fake-superset.mjs");
 const now = () => new Date("2000-01-01T00:00:00.000Z");
 const authorizer: WorkspaceAuthorizer = {
   authorize: async (workspaceId) => ({
-    workspaceId,
-    projectId: "fake-project",
-    canonicalPath: `/workspaces/${workspaceId}`,
+    workspaceId, projectId: "fake-project", canonicalPath: `/workspaces/${workspaceId.slice("workspace-".length)}`,
     revalidate: async () => undefined,
   }),
 };
-
 test("fake Superset proves completion, failure, cancellation, restart recovery, and exact attribution", async () => {
   await withHarness({
     scripts: [

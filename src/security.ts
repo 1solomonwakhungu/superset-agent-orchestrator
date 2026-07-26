@@ -38,6 +38,8 @@ const SECRET_PATTERNS: readonly [RegExp, string][] = [
 ];
 
 export const MAX_REDACTION_DEPTH = 20;
+// A 100-session contract response carries several fields per item; keep the
+// traversal bounded without truncating a valid maximum-size batch.
 export const MAX_REDACTION_ENTRIES = 10_000;
 
 export function redactText(value: string, canaries: readonly string[] = []): string {
