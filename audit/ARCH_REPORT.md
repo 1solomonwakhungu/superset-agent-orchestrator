@@ -3,7 +3,8 @@
 ## Provenance
 
 - Checkpoint: `openbmb/MiniCPM5-1B@4e9de7a0778dc1c362e983e6858f0e77542cbdca`
-- Method: pinned config/tokenizer files plus the safetensors header; model tensors were not loaded or executed.
+- Method: pinned config/tokenizer files plus the safetensors header; model tensors
+  were not loaded or executed.
 - Architecture declaration: `LlamaForCausalLM` (`llama`)
 
 ## Measured Structure
@@ -26,7 +27,8 @@
 | Activation / norm | `silu` / RMSNorm epsilon `1e-06` |
 
 The tensor-derived total exactly matches the brief.
-The checkpoint confirms 24 layers, 8:1 grouped-query attention, and a 131,072-token configured context.
+The checkpoint confirms 24 layers, 8:1 grouped-query attention, and a
+131,072-token configured context.
 
 ## Parameter Breakdown
 
@@ -52,5 +54,6 @@ Each transformer layer has `28,314,624` parameters. Global tensors have
 
 The tokenizer is `PreTrainedTokenizerFast`, with the special-token map in
 `tokenizer_report.json`. The exact pinned template is copied to `chat_template.jinja`.
-`template_render.txt` records a deterministic tool definition and assistant tool call; the
-generator verifies the function name and `city=Nairobi` argument survive serialization.
+`template_render.txt` records a deterministic tool definition and assistant tool
+call; the generator verifies the function name and `city=Nairobi` argument survive
+serialization.

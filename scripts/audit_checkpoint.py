@@ -131,7 +131,8 @@ def run(root: Path, output: Path) -> None:
 ## Provenance
 
 - Checkpoint: `{lock['repository']}@{lock['revision']}`
-- Method: pinned config/tokenizer files plus the safetensors header; model tensors were not loaded or executed.
+- Method: pinned config/tokenizer files plus the safetensors header; model tensors
+  were not loaded or executed.
 - Architecture declaration: `{config['architectures'][0]}` (`{config['model_type']}`)
 
 ## Measured Structure
@@ -154,7 +155,8 @@ def run(root: Path, output: Path) -> None:
 | Activation / norm | `{config['hidden_act']}` / RMSNorm epsilon `{config['rms_norm_eps']}` |
 
 {delta_explanation}
-The checkpoint confirms 24 layers, 8:1 grouped-query attention, and a 131,072-token configured context.
+The checkpoint confirms 24 layers, 8:1 grouped-query attention, and a
+131,072-token configured context.
 
 ## Parameter Breakdown
 
@@ -169,8 +171,9 @@ Each transformer layer has `{by_layer['layer.0']:,}` parameters. Global tensors 
 
 The tokenizer is `PreTrainedTokenizerFast`, with the special-token map in
 `tokenizer_report.json`. The exact pinned template is copied to `chat_template.jinja`.
-`template_render.txt` records a deterministic tool definition and assistant tool call; the
-generator verifies the function name and `city=Nairobi` argument survive serialization.
+`template_render.txt` records a deterministic tool definition and assistant tool
+call; the generator verifies the function name and `city=Nairobi` argument survive
+serialization.
 """
     (output / "ARCH_REPORT.md").write_text(architecture)
 
