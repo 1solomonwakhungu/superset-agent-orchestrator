@@ -45,6 +45,7 @@ export class ResultCaptureService {
       }
       result = parseProviderResult(providerResult);
     } catch (error) {
+      if (isTransientProviderError(error)) throw error;
       return this.ingest(assignmentId, deliveryId, {
         kind: "malformed",
         error: error instanceof Error && error.message.includes("exceeds the 4194304 byte limit")
@@ -98,6 +99,11 @@ export class ResultCaptureService {
       capturedAt: this.now().toISOString(),
     });
   }
+}
+
+function isTransientProviderError(error: unknown): boolean {
+  if (error === null || typeof error !== "object" || !("code" in error)) return false;
+  return error.code === "PROVIDER_UNAVAILABLE";
 }
 
 function boundedClaim(claim: AgentResultClaim): AgentResultClaim {

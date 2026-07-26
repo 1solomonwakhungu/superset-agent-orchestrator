@@ -119,7 +119,7 @@ test("cancellation racing a rejected launch settles as failed launch_error", asy
     const accepted = await new LaunchService(store, adapter, authorizer).launch(request);
     await entered;
     await new LifecycleService(store, adapter).cancelSession(accepted.sessionId);
-    rejectLaunch?.(new Error("launch rejected"));
+    rejectLaunch?.(Object.assign(new Error("launch rejected"), { code: "LAUNCH_REJECTED" }));
 
     let worker = await store.worker(accepted.sessionId);
     for (let attempt = 0; attempt < 100 && worker?.status !== "failed"; attempt += 1) {
@@ -246,7 +246,7 @@ test("deadline winning during a rejected launch preserves deadline truth and cle
     await entered;
     await store.setWorkerDeadline(accepted.sessionId, new Date("2026-07-26T00:00:00.000Z"));
     await new LifecycleService(store, adapter).enforceDeadlines(new Date("2026-07-26T00:00:01.000Z"));
-    rejectLaunch?.(new Error("launch rejected"));
+    rejectLaunch?.(Object.assign(new Error("launch rejected"), { code: "LAUNCH_REJECTED" }));
 
     let worker = await store.worker(accepted.sessionId);
     for (let attempt = 0; attempt < 100 && store.snapshot().assignments[0]?.status !== "failed"; attempt += 1) {
@@ -314,6 +314,17 @@ test("repeated idempotency keys return one acceptance and launch one provider ru
     assert.deepEqual(state.auditEvents.map(({ type }) => type), [
       "launch_accepted", "launch_reserved", "execution_started",
     ]);
+  });
+});
+
+test("scopes idempotency keys to the client identity", async () => {
+  await withStore(async (path) => {
+    const service = new LaunchService(new DurableStore(path), new FakeAgentAdapter([script, script]), authorizer);
+    const first = await service.accept(request);
+    const second = await service.accept({ ...request, clientId: "another-client" });
+
+    assert.notEqual(first.assignmentId, second.assignmentId);
+    assert.notEqual(first.sessionId, second.sessionId);
   });
 });
 
