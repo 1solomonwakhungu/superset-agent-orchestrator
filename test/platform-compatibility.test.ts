@@ -5,7 +5,11 @@ import { join } from "node:path";
 import test from "node:test";
 import { DurableStore } from "../src/store.js";
 import { SecurityError } from "../src/security.js";
-import { runProcess, SupersetDiscoveryError } from "../src/superset-discovery.js";
+import {
+  runProcess,
+  SupersetDiscoveryAdapter,
+  SupersetDiscoveryError,
+} from "../src/superset-discovery.js";
 
 const NODE_FIXTURE_DIRECTORY = await mkdtemp(join(tmpdir(), "orchestrator-portable-node-"));
 const NODE_EXECUTABLE = join(NODE_FIXTURE_DIRECTORY, "node");
@@ -80,6 +84,73 @@ test("a discovery timeout terminates descendant processes", { skip: process.plat
     );
     await new Promise((resolve) => setTimeout(resolve, 300));
     await assert.rejects(access(marker), { code: "ENOENT" });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a failed parallel discovery command terminates sibling process trees", { skip: process.platform === "win32" }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "orchestrator-discovery-siblings-"));
+  const fixture = join(directory, "discovery.mjs");
+  const workspaceReady = join(directory, "workspace-started");
+  const agentReady = join(directory, "agent-started");
+  const workspaceMarker = join(directory, "workspace-survived");
+  const agentMarker = join(directory, "agent-survived");
+  await writeFile(fixture, `
+    import { existsSync } from "node:fs";
+    import { spawn } from "node:child_process";
+    const command = process.argv[2];
+    const files = {
+      workspaces: [${JSON.stringify(workspaceReady)}, ${JSON.stringify(workspaceMarker)}],
+      agents: [${JSON.stringify(agentReady)}, ${JSON.stringify(agentMarker)}],
+    };
+    if (command === "projects") {
+      while (!existsSync(${JSON.stringify(workspaceReady)}) || !existsSync(${JSON.stringify(agentReady)})) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      process.exit(7);
+    }
+    const [ready, marker] = files[command];
+    const descendant = \`require("node:fs").writeFileSync(\${JSON.stringify(ready)}, "started"); setTimeout(() => require("node:fs").writeFileSync(\${JSON.stringify(marker)}, "survived"), 500);\`;
+    spawn(process.execPath, ["-e", descendant], { stdio: "ignore" });
+    setInterval(() => {}, 1000);
+  `);
+
+  const adapter = new SupersetDiscoveryAdapter({
+    executable: NODE_EXECUTABLE,
+    timeoutMs: 5_000,
+    runner: async (executable, args, timeoutMs, signal) => {
+      if (args[0] === "--version") return { stdout: "superset 1.0.0", stderr: "", exitCode: 0 };
+      if (args[0] === "status") {
+        return {
+          stdout: JSON.stringify({
+            running: true,
+            healthy: true,
+            pid: process.pid,
+            port: 3210,
+            endpoint: "http://127.0.0.1:3210",
+            hostId: "local",
+            organizationId: "org",
+            hostName: "fixture",
+            uptimeSec: 1,
+          }),
+          stderr: "",
+          exitCode: 0,
+        };
+      }
+      return runProcess(executable, [fixture, ...args], timeoutMs, signal);
+    },
+  });
+
+  try {
+    await assert.rejects(
+      adapter.discover(),
+      (error: unknown) => error instanceof SupersetDiscoveryError &&
+        error.code === "UNAVAILABLE" && error.message.includes("projects"),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    await assert.rejects(access(workspaceMarker), { code: "ENOENT" });
+    await assert.rejects(access(agentMarker), { code: "ENOENT" });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
