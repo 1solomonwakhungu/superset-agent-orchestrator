@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { LaunchService, type LaunchAcceptance } from "../src/launch-service.js";
+import { LifecycleService } from "../src/lifecycle-service.js";
 import { ResultCaptureService } from "../src/result-capture.js";
 import { DurableStore } from "../src/store.js";
 import { SupersetProcessAdapter, SupersetProcessError } from "../src/superset-process-adapter.js";
@@ -61,7 +62,7 @@ test("fake Superset proves completion, failure, cancellation, restart recovery, 
       assert.equal(result.batchId, acceptedLaunch.batchId);
       assert.equal(result.sessionId, acceptedLaunch.sessionId);
       assert.equal(result.workspaceId, `workspace-${index}`);
-      assert.equal(result.workspacePath, `/workspaces/workspace-${index}`);
+      assert.equal(result.workspacePath, `/workspaces/${index}`);
       assert.equal(result.attempt, 1);
       assert.match(result.attemptId, /^attempt_/);
       assert.match(result.runId, /^fake-/);
@@ -116,7 +117,6 @@ test("accepted launches recover after one-shot timeout and malformed responses w
 test("fake Superset covers every process adapter typed error", async () => {
   const cases = [
     [{ launchError: "rejected", defaultScript: successScript() }, "launch", "LAUNCH_REJECTED"],
-    [{ cancelUnsupported: true, defaultScript: successScript() }, "cancel", "CANCEL_UNSUPPORTED"],
     [{ malformedCommands: ["find"], defaultScript: successScript() }, "find", "PROVIDER_PROTOCOL_ERROR"],
   ] as const;
   for (const [scenario, operation, code] of cases) {
@@ -124,10 +124,6 @@ test("fake Superset covers every process adapter typed error", async () => {
       await assert.rejects(async () => {
         if (operation === "launch") await adapter.launch(adapterRequest("one", "one", "/tmp/one"));
         if (operation === "find") await adapter.findByIdempotencyKey("one");
-        if (operation === "cancel") {
-          const handle = await adapter.launch(adapterRequest("one", "one", "/tmp/one"));
-          await adapter.cancel(handle);
-        }
       }, (error: unknown) => {
         assert.equal(error instanceof SupersetProcessError && error.code, code);
         return true;
@@ -135,6 +131,36 @@ test("fake Superset covers every process adapter typed error", async () => {
       assert.equal((await calls()).filter(({ command }) => command === operation).length, 1);
     });
   }
+});
+
+test("fake Superset rolls back durable cancellation when the provider reports it unsupported", async () => {
+  await withHarness({ cancelUnsupported: true, defaultScript: successScript() }, async ({ adapter, statePath, calls }) => {
+    const store = new DurableStore(statePath);
+    const launches = new LaunchService(store, adapter, authorizer, now);
+    const accepted = await launches.accept(request(0, "unsupported-cancel"));
+    await launches.dispatchPending();
+    const before = await store.worker(accepted.sessionId);
+
+    const outcome = await new LifecycleService(store, adapter).cancelSession(
+      accepted.sessionId,
+      "user_requested",
+      "operator request",
+    );
+
+    assert.deepEqual(outcome, {
+      sessionId: accepted.sessionId,
+      error: "CANCEL_UNSUPPORTED",
+      message: "The backend rejected cancellation as unsupported",
+      status: before?.status,
+    });
+    const restored = await store.worker(accepted.sessionId);
+    assert.equal(restored?.status, before?.status);
+    assert.equal(restored?.cancelRequestedAt, undefined);
+    assert.equal(restored?.cancellationDeliveryPending, undefined);
+    assert.equal(restored?.stopReason, undefined);
+    assert.equal(restored?.stopDetail, undefined);
+    assert.equal((await calls()).filter(({ command }) => command === "cancel").length, 1);
+  });
 });
 
 test("provider requests use stdin, exclude ambient secrets and proxy credentials, and redact diagnostics", async () => {
