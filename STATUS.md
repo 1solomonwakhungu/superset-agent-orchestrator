@@ -12,9 +12,9 @@
   fail-closed durable schemas, monotonic launch transitions, and atomic
   `updateLaunch` in-memory state on persistence failure.
 - Key results after integrating `main@cbd44e1` and its subsequent persistence
-  dependency: 190 active JS/TS tests and
+  dependency and PER-336 security hotfix: 203 active JS/TS tests and
   3 Python tests pass, with one explicit Superset Desktop smoke skip. C8 reports
-  98.09% lines/statements, 92.61% branches, and 95.77% functions across the
+  98.27% lines/statements, 91.99% branches, and 96.29% functions across the
   enforced critical modules. Twenty repeated race runs and focused domain, schema,
   contract, persistence, and safety tests passed.
 - Review follow-up: Standalone coverage and race commands now build their
