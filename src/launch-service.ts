@@ -99,10 +99,10 @@ export class LaunchService {
       }
     }
     const acceptedAt = this.now().toISOString();
-    const batchScope = scopedKey(request.clientId, request.idempotencyKey);
+    const batchScope = scopedKey(clientId, request.idempotencyKey);
     const batchId = stableId("batch", batchScope);
     const sessions = request.assignments.map((item) => ({
-      id: stableId("session", scopedKey(request.clientId, item.idempotencyKey)), clientId: request.clientId,
+      id: stableId("session", scopedKey(clientId, item.idempotencyKey)), clientId,
       createdAt: acceptedAt, lastSeenAt: acceptedAt,
     }));
     const batch: Batch = {
@@ -116,13 +116,13 @@ export class LaunchService {
         ...item, clientId: request.clientId, batchName: request.batchName,
       };
       return {
-        id: stableId("assignment", scopedKey(request.clientId, item.idempotencyKey)),
-        idempotencyKey: scopedKey(request.clientId, item.idempotencyKey),
+        id: stableId("assignment", scopedKey(clientId, item.idempotencyKey)),
+        idempotencyKey: scopedKey(clientId, item.idempotencyKey),
         requestFingerprint: fingerprint(fullRequest), batchId, sessionId: sessions[index]!.id,
         status: "accepted", attribution: item.attribution, prompt: item.prompt,
         workspaceId: item.workspaceId,
         workspacePath: assertDataOperand(grants[index]!.canonicalPath, "workspace path"),
-        attemptId: stableId("attempt", scopedKey(request.clientId, item.idempotencyKey)), attempt: 1,
+        attemptId: stableId("attempt", scopedKey(clientId, item.idempotencyKey)), attempt: 1,
         acceptedAt, updatedAt: acceptedAt,
       };
     });
@@ -138,6 +138,10 @@ export class LaunchService {
     const stored = await this.store.acceptLaunchBatch({
       assignments, sessions, batch, workers,
       events: assignments.map(({ id }) => event(id, "launch_accepted", acceptedAt)),
+      securityAudits: assignments.map((assignment, index) => this.auditInput(
+        { ...request.assignments[index]!, clientId: request.clientId, batchName: request.batchName },
+        "allowed", "launch_accepted", assignment.id, grants[index]!.projectId,
+      )),
     });
     this.injectCrash("after_acceptance");
     return stored.assignments.map(acceptance);
@@ -180,7 +184,7 @@ export class LaunchService {
         : new Error(message, { cause: sanitizedCause });
     }
     const acceptedAt = this.now().toISOString();
-    const key = scopedKey(request.clientId, request.idempotencyKey);
+    const key = scopedKey(clientId, request.idempotencyKey);
     const assignmentId = stableId("assignment", key);
     const attemptId = stableId("attempt", key);
     const session: Session = {
