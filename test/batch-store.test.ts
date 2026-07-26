@@ -91,7 +91,7 @@ test("mixed states expose completed results independently with exact attribution
     auditEvents: [],
     launchIntents: [],
   };
-  await writeFile(path, JSON.stringify(state), "utf8");
+  await writeFile(path, JSON.stringify(state), { encoding: "utf8", mode: 0o600 });
   const store = new DurableStore(path);
   try {
     await store.reconcile(new Date(timestamp));
