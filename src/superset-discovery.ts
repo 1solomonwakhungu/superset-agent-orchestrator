@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
 import { accessSync, constants, realpathSync } from "node:fs";
-import { mkdtemp, open, readFile, realpath, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { realpath, stat } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import {
   agentPresetListSchema,
@@ -96,19 +95,18 @@ export const runProcess: ProcessRunner = async (executable, args, timeoutMs) => 
     throw new SecurityError("POLICY_DENIED", "Executable cannot be pinned to a canonical regular file", false, { cause: error });
   }
   const argv = assertFixedArguments(args);
-  const directory = await mkdtemp(join(tmpdir(), "superset-discovery-"));
-  const stdoutPath = join(directory, "stdout");
-  const stdoutFile = await open(stdoutPath, "wx", 0o600);
-  try {
-    const result = await new Promise<Omit<ProcessResult, "stdout">>((resolve, reject) => {
+  return new Promise<ProcessResult>((resolve, reject) => {
       const child = spawn(program, argv, {
         shell: false,
-        stdio: ["ignore", stdoutFile.fd, "pipe"],
+        stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
         env: childEnvironment(),
       });
-      let stderr = "";
+      const stdout: Buffer[] = [];
+      const stderr: Buffer[] = [];
+      let outputBytes = 0;
       let settled = false;
+      let terminationError: SupersetDiscoveryError | undefined;
 
       const finish = (action: () => void) => {
         if (settled) return;
@@ -116,51 +114,39 @@ export const runProcess: ProcessRunner = async (executable, args, timeoutMs) => 
         clearTimeout(timer);
         action();
       };
-      const append = (current: string, chunk: Buffer) => {
-        if (Buffer.byteLength(current) + chunk.byteLength > MAX_OUTPUT_BYTES) {
-          child.kill("SIGKILL");
-          finish(() => reject(new SupersetDiscoveryError(
+      const append = (current: Buffer[], chunk: Buffer) => {
+        outputBytes += chunk.byteLength;
+        if (outputBytes > MAX_OUTPUT_BYTES) {
+          terminationError ??= new SupersetDiscoveryError(
             "MALFORMED_RESPONSE",
             "Superset discovery output exceeded the supported limit",
-          )));
-          return current;
+          );
+          child.kill("SIGKILL");
+          return;
         }
-        return current + chunk.toString("utf8");
+        current.push(chunk);
       };
 
-      child.stderr?.on("data", (chunk: Buffer) => { stderr = append(stderr, chunk); });
+      child.stdout?.on("data", (chunk: Buffer) => { append(stdout, chunk); });
+      child.stderr?.on("data", (chunk: Buffer) => { append(stderr, chunk); });
       child.once("error", (error) => finish(() => reject(new SupersetDiscoveryError(
         "UNAVAILABLE",
         "Superset executable is unavailable",
         { cause: error },
       ))));
-      child.once("close", (exitCode) => finish(() => resolve({
-        stderr,
-        exitCode: exitCode ?? -1,
-      })));
+      child.once("close", (exitCode) => finish(() => terminationError === undefined
+        ? resolve({ stdout: Buffer.concat(stdout).toString("utf8"), stderr: Buffer.concat(stderr).toString("utf8"), exitCode: exitCode ?? -1 })
+        : reject(terminationError)));
 
       const timer = setTimeout(() => {
-        child.kill("SIGKILL");
-        finish(() => reject(new SupersetDiscoveryError(
+        terminationError ??= new SupersetDiscoveryError(
           "TIMED_OUT",
           `Superset discovery exceeded ${timeoutMs} ms`,
-        )));
+        );
+        child.kill("SIGKILL");
       }, timeoutMs);
       timer.unref();
     });
-    await stdoutFile.close();
-    const stdout = await readFile(stdoutPath);
-    if (stdout.byteLength > MAX_OUTPUT_BYTES) {
-      throw new SupersetDiscoveryError(
-        "MALFORMED_RESPONSE",
-        "Superset discovery output exceeded the supported limit",
-      );
-    }
-    return { ...result, stdout: stdout.toString("utf8") };
-  } finally {
-    await stdoutFile.close().catch(() => undefined);
-    await rm(directory, { recursive: true, force: true });
-  }
 };
 
 export class SupersetDiscoveryAdapter {

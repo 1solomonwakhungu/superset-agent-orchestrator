@@ -89,6 +89,7 @@ export function auditField(value: string, canaries: readonly string[] = []): str
 }
 
 export const MAX_PROMPT_BYTES = 128 * 1024;
+export const MAX_RESULT_BYTES = 4 * 1024 * 1024;
 
 /**
  * Validates untrusted text before it is persisted or handed to a child process.
@@ -98,6 +99,23 @@ export const MAX_PROMPT_BYTES = 128 * 1024;
 export function assertBoundedText(value: string, name: string, maxBytes = MAX_PROMPT_BYTES): string {
   if (typeof value !== "string" || value.length === 0) {
     throw new SecurityError("INVALID_ARGUMENT", `${name} must be a non-empty string`);
+  }
+  if (CONTROL_CHARACTERS.test(value)) {
+    throw new SecurityError("INVALID_ARGUMENT", `${name} must not contain control characters`);
+  }
+  if (LONE_SURROGATE.test(value)) {
+    throw new SecurityError("INVALID_ARGUMENT", `${name} must be well-formed Unicode`);
+  }
+  if (Buffer.byteLength(value, "utf8") > maxBytes) {
+    throw new SecurityError("INVALID_ARGUMENT", `${name} exceeds the ${maxBytes} byte limit`);
+  }
+  return value;
+}
+
+/** Applies the same encoding and size checks to text fields that may be empty. */
+export function assertBoundedOptionalText(value: string, name: string, maxBytes: number): string {
+  if (typeof value !== "string") {
+    throw new SecurityError("INVALID_ARGUMENT", `${name} must be a string`);
   }
   if (CONTROL_CHARACTERS.test(value)) {
     throw new SecurityError("INVALID_ARGUMENT", `${name} must not contain control characters`);
