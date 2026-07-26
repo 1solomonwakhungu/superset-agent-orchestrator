@@ -65,6 +65,7 @@ export class SupersetProcessAdapter implements AgentAdapter {
   }
 
   async launch(request: LaunchRequest): Promise<RunHandle> {
+    await request.revalidateWorkspace();
     return this.invoke("launch", request, handleSchema);
   }
 
@@ -130,7 +131,7 @@ export class SupersetProcessAdapter implements AgentAdapter {
       };
       const collect = (chunks: Buffer[], chunk: Buffer) => {
         outputBytes += chunk.length;
-        if (outputBytes > 1024 * 1024) terminate();
+        if (outputBytes > 4 * 1024 * 1024) terminate();
         else chunks.push(chunk);
       };
       child.stdout.on("data", (chunk: Buffer) => collect(stdoutChunks, chunk));
@@ -149,10 +150,10 @@ export class SupersetProcessAdapter implements AgentAdapter {
           return;
         }
         const stderr = Buffer.concat(stderrChunks).toString("utf8");
-        if (code !== 0 || childSignal !== null || timedOut || outputBytes > 1024 * 1024) {
+        if (code !== 0 || childSignal !== null || timedOut || outputBytes > 4 * 1024 * 1024) {
           const declared = parseProcessError(stderr);
           const errorCode: SupersetProcessErrorCode = declared?.code
-            ?? (timedOut || childSignal !== null || outputBytes > 1024 * 1024
+            ?? (timedOut || childSignal !== null || outputBytes > 4 * 1024 * 1024
               ? "PROVIDER_UNAVAILABLE"
               : command === "launch" ? "LAUNCH_REJECTED" : "PROVIDER_UNAVAILABLE");
           reject(new SupersetProcessError(errorCode, `${command} provider command failed`));

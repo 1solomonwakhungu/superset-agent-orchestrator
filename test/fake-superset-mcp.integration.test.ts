@@ -48,6 +48,7 @@ test("production MCP server persists attributed completion, failure, cancellatio
       request_id: "cancel", session_ids: [canceled.sessionId], reason: "operator request",
     });
     assert.equal(cancelResponse.items[0]?.canceled, true);
+    await harness.restart();
     const terminal = await results(harness.client, launched.sessions.map(({ sessionId }) => sessionId));
     assert.equal(terminal.items[0]?.result?.claim.output, "exact answer");
     assert.equal(terminal.items[0]?.status, "succeeded");
@@ -66,6 +67,16 @@ test("production MCP server persists attributed completion, failure, cancellatio
     const recovered = await results(harness.client, launched.sessions.map(({ sessionId }) => sessionId));
     assert.deepEqual(recovered.items.map((item) => item.result?.claim), terminal.items.map((item) => item.result?.claim));
     assert.equal((await harness.calls()).filter(({ command }) => command === "launch").length, 3);
+  });
+});
+
+test("production MCP server rejects integration workspaces outside the configured root", async () => {
+  await withServer({ defaultScript: successScript() }, async (harness) => {
+    const input = launchArguments(1);
+    input.assignments[0]!.workspace_id = "..";
+    const response = await call(harness.client, "provider_batches_launch", input);
+    assert.equal(response.error?.code, "POLICY_DENIED");
+    assert.equal((await harness.calls()).filter(({ command }) => command === "launch").length, 0);
   });
 });
 
@@ -96,6 +107,7 @@ test("production MCP server exposes every provider error once without retries", 
   const cases = [
     [{ launchError: "rejected", defaultScript: successScript() }, "launch", "LAUNCH_REJECTED"],
     [{ cancelUnsupported: true, defaultScript: runningScript() }, "cancel", "CANCEL_UNSUPPORTED"],
+    [{ malformedCommands: ["cancel"], defaultScript: runningScript() }, "cancel", "PROVIDER_PROTOCOL_ERROR"],
     [{ malformedCommands: ["status"], defaultScript: successScript() }, "result", "PROVIDER_PROTOCOL_ERROR"],
     [{ hangCommands: ["status"], defaultScript: successScript() }, "result", "PROVIDER_UNAVAILABLE"],
   ] as const;
@@ -246,8 +258,13 @@ async function withServer(
       connection = await connect(env);
     },
     async calls() {
-      const state = JSON.parse(await readFile(fakeStatePath, "utf8")) as { calls: Array<{ command: string }> };
-      return state.calls;
+      try {
+        const state = JSON.parse(await readFile(fakeStatePath, "utf8")) as { calls: Array<{ command: string }> };
+        return state.calls;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+        throw error;
+      }
     },
   };
   try {
