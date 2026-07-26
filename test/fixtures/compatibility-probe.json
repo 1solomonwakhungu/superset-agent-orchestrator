@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "classification": "unknown",
+  "mutationAllowed": false,
+  "probeCommand": "npm run compatibility:probe",
+  "detected": {
+    "node": "22.0.0",
+    "mcpSdk": "1.29.0"
+  },
+  "unsupportedDimensions": [],
+  "supportedAlternatives": []
+}

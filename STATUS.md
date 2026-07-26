@@ -1,21 +1,11 @@
 # Status
 
-## PER-345 final integration, 2026-07-26
+## PER-346 final integration, 2026-07-26
 
-- Integrated companion PRs 42, 52, and 62 into final PR 28 and reconciled the
-  secured launch, persistence, lifecycle, cancellation, concurrency, resilience,
-  benchmark, and MCP surfaces with current `main`.
-- Preserved mandatory canonical workspace authorization, restricted child
-  environments, safe process arguments, typed security failures, tamper-evident
-  audits, bounded redaction, and reviewed tool registration across newer APIs.
-- Closed a cross-feature canary leak by redacting worker attribution before it is
-  persisted alongside an accepted launch.
-- Verification: `npm run check` passed 300/301 Node tests with one explicit live
-  Superset discovery skip, 92.30% statement and 85.31% branch coverage, 5/6 Python
-  tests with one declared model-dependent skip, schema no-diff, provenance and
-  research verification, plus `git diff --check`.
-- Next: push the resolved final PR head, verify exact-head CI, merge PR 28, and
-  synchronize the canonical Linear comment and status.
+- Integrated PR #29, including companion PR #68, with current `main` at `12a6d918d46d8f3242c07b65da150abed8231371`.
+- Preserved deterministic domain, schema, persistence, adapter, transition, idempotency, race, and security coverage while adapting it to secured workspace authorization and owner-only state persistence.
+- Fixed atomic launch-intent and security-audit persistence, data-only fake-adapter idempotency snapshots, retry dispatch composition, and launch-coordinator pre-dispatch failure handling.
+- `npm run verify` passed: 381 tests passed with one explicit model-dependent skip, coverage at 97.84% statements / 90.01% branches / 96.92% functions / 97.84% lines, six Python tests with one skip, schema/provenance/research checks, and 10/10 race runs.
 
 ## PER-345 integration with current main, 2026-07-26
 
@@ -79,6 +69,7 @@
   159 tests with one explicit skip, coverage and generated-schema checks, and
   3/3 Python tests; lint, typecheck, build, and `git diff --check` passed.
 - Next: merge the companion PR into the primary PER-345 branch after CI.
+
 ## PER-344 post-merge recovery accounting, 2026-07-26
 
 - Confirmed merged implementation PR 23 and lineage restoration PR 55 are on
@@ -92,6 +83,7 @@
   coverage, schema, provenance, and research gates; `git diff --check` passed.
 - The current-main integrated tree passed Quality, bounded load, MiniCPM5, all
   four macOS/Linux Node 22/24 lanes, and the generated compatibility report.
+
 ## PER-342 cancellation, timeouts, and bounded wait
 
 - Added `LifecycleService` owning cancel-one, cancel-batch, deadline expiry, and
@@ -109,46 +101,45 @@
   partial output with exact completeness.
 - Added MCP tools `batches_cancel`, `batches_wait`, `sessions_set_deadline`, and
   `deadlines_enforce`, plus a background deadline sweep.
+- Merged current `main` (`90cef0d`); the only conflict was additive `STATUS.md`
+  sections and both sides were kept.
+- Made offline verification deterministic: the live Superset smoke test now skips
+  only when the executable is genuinely absent (spawn `ENOENT`). A present but
+  broken, unhealthy, or malformed CLI still fails, and the run is mandatory when
+  `SUPERSET_ORCHESTRATOR_EXECUTABLE` is set or
+  `SUPERSET_ORCHESTRATOR_REQUIRE_LIVE_SMOKE=1`.
 - Kept real discovery schema coverage offline by recording sanitized Superset
   1.16.1 responses in `test/fixtures/`, replaying them through the real adapter
   against the same contract assertions, and pinning the real CLI key sets plus
   observed optional-field variation.
+- Verification: `npm run verify` passed 136/136 with the Superset CLI present and
+  135/136 with 1 declared skip and exit code 0 with the CLI absent from `PATH`;
+  focused lifecycle and race tests passed 33/33 across 10 consecutive runs;
+  `npm run check` and `git diff --check` passed.
+- Addressed all five PR review findings: atomic local cancellation, asynchronous
+  provider reconciliation, locked deadline rechecks, immediate all-error waits,
+  and the dedicated batch-cancellation response schema.
+- Final verification: `npm run verify` passed 143 tests with 1 expected live-CLI
+  skip; `npm run check`, schema generation, strict routing verification, and
+  `git diff --check` passed.
 - Independent review fixed published-schema/runtime drift for cancellation and
   wait, bounded and sanitized provider lifecycle calls, provider identity
   validation, single-flight background sweeps, parallel batch controls, and a
   production reconciliation path that retains results arriving after timeout.
+- Current verification: `npm run verify` passed 145 tests with 1 expected
+  live-CLI skip; focused lifecycle/MCP tests passed 42/42 across 10 runs (420
+  checks); typecheck, schema generation/diff, strict routing, and diff checks
+  passed.
 - Integrated signed quality-gate baseline `cbd44e1` and connected asynchronous
   launch acceptance/binding to lifecycle workers, including cancellation while
   provider launch is in flight. Added versioned deadline contracts, bounded
   provider abort coverage, limited batch cancellation concurrency, sequential
   reconciliation phases, protocol-identity errors, and pre-persist validation.
-- Verifier hardening adds truthful launch-failure settlement, durable late-bound
-  stop handoff after deadline/cancellation, terminal settlement despite result
-  retrieval failure, runtime provider payload validation, bounded lifecycle
-  fan-out, restart-safe stop retry flags, and terminal deadline refusal.
-- Integrated merged PER-336 security hotfix `d0b57fe`; lifecycle projection files
-  now use fail-closed owner-only, no-follow, single-link validation and secure
-  atomic publication. Final local gates passed 197/198 tests with one declared
-  live smoke skip, Python 3/3, schema no-diff, and 93.36% statement / 87.13%
-  branch / 87.39% function coverage. Focused lifecycle/result tests passed 78/78
-  across 10 runs (780 checks).
-- Follow-up verification hardened terminal-result retries across cancellation,
-  deadline, restart, replica-lag, and concurrent-reconciler races; fenced stop
-  delivery through crash and unsupported-response races; and bounded durable
-  observation history and deadline sweeps with explicit `has_more` continuation.
-- Follow-up focused lifecycle/MCP tests passed 72/72. Full pre-commit verification
-  passed 299 runnable Node tests with 1 intentional skip, coverage, and 5 Python
-  tests with 1 intentional skip; clean-commit verification follows.
-- PR #66 follow-up integrated current `main`, retained both state-path security
-  layers, and keeps terminal reconciliation pending when the provider result is
-  temporarily absent. Focused lifecycle, launch, and security tests passed
-  111/111; the complete quality gate passed 343/344 TypeScript tests with one
-  declared live smoke skip, 6 Python tests with one model-dependent skip, schema
-  no-diff, provenance, and research verification.
-- Final review hardening also makes normal cancellation result failures retryable,
-  reports a deadline that wins the delivery-claim race from durable state, and
-  records `launch_failed` evidence when local cancellation beats stale dispatch.
-
+- Post-integration verification: `npm ci` passed; `npm run check` passed 153/154
+  tests with 1 declared live smoke skip, 3/3 Python tests, schema no-diff, and
+  94.78% statement / 87.47% branch / 92.47% function coverage. Focused
+  launch/lifecycle/MCP tests passed 52/52 across 10 runs (520 checks), and
+  `git diff --check` passed.
 ## PER-351 performance and load validation
 
 - Added reproducible 100-session fake-backend and staged 30-agent controlled-load
@@ -675,8 +666,6 @@ locally.
   95.35% lines, and Python 3.11 tests 3/3; the focused 71-test suite passed 20
   consecutive runs (1,420/1,420), with schema no-diff, routing, Markdown lint,
   compileall, and `git diff --check` also passing.
-
-PER-336 embedded persistence and migrations is complete and verified locally.
 
 PER-348 adversarial resilience regression coverage is complete locally.
 
