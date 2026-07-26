@@ -6,3 +6,5 @@ test/**/*.js
 test/**/*.d.ts
 .orchestrator/
 *.tmp
+evidence/per-351/*.json
+evidence/per-351/*.md

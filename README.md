@@ -3,6 +3,9 @@
 Local-first MCP server for durable orchestration of parallel coding agents through
 Superset.
 
+Performance benchmarks and the safe-default controlled load runner are documented
+in [performance and load testing](docs/performance-and-load-testing.md).
+
 ## Product status
 
 The backend-neutral core and fake adapter exercise complete lifecycle semantics,
