@@ -23,6 +23,7 @@ interface FakeRun {
 }
 
 export class FakeAgentAdapter implements AgentAdapter {
+  readonly cancellation = "supported" as const;
   readonly launches: LaunchRequest[] = [];
   readonly cancellations: Array<{ runId: string; reason?: string }> = [];
   private readonly runs = new Map<string, FakeRun>();
@@ -81,12 +82,13 @@ export class FakeAgentAdapter implements AgentAdapter {
     return run.cancelled ?? run.script.result;
   }
 
-  async cancel(handle: RunHandle, reason?: string): Promise<void> {
+  async cancel(handle: RunHandle, reason?: string) {
     const run = this.getRun(handle);
-    if (run.resultAvailable) return;
+    if (run.resultAvailable) return { status: "accepted" as const };
     run.cancelled = { status: "cancelled", ...(reason !== undefined && { reason }) };
     run.resultAvailable = true;
     this.cancellations.push({ runId: handle.runId, ...(reason !== undefined && { reason }) });
+    return { status: "accepted" as const };
   }
 
   async resumeMetadata(handle: RunHandle): Promise<ResumeMetadata | undefined> {

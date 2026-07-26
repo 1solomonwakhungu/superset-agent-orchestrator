@@ -118,7 +118,7 @@ test("cleanup redacts payloads but preserves attribution and immutable history",
       storage.database.prepare("INSERT INTO idempotency_records VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
         "launch", "key-1", "hash", "{}", "session", "session-1", "2026-05-01T00:00:00.000Z", "2026-05-08T00:00:00.000Z",
       );
-      storage.acquireWriterLease({ workspaceId: "workspace-1", ownerSessionId: "session-1",
+      const lease = storage.acquireWriterLease({ workspaceId: "workspace-1", ownerSessionId: "session-1",
         ownerBatchId: "batch-1", ttlMs: 1, now: new Date("2026-05-01T00:00:00.000Z") });
       assert.deepEqual(storage.cleanup(new Date("2026-07-24T00:00:00.000Z")), {
         assignmentsRedacted: 1, resultsRedacted: 1, idempotencyDeleted: 1, leasesDeleted: 0,
@@ -127,7 +127,7 @@ test("cleanup redacts payloads but preserves attribution and immutable history",
       assert.equal(storage.database.prepare("SELECT prompt FROM assignments").get()?.prompt, null);
       assert.equal(storage.database.prepare("SELECT body FROM results").get()?.body, null);
       assert.equal(storage.database.prepare("SELECT requester FROM batches").get()?.requester, "solomon");
-      assert.equal(storage.database.prepare("SELECT COUNT(*) count FROM workspace_leases").get()?.count, 1);
+      assert.equal(storage.database.prepare("SELECT id FROM workspace_leases").get()?.id, lease.leaseId);
       assert.deepEqual(storage.database.prepare("SELECT event_type FROM events ORDER BY sequence").all()
         .map((row) => (row as { event_type: string }).event_type),
       ["session.completed", "lease_acquired", "retention.cleanup_completed"]);

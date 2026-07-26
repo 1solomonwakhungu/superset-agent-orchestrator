@@ -18,6 +18,7 @@ The existing recovery spike persists a different client/worker projection. It is
 | `sessions_status` | Returns one ordered status outcome for each of 1 to 100 unique session IDs. |
 | `sessions_results` | Returns currently available immutable artifacts and completeness for each requested session without waiting. |
 | `sessions_cancel` | Requests cancellation for each session. A concurrent terminal transition wins; unsupported provider cancellation is a typed item error. |
+| `batches_cancel` | Requests cancellation for every session in 1 to 100 batches and returns one item per batch. Item-level outcomes match `sessions_cancel`. |
 | `batches_get` | Pages a durable batch snapshot by immutable batch ID. |
 | `batches_wait` | Waits at most 30 seconds for up to 100 batches and returns current snapshots. Timeout is data, not an error. |
 | `batches_recover` | Reopens durable state by immutable batch ID after client or server restart and never relaunches merely because a process restarted. |
@@ -41,6 +42,19 @@ Explicit `session_ids`, `batch_ids`, and launch assignment arrays contain 1 to 1
 List pages default to 50 and allow at most 100 items. Cursors are opaque, bind to the batch and filters, and use stable durable batch sequence order. A mismatched or expired cursor returns `INVALID_ARGUMENT`. `has_more` is true exactly when `next_cursor` is present. Batches may eventually contain more than 100 sessions even though one launch call cannot.
 
 `batches_wait` accepts `timeout_ms` from 0 through 30000 and `until` of `any_terminal` or `all_terminal`. It returns immediately when the condition holds, otherwise returns the latest snapshot with `timed_out: true`; timeout never changes session state. Implementations aggregate state and must not create one polling loop per session.
+
+## Cancellation and deadline semantics
+
+Cancellation is ordered so state is never optimistic. The orchestrator checks provider capability, then persists cancellation intent, then issues the stop command, then records the provider's own terminal observation.
+
+- A backend that does not advertise supported cancellation returns `CANCEL_UNSUPPORTED` and changes no durable state. A backend that advertises support and then rejects the command is rolled back to its pre-cancel state, so a session is never parked in `canceling` on a promise the provider will not keep.
+- A session with no bound execution identity is canceled locally; there is no run to stop and no provider call is made.
+- Repeated and concurrent cancellation is idempotent, preserves the first reason, and issues exactly one stop command. Only the caller that claims the intent transition contacts the provider.
+- A transport failure during the stop command returns `PROVIDER_UNAVAILABLE` and retains `canceling`, because delivery is genuinely unknown.
+- Terminal state is monotonic. A completion that beat cancellation stays `completed` with stop reason `succeeded_before_cancellation`; a cancellation confirmation that arrives after another terminal outcome is recorded as a late observation and cannot regress state. A late result is retained only when no result was captured with the winning outcome.
+- A canceled or failed session keeps whatever output the run produced, marked `partial`, `empty`, or `missing`. Output presence never changes the terminal state.
+
+Deadlines are orchestrator-owned facts. Expiry is a `failed` outcome with stop reason `deadline_exceeded`; there is no separate timed-out state. The expiry transition is claimed under the durable single-writer lock before the provider is asked to stop, so concurrent sweeps expire and report each session exactly once and a provider failure never blocks expiry. A terminal session is never expired.
 
 ## Examples
 
