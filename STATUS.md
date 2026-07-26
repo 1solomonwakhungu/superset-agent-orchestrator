@@ -11,12 +11,20 @@
   permit, and terminal transitions while recovery waits cannot leak capacity.
 - Cancellation interrupts asynchronous pressure checks, including hooks that
   never settle, without disturbing the next queued request.
+- Unknown launch outcomes retain capacity until reconciliation authoritatively
+  proves absence or transfers the permit to the accepted run; cancellation
+  acknowledgements retain capacity until a terminal state is observed.
+- Recovery now reserves capacity before status inspection, fails closed on
+  status errors or identity mismatches, and releases terminal runs safely.
 - Added deterministic tests proving retries and batches hold capacity,
   cancellation frees capacity, every scope is enforced, and overload stays
   bounded or fails structurally when waiting is disabled.
-- Verification: `npm run verify` passed all 116 tests; the 3-test configuration
-  contract, strict local-routing verification, and `git diff --check` passed.
-- Next: deliver through pull request 23 and verify its exact head.
+- Verification: the focused concurrency suite passed 19/19; build, typecheck,
+  schema generation, the 3-test configuration contract, strict local-routing
+  verification, and `git diff --check` passed. The full 120-test suite passed
+  119 tests; only the prohibited live Superset smoke test could not run because
+  its external executable is unavailable.
+- Next: push pull request 23 and verify its exact head.
 
 ## PER-258 agency availability monitoring
 
