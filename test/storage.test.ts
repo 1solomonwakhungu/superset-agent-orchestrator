@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import { Worker } from "node:worker_threads";
 import { CURRENT_SCHEMA_VERSION, OrchestratorStorage } from "../src/storage.js";
 
 async function temporaryDirectory(run: (directory: string) => void | Promise<void>): Promise<void> {
@@ -26,6 +27,28 @@ function seed(storage: OrchestratorStorage, terminalAt = "2026-05-01T00:00:00.00
     "result-1", "session-1", "exact answer", "[]", "completed", terminalAt, null,
   );
   storage.appendEvent({ aggregateType: "session", aggregateId: "session-1", eventType: "session.completed", actor: "adapter" });
+}
+
+const permissions = async (path: string): Promise<number> => (await stat(path)).mode & 0o777;
+const assertOwnedByEffectiveUser = async (path: string): Promise<void> => {
+  const effectiveUid = process.geteuid?.();
+  if (effectiveUid !== undefined) assert.equal((await stat(path)).uid, effectiveUid);
+};
+
+function concurrentExportWorker(database: string, output: string): { worker: Worker; ready: Promise<void>; result: Promise<{ ok: boolean; error?: string }> } {
+  const worker = new Worker(new URL("fixtures/concurrent-storage-export-worker.ts", import.meta.url), {
+    execArgv: ["--import", "tsx"],
+    workerData: { database, output },
+  });
+  const ready = new Promise<void>((resolve, reject) => {
+    worker.once("message", (message) => message === "ready" ? resolve() : reject(new Error(`unexpected worker message: ${String(message)}`)));
+    worker.once("error", reject);
+  });
+  const result = ready.then(() => new Promise<{ ok: boolean; error?: string }>((resolve, reject) => {
+    worker.once("message", resolve);
+    worker.once("error", reject);
+  }));
+  return { worker, ready, result };
 }
 
 test("creates and migrates an empty product-owned registry", async () => {
@@ -143,6 +166,7 @@ test("corruption fails closed without replacing the original bytes", async () =>
     const path = join(directory, "registry.sqlite");
     const corrupt = Buffer.from("not a sqlite database");
     await writeFile(path, corrupt);
+    await chmod(path, 0o600);
     assert.throws(() => new OrchestratorStorage(path), /Cannot open orchestrator registry/);
     assert.deepEqual(await readFile(path), corrupt);
   });
@@ -223,6 +247,15 @@ test("rejects invalid retention durations before opening storage", () => {
   }
 });
 
+test("invalid retention configuration does not touch a file-backed path", async () => {
+  await temporaryDirectory(async (directory) => {
+    const registryDirectory = join(directory, "untouched");
+    const path = join(registryDirectory, "registry.sqlite");
+    assert.throws(() => new OrchestratorStorage(path, { resultRetentionDays: -1 }), /finite non-negative/);
+    await assert.rejects(stat(registryDirectory), /ENOENT/);
+  });
+});
+
 test("rollback refuses a logically invalid backup before changing the schema", async () => {
   await temporaryDirectory((directory) => {
     const path = join(directory, "registry.sqlite");
@@ -236,5 +269,152 @@ test("rollback refuses a logically invalid backup before changing the schema", a
       assert.equal(storage.schemaVersion(), CURRENT_SCHEMA_VERSION);
       assert.equal(storage.database.prepare("SELECT COUNT(*) count FROM sqlite_schema WHERE name = 'workspace_leases'").get()?.count, 1);
     } finally { storage.close(); }
+  });
+});
+
+test("registry, sidecars, backups, and exports stay owner-only under a permissive umask", async () => {
+  await temporaryDirectory(async (directory) => {
+    const previousUmask = process.umask(0o022);
+    try {
+      const registryDirectory = join(directory, "private-registry");
+      const backupDirectory = join(directory, "private-backup");
+      const exportDirectory = join(directory, "private-export");
+      const path = join(registryDirectory, "registry.sqlite");
+      const storage = new OrchestratorStorage(path);
+      try {
+        seed(storage);
+        const backupPath = join(backupDirectory, "backup.sqlite");
+        const exportPath = join(exportDirectory, "export.json");
+        storage.backup(backupPath);
+        OrchestratorStorage.exportJson(path, exportPath);
+        assert.equal(await permissions(registryDirectory), 0o700);
+        assert.equal(await permissions(backupDirectory), 0o700);
+        assert.equal(await permissions(exportDirectory), 0o700);
+        assert.equal(await permissions(path), 0o600);
+        assert.equal(await permissions(`${path}-wal`), 0o600);
+        assert.equal(await permissions(`${path}-shm`), 0o600);
+        assert.equal(await permissions(backupPath), 0o600);
+        assert.equal(await permissions(exportPath), 0o600);
+        for (const artifact of [registryDirectory, backupDirectory, exportDirectory, path, `${path}-wal`, `${path}-shm`, backupPath, exportPath]) {
+          await assertOwnedByEffectiveUser(artifact);
+        }
+      } finally { storage.close(); }
+    } finally { process.umask(previousUmask); }
+  });
+});
+
+test("preexisting permissive parents are never chmodded and fail closed", async () => {
+  await temporaryDirectory(async (directory) => {
+    const registryDirectory = join(directory, "permissive-registry");
+    const outputDirectory = join(directory, "permissive-output");
+    await mkdir(registryDirectory, { mode: 0o755 });
+    await mkdir(outputDirectory, { mode: 0o755 });
+    await chmod(registryDirectory, 0o755);
+    await chmod(outputDirectory, 0o755);
+    const path = join(registryDirectory, "registry.sqlite");
+    assert.throws(() => new OrchestratorStorage(path), /must already be owner-only/);
+    assert.equal(await permissions(registryDirectory), 0o755);
+    await assert.rejects(stat(path), /ENOENT/);
+
+    const privateDirectory = join(directory, "private-registry");
+    const privatePath = join(privateDirectory, "registry.sqlite");
+    const storage = new OrchestratorStorage(privatePath);
+    try {
+      assert.throws(() => storage.backup(join(outputDirectory, "backup.sqlite")), /must already be owner-only/);
+      assert.throws(() => OrchestratorStorage.exportJson(privatePath, join(outputDirectory, "export.json")), /must already be owner-only/);
+      assert.equal(await permissions(outputDirectory), 0o755);
+      await assert.rejects(stat(join(outputDirectory, "backup.sqlite")), /ENOENT/);
+      await assert.rejects(stat(join(outputDirectory, "export.json")), /ENOENT/);
+    } finally { storage.close(); }
+  });
+});
+
+test("existing permissive registry files fail closed inside a private directory and symlinks fail closed", async () => {
+  await temporaryDirectory(async (directory) => {
+    const registryDirectory = join(directory, "registry");
+    const path = join(registryDirectory, "registry.sqlite");
+    const initial = new OrchestratorStorage(path);
+    initial.close();
+    await chmod(path, 0o644);
+    assert.throws(() => new OrchestratorStorage(path), /must already be owner-only/);
+    assert.equal(await permissions(registryDirectory), 0o700);
+    assert.equal(await permissions(path), 0o644);
+    const linkPath = join(directory, "registry-link.sqlite");
+    await import("node:fs/promises").then(({ symlink }) => symlink(path, linkPath));
+    assert.throws(() => new OrchestratorStorage(linkPath), /regular non-symlink file/);
+  });
+});
+
+test("reserved, aliased, and dangling output paths fail closed", async () => {
+  await temporaryDirectory(async (directory) => {
+    const path = join(directory, "registry.sqlite");
+    const storage = new OrchestratorStorage(path);
+    try {
+      assert.throws(() => storage.exportJson(path), /Destination must differ/);
+      assert.throws(() => storage.exportJson(`${path}-wal`), /SQLite sidecars/);
+      assert.throws(() => storage.backup(`${path}-journal`), /SQLite sidecars/);
+      const alias = join(directory, "registry-alias.sqlite");
+      await import("node:fs/promises").then(({ link }) => link(path, alias));
+      assert.throws(() => storage.exportJson(alias), /aliases the live registry/);
+      const walAlias = join(directory, "wal-alias.sqlite");
+      await import("node:fs/promises").then(({ link }) => link(`${path}-wal`, walAlias));
+      const sourceMode = await permissions(`${path}-wal`);
+      assert.throws(() => storage.exportJson(walAlias), /SQLite sidecar/);
+      assert.throws(() => storage.backup(walAlias), /SQLite sidecar/);
+      assert.equal(await permissions(`${path}-wal`), sourceMode);
+      assert.equal(await permissions(walAlias), sourceMode);
+      const dangling = join(directory, "dangling-export.json");
+      await import("node:fs/promises").then(({ symlink }) => symlink(join(directory, "missing"), dangling));
+      assert.throws(() => storage.exportJson(dangling), /non-symlink/);
+    } finally { storage.close(); }
+  });
+});
+
+test("preexisting backup and export destinations remain byte-for-byte and mode-for-mode unchanged", async () => {
+  await temporaryDirectory(async (directory) => {
+    const path = join(directory, "registry.sqlite");
+    const storage = new OrchestratorStorage(path);
+    try {
+      const backupPath = join(directory, "existing-backup.sqlite");
+      const exportPath = join(directory, "existing-export.json");
+      const original = Buffer.from("unrelated existing bytes");
+      await writeFile(backupPath, original, { mode: 0o640 });
+      await writeFile(exportPath, original, { mode: 0o640 });
+      await chmod(backupPath, 0o640);
+      await chmod(exportPath, 0o640);
+      assert.throws(() => storage.backup(backupPath), /already exists/);
+      assert.throws(() => OrchestratorStorage.exportJson(path, exportPath), /already exists/);
+      for (const destination of [backupPath, exportPath]) {
+        assert.deepEqual(await readFile(destination), original);
+        assert.equal(await permissions(destination), 0o640);
+      }
+    } finally { storage.close(); }
+  });
+});
+
+test("concurrent static exports publish exactly one owner-only valid output", async () => {
+  await temporaryDirectory(async (directory) => {
+    const path = join(directory, "registry.sqlite");
+    const outputDirectory = join(directory, "exports");
+    const output = join(outputDirectory, "snapshot.json");
+    const storage = new OrchestratorStorage(path);
+    seed(storage);
+    storage.close();
+    await mkdir(outputDirectory, { mode: 0o700 });
+    const first = concurrentExportWorker(path, output);
+    const second = concurrentExportWorker(path, output);
+    await Promise.all([first.ready, second.ready]);
+    first.worker.postMessage("start");
+    second.worker.postMessage("start");
+    const results = await Promise.all([first.result, second.result]);
+    await Promise.all([first.worker.terminate(), second.worker.terminate()]);
+    assert.equal(results.filter(({ ok }) => ok).length, 1);
+    assert.equal(results.filter(({ ok }) => !ok).length, 1);
+    assert.match(results.find(({ ok }) => !ok)?.error ?? "", /EEXIST|already exists/);
+    assert.equal(await permissions(output), 0o600);
+    const exported = JSON.parse(await readFile(output, "utf8")) as { format: string; schemaVersion: number; tables: { batches: unknown[] } };
+    assert.equal(exported.format, "superset-agent-orchestrator-export");
+    assert.equal(exported.schemaVersion, CURRENT_SCHEMA_VERSION);
+    assert.equal(exported.tables.batches.length, 1);
   });
 });
