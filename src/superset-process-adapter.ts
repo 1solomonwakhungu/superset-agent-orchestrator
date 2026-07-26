@@ -3,6 +3,7 @@ import { z } from "zod";
 import { childEnvironment } from "./child-environment.js";
 import type {
   AgentAdapter,
+  CancellationOutcome,
   LaunchRequest,
   ResumeMetadata,
   RunHandle,
@@ -80,8 +81,16 @@ export class SupersetProcessAdapter implements AgentAdapter {
     return withoutUndefinedResume as RunResult;
   }
 
-  async cancel(handle: RunHandle, reason?: string): Promise<void> {
-    await this.invoke("cancel", { ...handle, ...(reason === undefined ? {} : { reason }) }, z.object({ cancelled: z.literal(true) }).strict());
+  async cancel(handle: RunHandle, reason?: string): Promise<CancellationOutcome> {
+    try {
+      await this.invoke("cancel", { ...handle, ...(reason === undefined ? {} : { reason }) }, z.object({ cancelled: z.literal(true) }).strict());
+      return { status: "accepted" };
+    } catch (error) {
+      if (error instanceof SupersetProcessError && error.code === "CANCEL_UNSUPPORTED") {
+        return { status: "unsupported" };
+      }
+      throw error;
+    }
   }
 
   async resumeMetadata(handle: RunHandle): Promise<ResumeMetadata | undefined> {
