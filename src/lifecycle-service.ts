@@ -102,7 +102,7 @@ export function isCancellationRefused(result: CancellationResult): result is Can
  */
 export class LifecycleService {
   private activeProviderOperations = 0;
-  private readonly providerWaiters: Array<() => void> = [];
+  private readonly providerWaiters: Array<{ resolve: () => void; signal: AbortSignal }> = [];
 
   constructor(
     private readonly store: DurableStore,
@@ -434,10 +434,17 @@ export class LifecycleService {
 
 
   private async providerCall<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
-    await this.acquireProviderSlot();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.providerOperationTimeoutMs);
-    const providerOperation = operation(controller.signal);
+    await this.acquireProviderSlot(controller.signal);
+    let providerOperation: Promise<T>;
+    try {
+      providerOperation = operation(controller.signal);
+    } catch (error) {
+      clearTimeout(timeout);
+      this.releaseProviderSlot();
+      throw error;
+    }
     let timedOut = false;
     try {
       return await Promise.race([
@@ -468,16 +475,31 @@ export class LifecycleService {
     return parsed.data;
   }
 
-  private async acquireProviderSlot(): Promise<void> {
+  private async acquireProviderSlot(signal: AbortSignal): Promise<void> {
     if (this.activeProviderOperations >= MAX_PROVIDER_CONCURRENCY) {
-      await new Promise<void>((resolve) => this.providerWaiters.push(resolve));
+      await new Promise<void>((resolve, reject) => {
+        const waiter = { resolve, signal };
+        this.providerWaiters.push(waiter);
+        signal.addEventListener("abort", () => {
+          const index = this.providerWaiters.indexOf(waiter);
+          if (index >= 0) this.providerWaiters.splice(index, 1);
+          reject(new Error("Provider lifecycle operation timed out while queued"));
+        }, { once: true });
+      });
     }
+    if (signal.aborted) throw new Error("Provider lifecycle operation timed out while queued");
     this.activeProviderOperations += 1;
   }
 
   private releaseProviderSlot(): void {
     this.activeProviderOperations -= 1;
-    this.providerWaiters.shift()?.();
+    while (this.providerWaiters.length > 0) {
+      const waiter = this.providerWaiters.shift()!;
+      if (!waiter.signal.aborted) {
+        waiter.resolve();
+        break;
+      }
+    }
   }
 }
 
