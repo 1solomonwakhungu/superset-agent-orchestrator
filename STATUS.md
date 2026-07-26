@@ -11,21 +11,22 @@
   flaky-test policy. Product fixes enforce canonical adapter idempotency,
   fail-closed durable schemas, monotonic launch transitions, and atomic
   `updateLaunch` in-memory state on persistence failure.
-- Key results after integrating `main@cbd44e1` and its subsequent persistence
-  dependency and PER-336 security hotfix: 203 active JS/TS tests and
-  3 Python tests pass, with one explicit Superset Desktop smoke skip. C8 reports
-  98.27% lines/statements, 91.99% branches, and 96.29% functions across the
-  enforced critical modules. Twenty repeated race runs and focused domain, schema,
-  contract, persistence, and safety tests passed.
+- Final integration: Merged `main@76ac850` and preserved its lifecycle status
+  and stop-reason validation alongside strict durable schemas and candidate-state
+  validation. Extended the exhaustive MCP request fixture for the integrated
+  batch-cancel and deadline tools.
+- Final verification: `npm ci` and `npm run verify` passed 325/326 JS/TS tests
+  with one declared live-discovery skip, 5/6 Python tests with one
+  model-dependent skip, schema, provenance, research, formatting, lint,
+  typecheck, and build gates. C8 reports 97.98% lines/statements, 89.70%
+  branches, and 96.66% functions across the enforced critical modules.
+  Standalone coverage and schema checks, `./scripts/verify-per-323.sh`,
+  `git diff --check`, and 20 additional repeated race runs passed.
 - Review follow-up: Standalone coverage and race commands now build their
   required artifacts, the real discovery smoke test is explicitly opt-in, and
   Windows remains outside the supported compatibility envelope.
-- Verification: `npm ci`, `npm run check`, focused tests, `RACE_REPEATS=20 npm
-  run test:race`, standalone `npm run schema:check`, and `git diff --check`
-  passed. Fixed false-positive test labels, ambient credential leakage, stale
-  state-transition assertions, and wall-clock polling in retry verification.
-- Next: verify the exact pushed head after all current-main integrations, merge
-  PR 29, verify merged `main`, and reconcile PER-346 in Linear.
+- Next: push the exact integrated head, require green exact-head GitHub checks,
+  merge PR 29, verify merged `main`, and reconcile PER-346 in Linear.
 
 ## PER-342 cancellation, timeouts, and bounded wait
 
