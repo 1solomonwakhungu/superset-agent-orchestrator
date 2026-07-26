@@ -93,7 +93,7 @@ test("production MCP server exposes every provider error once without retries", 
       const launched = await launch(harness.client, 1);
       if (operation === "launch") {
         const item = (await results(harness.client, [launched.sessions[0]!.sessionId])).items[0];
-        assert.equal(item?.error?.code, code);
+        assert.equal(item?.error?.code, code, JSON.stringify(item));
         assert.equal(item?.status, "failed");
       } else {
         const sessionId = launched.sessions[0]!.sessionId;
@@ -164,7 +164,9 @@ function launchArguments(count: number) {
 }
 
 async function launch(client: Client, count: number) {
-  return call(client, "provider_batches_launch", launchArguments(count));
+  const response = await call(client, "provider_batches_launch", launchArguments(count));
+  assert.equal(response.error, undefined);
+  return response;
 }
 
 async function results(client: Client, sessionIds: string[]) {
@@ -172,7 +174,7 @@ async function results(client: Client, sessionIds: string[]) {
 }
 
 async function call(client: Client, name: string, arguments_: Record<string, unknown>) {
-  const response = await client.callTool({ name, arguments: arguments_ });
+  const response = await client.callTool({ name, arguments: arguments_ }, undefined, { timeout: 120_000 });
   return responseSchema.parse(response.structuredContent);
 }
 
