@@ -1,4 +1,5 @@
 import json
+import math
 import random
 import string
 import unittest
@@ -30,8 +31,8 @@ class CallForgeIRTests(unittest.TestCase):
         self.assertTrue({"type_mismatch", "cycle", "dangling_repair", "dangling_source"} <= codes)
 
     def test_tool_schema_validation(self):
-        graph = CallGraph((CallNode("call", "weather", (Binding("city", TypeRef("number"), 42), Binding("extra", TypeRef("string"), "x")), outputs={"bad": TypeRef("string")}),))
-        schema = ToolSchema(arguments={"city": TypeRef("string"), "unit": TypeRef("string")}, required=frozenset({"city", "unit"}), outputs={"temperature": TypeRef("number")})
+        graph = CallGraph((CallNode("call", "weather", (Binding("city", TypeRef("number"), 42), Binding("format", TypeRef("number"), 1), Binding("extra", TypeRef("string"), "x")), outputs={"bad": TypeRef("string")}),))
+        schema = ToolSchema(arguments={"city": TypeRef("string"), "unit": TypeRef("string"), "format": TypeRef("string")}, required=frozenset({"city", "unit"}), outputs={"temperature": TypeRef("number")})
         codes = {issue.code for issue in graph.validate({"weather": schema})}
         self.assertEqual(codes, {"argument_type_mismatch", "missing_argument", "unknown_argument", "unknown_output"})
 
@@ -72,6 +73,20 @@ class CallForgeIRTests(unittest.TestCase):
         graph = CallGraph((CallNode("a", "one", repair_of="missing"),))
         with self.assertRaisesRegex(ValueError, "invalid call graph"):
             graph.parallel_frontiers()
+
+    def test_annotations_must_be_booleans(self):
+        graph = CallGraph.from_json(json.dumps({"version": "1.0", "nodes": [{"id": "a", "tool_id": "one", "parallelizable": "false", "optional": 0}]}))
+        self.assertEqual({issue.code for issue in graph.validate()}, {"invalid_annotation"})
+
+    def test_json_number_compatibility_and_finiteness(self):
+        self.assertTrue(TypeRef("number").accepts(TypeRef("integer")))
+        for value in (math.nan, math.inf, -math.inf):
+            graph = CallGraph((CallNode("a", "one", (Binding("value", TypeRef("number"), value),)),))
+            self.assertIn("literal_type_mismatch", {issue.code for issue in graph.validate()})
+
+    def test_xml_rejects_nested_parameter_markup(self):
+        with self.assertRaisesRegex(ValueError, "nested markup"):
+            from_minicpm_xml('<function name="tool"><param name="value">a<b/>c</param></function>')
 
     def test_unknown_versions_are_rejected(self):
         with self.assertRaisesRegex(ValueError, "unsupported IR version"):

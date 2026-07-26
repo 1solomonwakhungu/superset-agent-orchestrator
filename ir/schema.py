@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping
 
@@ -18,7 +19,9 @@ class TypeRef:
     schema_ref: str | None = None
 
     def accepts(self, other: "TypeRef") -> bool:
-        return self.json_type == "any" or self == other
+        if self.json_type == "any" or self == other:
+            return True
+        return self.schema_ref is None and other.schema_ref is None and self.json_type == "number" and other.json_type == "integer"
 
 
 @dataclass(frozen=True)
@@ -76,6 +79,10 @@ class CallGraph:
                 issues.append(ValidationIssue("duplicate_node", f"duplicate node id {node.id!r}", f"{path}.id"))
             else:
                 by_id[node.id] = node
+            if not isinstance(node.parallelizable, bool):
+                issues.append(ValidationIssue("invalid_annotation", "parallelizable must be a boolean", f"{path}.parallelizable"))
+            if not isinstance(node.optional, bool):
+                issues.append(ValidationIssue("invalid_annotation", "optional must be a boolean", f"{path}.optional"))
 
         dependencies: dict[str, set[str]] = {node_id: set() for node_id in by_id}
         for index, node in enumerate(self.nodes):
@@ -116,11 +123,12 @@ class CallGraph:
                     for name in supplied.keys() - expected.arguments.keys():
                         issues.append(ValidationIssue("unknown_argument", f"unknown argument {name!r}", f"nodes[{index}].arguments"))
                     for name in expected.required:
-                        expected_type = expected.arguments[name]
                         actual = supplied.get(name)
                         if actual is None:
                             issues.append(ValidationIssue("missing_argument", f"missing required argument {name!r}", f"nodes[{index}].arguments"))
-                        elif not expected_type.accepts(actual):
+                    for name, actual in supplied.items():
+                        expected_type = expected.arguments.get(name)
+                        if expected_type is not None and not expected_type.accepts(actual):
                             issues.append(ValidationIssue("argument_type_mismatch", f"argument {name!r} must be {expected_type.json_type}", f"nodes[{index}].arguments"))
                     for name, actual in node.outputs.items():
                         expected_type = expected.outputs.get(name)
@@ -225,7 +233,7 @@ def _literal_matches(value: Any, type_ref: TypeRef) -> bool:
         "null": lambda item: item is None,
         "boolean": lambda item: isinstance(item, bool),
         "integer": lambda item: isinstance(item, int) and not isinstance(item, bool),
-        "number": lambda item: isinstance(item, (int, float)) and not isinstance(item, bool),
+        "number": lambda item: isinstance(item, (int, float)) and not isinstance(item, bool) and (not isinstance(item, float) or math.isfinite(item)),
         "string": lambda item: isinstance(item, str),
         "array": lambda item: isinstance(item, list),
         "object": lambda item: isinstance(item, dict),

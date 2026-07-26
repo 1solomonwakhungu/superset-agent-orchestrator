@@ -17,6 +17,8 @@ def from_minicpm_xml(xml: str) -> CallGraph:
         for param in function:
             if param.tag != "param" or not param.get("name"):
                 raise ValueError("function children must be <param> elements with a name")
+            if len(param):
+                raise ValueError("param values must not contain nested markup")
             arguments.append(Binding(param.get("name", ""), TypeRef("string"), param.text or ""))
         nodes.append(CallNode(id=f"call-{index + 1}", tool_id=function.get("name", ""), arguments=tuple(arguments)))
     return CallGraph(tuple(nodes))
