@@ -267,13 +267,15 @@ test("report verifier rejects forged latency and unsupported resource aborts", a
 
     const resourceOutput = join(directory, "resource-evidence");
     const resource = await runRealLoad({
-      execute: false, workspaceIds: Array.from({ length: 30 }, (_, index) => `workspace-${index}`),
+      execute: true, workspaceIds: Array.from({ length: 30 }, (_, index) => `workspace-${index}`),
       agent: "fake", prompt: "safe test", output: resourceOutput, launchTimeoutMs: 10,
       maxRssBytes: 1_000, maxCpuMs: 10_000, maxDescriptors: 100,
       measurements: measurements([{ ...SAFE_RESOURCE, rssBytes: 1_001 }]),
+      launch: async (workspaceId) => ({ sessionId: `session-${workspaceId}`, kind: "terminal" }),
     });
+    (resource.abort as { reason: string }).reason = "RSS ceiling exceeded: 1";
     await writeFile(`${resourceOutput}.json`, `${JSON.stringify(resource)}\n`, "utf8");
-    await assert.rejects(verifyReport(resourceOutput), /Resource ceiling violation was not aborted/);
+    await assert.rejects(verifyReport(resourceOutput), /Abort is not supported by failure or ceiling evidence/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

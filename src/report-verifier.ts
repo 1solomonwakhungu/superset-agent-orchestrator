@@ -83,9 +83,9 @@ const realSchema = z.object({
     && report.launch.latencyMs.max === Math.max(0, ...latencies);
   const resourceViolations = report.resources.samples.flatMap((sample) => {
     const violations: string[] = [];
-    if (sample.rssBytes > report.configuration.ceilings.maxRssBytes) violations.push("RSS ceiling exceeded");
-    if (sample.cpuUserMs + sample.cpuSystemMs > report.configuration.ceilings.maxCpuMs) violations.push("CPU ceiling exceeded");
-    if (sample.descriptors !== null && sample.descriptors > report.configuration.ceilings.maxDescriptors) violations.push("descriptor ceiling exceeded");
+    if (sample.rssBytes > report.configuration.ceilings.maxRssBytes) violations.push(`RSS ceiling exceeded: ${sample.rssBytes}`);
+    if (sample.cpuUserMs + sample.cpuSystemMs > report.configuration.ceilings.maxCpuMs) violations.push(`CPU ceiling exceeded: ${sample.cpuUserMs + sample.cpuSystemMs}`);
+    if (sample.descriptors !== null && sample.descriptors > report.configuration.ceilings.maxDescriptors) violations.push(`descriptor ceiling exceeded: ${sample.descriptors}`);
     return violations;
   });
   if (!uniqueWorkspaces || !uniqueTasks || !uniqueSessions) context.addIssue({ code: "custom", message: "Accepted sessions require unique workspace, task, and session attribution" });
@@ -95,7 +95,7 @@ const realSchema = z.object({
   if (report.abort.aborted !== (report.abort.reason !== null)) context.addIssue({ code: "custom", message: "Abort reason is inconsistent" });
   if (report.abort.aborted) {
     const isLaunchFailure = report.abort.reason === "launch failure" && report.admission.failed > 0;
-    const isCeilingAbort = resourceViolations.some((violation) => report.abort.reason?.startsWith(violation));
+    const isCeilingAbort = resourceViolations.includes(report.abort.reason ?? "");
     if (!isLaunchFailure && !isCeilingAbort) context.addIssue({ code: "custom", message: "Abort is not supported by failure or ceiling evidence" });
   } else if (resourceViolations.length > 0) {
     context.addIssue({ code: "custom", message: "Resource ceiling violation was not aborted" });
