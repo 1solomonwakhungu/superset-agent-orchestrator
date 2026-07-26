@@ -10,9 +10,11 @@
   full `npm run verify` with 384 tests, one explicit live-smoke skip, coverage,
   Python, schema, provenance, research gates, and 10/10 race runs.
 - PR #76 merged into PR #29's stale feature branch as `813ae9ffc3783c8b1d7ab8a118b4fdf687b6c41b`.
-  Follow-up PR #78 delivered the change to `main` as `19b852dedc53f6b1c7349a1b7bf03d5aed6de84c`.
-- Resolved the follow-up review blocker by guarding cancellation until a spawned
-  process has a PID; all eight GitHub checks passed on the final head.
+  PR #77 delivered sibling cancellation to `main` as
+  `c2e44424222837f7a208b67b57314b91cdbd84e1`.
+- PR #78 resolved the pre-spawn review blocker by guarding cancellation until a
+  child has a PID and merged to `main` as
+  `19b852dedc53f6b1c7349a1b7bf03d5aed6de84c`; all eight exact-head checks passed.
 - Linear issue PER-346 and canonical comment `351147a9-fe67-4f82-9a7d-e9a8d5b26795`
   are no longer resolvable, so no duplicate synchronization comment was created.
 
