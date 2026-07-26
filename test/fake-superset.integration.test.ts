@@ -87,6 +87,15 @@ test("fake Superset timeout and malformed output fail deterministically without 
   }
 });
 
+test("process launch revalidates the workspace immediately before spawning", async () => {
+  await withHarness({ defaultScript: successScript() }, async ({ adapter, calls }) => {
+    const request = adapterRequest("revalidate", "prompt", "/tmp/revalidate");
+    request.revalidateWorkspace = async () => { throw new Error("workspace changed"); };
+    await assert.rejects(adapter.launch(request), /workspace changed/);
+    assert.equal((await calls()).filter(({ command }) => command === "launch").length, 0);
+  });
+});
+
 test("accepted launches recover after one-shot timeout and malformed responses without duplicate execution", async () => {
   for (const action of ["hang", "malformed"] as const) {
     await withHarness({
@@ -316,7 +325,14 @@ async function withHarness(
       fault?: { id: string; action: string };
     }>;
   };
-  const calls = async () => (await readFakeState()).calls;
+  const calls = async () => {
+    try {
+      return (await readFakeState()).calls;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
+  };
   try {
     await run({ adapter, statePath, calls, fakeState: readFakeState });
   } finally {
