@@ -6,6 +6,7 @@ import {
   type Batch,
   type LaunchAuditEvent,
   type Session,
+  type Worker,
   type WorkerAttribution,
 } from "./store.js";
 
@@ -99,8 +100,17 @@ export class LaunchService {
         acceptedAt, updatedAt: acceptedAt,
       };
     });
+    const workers = assignments.map((assignment, position): Worker => ({
+      id: assignment.sessionId,
+      batchId,
+      sessionId: assignment.sessionId,
+      status: "requested",
+      attribution: assignment.attribution,
+      startedAt: acceptedAt,
+      position,
+    }));
     const stored = await this.store.acceptLaunchBatch({
-      assignments, sessions, batch,
+      assignments, sessions, batch, workers,
       events: assignments.map(({ id }) => event(id, "launch_accepted", acceptedAt)),
     });
     this.injectCrash("after_acceptance");
