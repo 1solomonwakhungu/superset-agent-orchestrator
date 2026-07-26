@@ -367,7 +367,7 @@ export const enforceDeadlinesResultSchema = z.object({
       deadline_at: timestamp,
       state: z.literal("failed"),
       provider_stop_error: z.string().min(1).optional(),
-    }).strict()).max(MAX_BATCH_SIZE),
+    }).strict()).max(250),
   }).strict(),
 }).strict();
 export const batchCancelResultSchema = z.object({

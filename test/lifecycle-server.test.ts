@@ -127,4 +127,12 @@ test("deadlines expire nonterminal sessions as failed/deadline_exceeded", async 
   assert.equal(page.sessions[0]!.status, "failed");
   const repeated = enforceDeadlinesResultSchema.parse(await call<unknown>(client, "deadlines_enforce", { contract_version: "1.0" }));
   assert.deepEqual(repeated.data.expired, []);
+
+  const terminalDeadline = setDeadlineResultSchema.parse(await call<unknown>(
+    client,
+    "sessions_set_deadline",
+    { contract_version: "1.0", session_ids: sessionIds, deadline_ms: 1_000 },
+  ));
+  const item = terminalDeadline.data.items[0]!;
+  assert.equal("error" in item ? item.error.code : undefined, "INVALID_TRANSITION");
 }));
