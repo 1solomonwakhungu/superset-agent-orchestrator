@@ -73,7 +73,8 @@ export class SupersetProcessAdapter implements AgentAdapter {
     const value = await this.invoke("result", handle, resultSchema.nullable());
     if (value === null) return undefined;
     if (value.resume !== undefined) return value as RunResult;
-    const { resume: _resume, ...withoutUndefinedResume } = value;
+    const withoutUndefinedResume = { ...value };
+    delete withoutUndefinedResume.resume;
     return withoutUndefinedResume as RunResult;
   }
 
@@ -88,7 +89,7 @@ export class SupersetProcessAdapter implements AgentAdapter {
 
   private async invoke<T>(command: string, payload: unknown, schema: z.ZodType<T>): Promise<T> {
     const input = JSON.stringify(payload);
-    const { stdout, stderr } = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+    const stdout = await new Promise<string>((resolve, reject) => {
       const child = execFile(
         this.options.executable,
         [...(this.options.args ?? []), command],
@@ -109,7 +110,7 @@ export class SupersetProcessAdapter implements AgentAdapter {
             reject(new SupersetProcessError(code, `${command} provider command failed`, { cause: error }));
             return;
           }
-          resolve({ stdout, stderr });
+          resolve(stdout);
         },
       );
       child.stdin?.on("error", () => undefined);

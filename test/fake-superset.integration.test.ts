@@ -71,7 +71,7 @@ test("fake Superset timeout and malformed output fail deterministically without 
   ] as const) {
     await withHarness(scenario, async ({ adapter, calls }) => {
       const handle = await adapter.launch({ idempotencyKey: "one", prompt: "one", workspacePath: "/tmp/one" });
-      await assert.rejects(adapter.status(handle), (error: unknown) => {
+      await assert.rejects(async () => adapter.status(handle), (error: unknown) => {
         assert.equal(error instanceof SupersetProcessError && error.code, expectedCode);
         return true;
       });
@@ -126,7 +126,7 @@ test("provider requests use stdin, exclude ambient secrets and proxy credentials
       );
       const [call] = await calls();
       assert.ok(call);
-      assert.equal(call.payload.prompt.length, 200_000);
+      assert.equal(call.payload.prompt?.length, 200_000);
       assert.equal(call.argv.includes(prompt), false);
       assert.equal(call.environment.PROVIDER_SECRET_CANARY, undefined);
       assert.equal(call.environment.HTTPS_PROXY, undefined);
@@ -166,8 +166,14 @@ test("fake Superset completes and attributes a deterministic 100-session batch",
     const accepted = await launches.acceptBatch({
       idempotencyKey: "batch-100", clientId: "integration", batchName: "fake-superset",
       assignments: Array.from({ length: 100 }, (_, index) => {
-        const { clientId: _clientId, batchName: _batchName, ...assignment } = request(index, `task-${index}`);
-        return assignment;
+        const item = request(index, `task-${index}`);
+        return {
+          idempotencyKey: item.idempotencyKey,
+          attribution: item.attribution,
+          prompt: item.prompt,
+          workspaceId: item.workspaceId,
+          workspacePath: item.workspacePath,
+        };
       }),
     });
     assert.equal(new Set(accepted.map(({ batchId }) => batchId)).size, 1);
@@ -203,9 +209,9 @@ async function withHarness(
   run: (harness: {
     adapter: SupersetProcessAdapter & { restart(): SupersetProcessAdapter };
     statePath: string;
-    calls(): Promise<Array<{
+    calls: () => Promise<Array<{
       command: string;
-      payload: any;
+      payload: { prompt?: string };
       argv: string[];
       environment: Record<string, string | undefined>;
     }>>;
@@ -227,7 +233,7 @@ async function withHarness(
   const calls = async () => {
     const state = JSON.parse(await readFile(fakeStatePath, "utf8")) as { calls: Array<{
       command: string;
-      payload: any;
+       payload: { prompt?: string };
       argv: string[];
       environment: Record<string, string | undefined>;
     }> };
