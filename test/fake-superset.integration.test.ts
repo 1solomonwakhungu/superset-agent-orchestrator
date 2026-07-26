@@ -100,7 +100,7 @@ test("accepted launches recover after one-shot timeout and malformed responses w
       assert.equal(Object.keys((await fakeState()).runs).length, 1);
 
       const restartedStore = new DurableStore(statePath);
-      await new LaunchService(restartedStore, adapter.restart(), authorizer, now).dispatchPending();
+      await new LaunchService(restartedStore, adapter.restart(10_000), authorizer, now).dispatchPending();
       const assignment = await restartedStore.assignmentForResult(accepted.assignmentId);
       assert.equal(assignment.status, "launched");
       assert.equal(assignment.runId, "fake-001");
@@ -277,7 +277,7 @@ function adapterRequest(idempotencyKey: string, prompt: string, workspacePath: s
 async function withHarness(
   scenario: object,
   run: (harness: {
-    adapter: SupersetProcessAdapter & { restart(): SupersetProcessAdapter };
+    adapter: SupersetProcessAdapter & { restart(timeoutMs?: number): SupersetProcessAdapter };
     statePath: string;
     calls: () => Promise<Array<{
       command: string;
@@ -297,12 +297,12 @@ async function withHarness(
   const fakeStatePath = join(directory, "fake-state.json");
   const statePath = join(directory, "orchestrator-state.json");
   await writeFile(scenarioPath, JSON.stringify(scenario), "utf8");
-  const makeAdapter = () => new SupersetProcessAdapter({
+  const makeAdapter = (adapterTimeoutMs = timeoutMs) => new SupersetProcessAdapter({
     executable: process.execPath,
     args: [fixture, scenarioPath, fakeStatePath],
-    timeoutMs,
+    timeoutMs: adapterTimeoutMs,
   });
-  const adapter = makeAdapter() as SupersetProcessAdapter & { restart(): SupersetProcessAdapter };
+  const adapter = makeAdapter() as SupersetProcessAdapter & { restart(timeoutMs?: number): SupersetProcessAdapter };
   adapter.restart = makeAdapter;
   const readFakeState = async () => JSON.parse(await readFile(fakeStatePath, "utf8")) as {
     runs: Record<string, unknown>;
