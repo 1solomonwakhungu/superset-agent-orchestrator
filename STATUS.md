@@ -11,6 +11,19 @@
 - Verification passed: focused fake-provider suite 15/15; full `npm run check`
   with 434 passing and one explicit live-smoke skip; race suite 10/10.
 
+## PER-346 deadline claim serialization, 2026-07-26
+
+- PR #80 serialized durable deadline-expiry claims before retaining bounded
+  four-way concurrency for external provider cleanup.
+- Added deterministic coverage for concurrent cleanup and retained the 260-session
+  sweep regression. Local `npm run verify` passed 433 tests with one documented
+  skip, coverage, Python, schema, provenance, research, and 10/10 race runs.
+- All eight exact-head GitHub checks passed. PR #80 merged directly to `main` as
+  `71b3686dddeae655f831aa31b8543110793d0ef1`; no stale-branch delivery PR was needed.
+- Linear issue PER-346 and canonical comment `351147a9-fe67-4f82-9a7d-e9a8d5b26795`
+  remain unresolvable through the connected workspace, so the note could not be
+  updated in place and no duplicate synchronization comment was created.
+
 ## PER-346 companion parallel discovery cleanup, 2026-07-26
 
 - Added coordinated cancellation for parallel Superset discovery commands so one
