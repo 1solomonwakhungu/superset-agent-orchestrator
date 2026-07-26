@@ -489,7 +489,7 @@ export class DurableStore {
       realpath: false,
       stale: this.dispatchLockStaleMs,
       update: Math.max(1_000, Math.floor(this.dispatchLockStaleMs / 5)),
-      retries: { retries: 50, minTimeout: 50, maxTimeout: 200 },
+      retries: { retries: 300, minTimeout: 50, maxTimeout: 200 },
     });
     try {
       return await operation();
