@@ -18,6 +18,8 @@ REQUIRED_PROVENANCE = (
     "template_hash",
     "environment_fingerprint",
     "environment_lock",
+    "hardware_class",
+    "hardware_manifest",
     "corpus_hash",
     "dataset_revisions",
     "harness_commit",
@@ -34,11 +36,12 @@ STRING_PROVENANCE = (
     "template_hash",
     "environment_fingerprint",
     "environment_lock",
+    "hardware_class",
     "corpus_hash",
     "harness_commit",
     "cache_state",
 )
-OBJECT_PROVENANCE = ("dataset_revisions", "decode_config")
+OBJECT_PROVENANCE = ("hardware_manifest", "dataset_revisions", "decode_config")
 ARRAY_PROVENANCE = ("command_arguments", "raw_trace_hashes")
 
 
