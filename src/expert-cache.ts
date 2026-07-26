@@ -32,6 +32,11 @@ interface Entry extends Required<ExpertAccess> {
   priority: number;
 }
 
+interface HistoryEntry {
+  frequency: number;
+  sizeBytes: number;
+}
+
 function validateAccess(access: ExpertAccess): Required<ExpertAccess> {
   if (access.id.length === 0) throw new Error("expert id must not be empty");
   if (!Number.isSafeInteger(access.sizeBytes) || access.sizeBytes <= 0) {
@@ -49,7 +54,8 @@ export class ExpertCache {
   readonly #policy: CachePolicy;
   readonly #admissionControl: boolean;
   readonly #entries = new Map<string, Entry>();
-  readonly #history = new Map<string, number>();
+  readonly #history = new Map<string, HistoryEntry>();
+  readonly #historyLimit: number;
   #clock = 0;
   #residentBytes = 0;
   #staticBytes = 0;
@@ -67,6 +73,7 @@ export class ExpertCache {
     this.#capacityBytes = options.capacityBytes;
     this.#policy = options.policy;
     this.#admissionControl = options.admissionControl ?? true;
+    this.#historyLimit = Math.max(1, Math.floor(options.capacityBytes / 64));
 
     for (const candidate of options.staticExperts ?? []) {
       const access = validateAccess(candidate);
@@ -83,8 +90,12 @@ export class ExpertCache {
   access(candidate: ExpertAccess): boolean {
     const access = validateAccess(candidate);
     this.#clock += 1;
-    const historicalFrequency = (this.#history.get(access.id) ?? 0) + 1;
-    this.#history.set(access.id, historicalFrequency);
+    const history = this.#history.get(access.id);
+    if (history && history.sizeBytes !== access.sizeBytes) {
+      throw new Error(`size changed for expert ${access.id}`);
+    }
+    const historicalFrequency = (history?.frequency ?? 0) + 1;
+    this.#remember(access.id, { frequency: historicalFrequency, sizeBytes: access.sizeBytes });
     const resident = this.#entries.get(access.id);
     if (resident) {
       if (resident.sizeBytes !== access.sizeBytes) {
@@ -107,9 +118,9 @@ export class ExpertCache {
 
     const victims = this.#selectVictims(entry.sizeBytes);
     if (this.#admissionControl && victims.length > 0) {
-      const candidateValue = entry.frequency * entry.fetchCost / entry.sizeBytes;
+      const candidateValue = entry.frequency * entry.fetchCost;
       const victimValue = victims.reduce(
-        (total, victim) => total + victim.frequency * victim.fetchCost / victim.sizeBytes,
+        (total, victim) => total + victim.frequency * victim.fetchCost,
         0,
       );
       if (candidateValue <= victimValue) {
@@ -167,7 +178,7 @@ export class ExpertCache {
   #selectVictims(requiredBytes: number): Entry[] {
     const candidates = [...this.#entries.values()]
       .filter((entry) => !entry.pinned)
-      .sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
+      .sort((left, right) => this.#priority(left) - this.#priority(right) || left.id.localeCompare(right.id));
     const victims: Entry[] = [];
     let available = this.#capacityBytes - this.#residentBytes;
     for (const candidate of candidates) {
@@ -182,8 +193,18 @@ export class ExpertCache {
   #evict(entry: Entry): void {
     this.#entries.delete(entry.id);
     this.#residentBytes -= entry.sizeBytes;
-    this.#inflation = entry.priority;
+    this.#inflation = this.#priority(entry);
     this.#evictions += 1;
+  }
+
+  #remember(id: string, history: HistoryEntry): void {
+    this.#history.delete(id);
+    this.#history.set(id, history);
+    while (this.#history.size > this.#historyLimit) {
+      const oldest = this.#history.keys().next().value;
+      if (oldest === undefined) break;
+      this.#history.delete(oldest);
+    }
   }
 }
 
