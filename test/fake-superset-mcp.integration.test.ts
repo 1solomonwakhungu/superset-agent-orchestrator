@@ -89,8 +89,7 @@ test("production MCP server exposes every provider error once without retries", 
     await withServer(scenario, async (harness) => {
       const launched = await launch(harness.client, 1);
       if (operation === "launch") {
-        assert.equal(launched.error?.code, code);
-        assert.deepEqual(launched.sessions, []);
+        assert.equal((await results(harness.client, [launched.sessions[0]!.sessionId])).items[0]?.error?.code, code);
       } else {
         const sessionId = launched.sessions[0]!.sessionId;
         const response = operation === "cancel"
