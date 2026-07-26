@@ -37,6 +37,7 @@ export interface LaunchAcceptance {
 export class LaunchService {
   private dispatchTimer: NodeJS.Timeout | undefined;
   private dispatching: Promise<void> | undefined;
+  private stopped = false;
 
   constructor(
     private readonly store: DurableStore,
@@ -47,6 +48,7 @@ export class LaunchService {
   ) {}
 
   async launch(request: AsynchronousLaunchRequest): Promise<LaunchAcceptance> {
+    if (this.stopped) throw new Error("Launch service is stopped");
     const accepted = await this.accept(request);
     this.scheduleDispatch(0);
     return accepted;
@@ -101,15 +103,21 @@ export class LaunchService {
   }
 
   async stop(): Promise<void> {
+    this.stopped = true;
     if (this.dispatchTimer !== undefined) {
       clearTimeout(this.dispatchTimer);
       this.dispatchTimer = undefined;
     }
-    await this.dispatching;
+    try {
+      await this.dispatching;
+    } finally {
+      if (this.dispatchTimer !== undefined) clearTimeout(this.dispatchTimer);
+      this.dispatchTimer = undefined;
+    }
   }
 
   private scheduleDispatch(delayMs: number): void {
-    if (this.dispatchTimer !== undefined || this.dispatching !== undefined) return;
+    if (this.stopped || this.dispatchTimer !== undefined || this.dispatching !== undefined) return;
     this.dispatchTimer = setTimeout(() => {
       this.dispatchTimer = undefined;
       this.dispatching = this.dispatchPending();
@@ -118,7 +126,7 @@ export class LaunchService {
           () => { this.dispatching = undefined; },
           () => {
             this.dispatching = undefined;
-            this.scheduleDispatch(this.retryDelayMs);
+            if (!this.stopped) this.scheduleDispatch(this.retryDelayMs);
           },
         );
     }, delayMs);

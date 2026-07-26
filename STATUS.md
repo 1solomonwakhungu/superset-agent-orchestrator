@@ -218,10 +218,17 @@ PER-348 adversarial resilience regression coverage is complete locally.
   lock and added exact result-attribution enforcement.
 - All fixtures use temporary synthetic state and do not invoke Superset, cron, or
   user repositories.
-- Verification: `npm run verify` passed 102/102 tests; the configuration contract
-  passed 3/3; strict local-routing verification and `git diff --check` passed.
+- Resolved PR review findings by fencing retries after shutdown, reclaiming only
+  expired read-only leases, and tolerating backward wall-clock adjustments.
+- Hardened acceptance and transition evidence against mismatched assignments,
+  event types, and conflicting reused audit IDs.
+- Verification: all 117 offline Node tests and 19 focused regressions passed;
+  build, typecheck, schema generation, the 3-test configuration contract, strict
+  local-routing verification, focused Markdown lint, and `git diff --check` passed.
+- The full Node command's real Superset smoke test remains unavailable because the
+  executable is absent and prohibited for this assignment. The merged Python
+  monitor suite has one unrelated recovery failure; `pytest` is not installed.
 - Full-tree Markdown lint still reports pre-existing issues in `README.md`,
   `docs/mcp-tool-contract.md`, and historical `STATUS.md` entries; the changed
   matrix passes focused Markdown lint.
-- Next: commit the final hardening changes and open the unmerged PER-348 pull
-  request.
+- Next: commit and push the reviewed hardening changes to pull request 34.

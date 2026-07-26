@@ -539,6 +539,12 @@ export class DurableStore {
       sessionSchema.parse(input.session);
       batchSchema.parse(input.batch);
       auditEventSchema.parse(input.event);
+      if (input.event.assignmentId !== input.assignment.id) {
+        throw new Error("Launch acceptance event assignment does not match its target");
+      }
+      if (input.event.type !== "launch_accepted") {
+        throw new Error("Launch acceptance event must have type launch_accepted");
+      }
       const existing = this.state.assignments.find(({ idempotencyKey }) => idempotencyKey === input.assignment.idempotencyKey);
       if (existing !== undefined) {
         if (existing.requestFingerprint !== input.assignment.requestFingerprint) {
@@ -579,15 +585,22 @@ export class DurableStore {
         failed: "launch_failed",
       };
       if (event.type !== expectedType[status]) throw new Error("Launch event type does not match its transition");
-      if (event.occurredAt < assignment.updatedAt) throw new Error("Stale launch events cannot regress assignment time");
+      const existingEvent = this.state.auditEvents.find(({ id }) => id === event.id);
+      if (existingEvent !== undefined && (existingEvent.assignmentId !== event.assignmentId
+        || existingEvent.type !== event.type
+        || existingEvent.occurredAt !== event.occurredAt
+        || existingEvent.runId !== event.runId
+        || existingEvent.error !== event.error)) {
+        throw new Error(`Launch audit event ID ${JSON.stringify(event.id)} conflicts with existing evidence`);
+      }
       const allowed = assignment.status === "accepted" && status === "launching"
         || assignment.status === "launching" && (status === "launched" || status === "failed");
       if (!allowed) return { assignment: structuredClone(assignment), transitioned: false };
       assignment.status = status;
-      assignment.updatedAt = event.occurredAt;
+      assignment.updatedAt = event.occurredAt < assignment.updatedAt ? assignment.updatedAt : event.occurredAt;
       if (event.runId !== undefined) assignment.runId = event.runId;
       if (event.error !== undefined) assignment.error = event.error;
-      if (!this.state.auditEvents.some(({ id }) => id === event.id)) this.state.auditEvents.push(event);
+      if (existingEvent === undefined) this.state.auditEvents.push(event);
       await this.persist();
       return { assignment: structuredClone(assignment), transitioned: true };
     });

@@ -171,6 +171,34 @@ test("retries transient background dispatch failure without another launch reque
   });
 });
 
+test("stop suppresses retries after an active background dispatch fails", async () => {
+  await withStore(async (path) => {
+    const store = new DurableStore(path);
+    const adapter = new FakeAgentAdapter([script]);
+    let rejectPending: ((error: Error) => void) | undefined;
+    let markEntered: (() => void) | undefined;
+    let attempts = 0;
+    const entered = new Promise<void>((resolve) => { markEntered = resolve; });
+    store.pendingAssignments = async () => {
+      attempts += 1;
+      markEntered?.();
+      return new Promise((_, reject) => { rejectPending = reject; });
+    };
+    const service = new LaunchService(store, adapter, () => new Date(), () => undefined, 5);
+    await service.launch(request);
+    await entered;
+
+    const stopped = service.stop();
+    rejectPending?.(new Error("storage unavailable"));
+    await assert.rejects(stopped, /storage unavailable/);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    assert.equal(attempts, 1);
+    assert.equal(adapter.launches.length, 0);
+    await assert.rejects(service.launch({ ...request, idempotencyKey: "after-stop" }), /stopped/);
+  });
+});
+
 test("recovers without duplicate work after crashes across every launch boundary", async () => {
   const boundaries: LaunchBoundary[] = [
     "after_acceptance",

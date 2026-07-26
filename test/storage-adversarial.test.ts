@@ -35,16 +35,22 @@ test("migration object conflicts roll back the whole migration", async () => {
   });
 });
 
-test("retention never revokes an unreleased writer solely because its lease expired", async () => {
+test("retention reclaims expired readers without revoking an unreleased writer", async () => {
   await fixture((directory) => {
     const storage = new OrchestratorStorage(join(directory, "registry.sqlite"));
     storage.database.prepare("INSERT INTO batches VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
       .run("batch", "fixture", "test", "running", "{}", "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z", null);
     storage.database.prepare("INSERT INTO workspace_leases VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-      .run("lease", "workspace", "writer", null, "batch", "2026-01-01T00:00:00.000Z", "2026-01-02T00:00:00.000Z", null);
+      .run("writer", "workspace", "writer", null, "batch", "2026-01-01T00:00:00.000Z", "2026-01-02T00:00:00.000Z", null);
+    storage.database.prepare("INSERT INTO workspace_leases VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run("expired-reader", "workspace", "read-only", null, "batch", "2026-01-01T00:00:00.000Z", "2026-01-02T00:00:00.000Z", null);
+    storage.database.prepare("INSERT INTO workspace_leases VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run("active-reader", "workspace", "read-only", null, "batch", "2026-07-23T00:00:00.000Z", "2026-07-25T00:00:00.000Z", null);
     const summary = storage.cleanup(new Date("2026-07-24T00:00:00.000Z"));
-    assert.equal(summary.leasesDeleted, 0);
-    assert.equal(storage.database.prepare("SELECT id FROM workspace_leases").get()?.id, "lease");
+    assert.equal(summary.leasesDeleted, 1);
+    assert.deepEqual(storage.database.prepare("SELECT id FROM workspace_leases ORDER BY id").all()
+      .map((row) => (row as { id: string }).id), ["active-reader", "writer"]);
+    assert.equal(storage.cleanup(new Date("2026-07-24T00:00:00.000Z")).leasesDeleted, 0);
     storage.close();
   });
 });

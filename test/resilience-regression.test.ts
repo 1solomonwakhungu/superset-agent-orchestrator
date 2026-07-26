@@ -52,7 +52,7 @@ test("concurrent dispatchers atomically claim one provider launch", async () => 
   });
 });
 
-test("forged, mismatched, and stale launch events cannot mutate state", async () => {
+test("forged and mismatched launch events cannot mutate state", async () => {
   await fixture(async (path) => {
     const store = new DurableStore(path);
     const accepted = await new LaunchService(store, {
@@ -68,11 +68,68 @@ test("forged, mismatched, and stale launch events cannot mutate state", async ()
     await assert.rejects(store.recordLaunchEvent(accepted.assignmentId, "launching", {
       id: "wrong-type", assignmentId: accepted.assignmentId, type: "execution_started", occurredAt: at,
     }), /type does not match/);
-    await assert.rejects(store.recordLaunchEvent(accepted.assignmentId, "launching", {
-      id: "stale", assignmentId: accepted.assignmentId, type: "launch_reserved", occurredAt: "2020-01-01T00:00:00.000Z",
-    }), /Stale/);
     assert.equal((await store.pendingAssignments())[0]?.status, "accepted");
     assert.equal(await readFile(path, "utf8"), before);
+  });
+});
+
+test("clock rollback cannot strand an accepted launch or regress its materialized time", async () => {
+  await fixture(async (path) => {
+    const times = [new Date("2026-07-24T20:00:00.000Z"), new Date("2020-01-01T00:00:00.000Z"), new Date("2019-01-01T00:00:00.000Z")];
+    const adapter = new FakeAgentAdapter([{
+      statuses: ["succeeded"], result: { status: "succeeded", output: "done" },
+    }]);
+    const service = new LaunchService(new DurableStore(path), adapter, () => times.shift() ?? new Date(0));
+    const accepted = await service.accept(request);
+    await service.dispatchPending();
+
+    const assignment = await new DurableStore(path).assignmentForResult(accepted.assignmentId);
+    assert.equal(adapter.launches.length, 1);
+    assert.equal(assignment.status, "launched");
+    assert.equal(assignment.updatedAt, accepted.acceptedAt);
+  });
+});
+
+test("conflicting audit event IDs cannot mutate an assignment without evidence", async () => {
+  await fixture(async (path) => {
+    const store = new DurableStore(path);
+    const service = new LaunchService(store, new FakeAgentAdapter([{
+      statuses: ["succeeded"], result: { status: "succeeded", output: "done" },
+    }]));
+    const first = await service.accept(request);
+    const second = await service.accept({ ...request, idempotencyKey: "second" });
+    const occurredAt = "2026-07-24T20:00:00.000Z";
+    await store.recordLaunchEvent(first.assignmentId, "launching", {
+      id: "shared", assignmentId: first.assignmentId, type: "launch_reserved", occurredAt,
+    });
+    await assert.rejects(store.recordLaunchEvent(second.assignmentId, "launching", {
+      id: "shared", assignmentId: second.assignmentId, type: "launch_reserved", occurredAt,
+    }), /conflicts with existing evidence/);
+    assert.equal((await store.assignmentForResult(second.assignmentId)).status, "accepted");
+  });
+});
+
+test("acceptance evidence must identify the accepted assignment and event type", async () => {
+  await fixture(async (path) => {
+    const store = new DurableStore(path);
+    const service = new LaunchService(store, new FakeAgentAdapter([{
+      statuses: ["succeeded"], result: { status: "succeeded", output: "done" },
+    }]));
+    await service.accept(request);
+    const state = store.snapshot();
+    const input = {
+      assignment: { ...state.assignments[0]!, id: "forged-assignment", idempotencyKey: "forged-key" },
+      session: { ...state.sessions[0]!, id: "forged-session" },
+      batch: { ...state.batches[0]!, id: "forged-batch" },
+      event: { ...state.auditEvents[0]!, id: "forged-event" },
+    };
+
+    await assert.rejects(store.acceptLaunch(input), /does not match its target/);
+    await assert.rejects(store.acceptLaunch({
+      ...input,
+      event: { ...input.event, assignmentId: input.assignment.id, type: "launch_reserved" },
+    }), /must have type launch_accepted/);
+    assert.equal(store.snapshot().assignments.length, 1);
   });
 });
 
