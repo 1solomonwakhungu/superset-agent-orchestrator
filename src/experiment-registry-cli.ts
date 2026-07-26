@@ -33,11 +33,13 @@ export async function runExperimentRegistryCommand(
     const parsed = options(rest);
     const registryPath = parsed.get("registry");
     if (!registryPath) throw new Error("--registry is required");
-    const registry = new ExperimentRegistry(registryPath);
+    const catalog = parsed.get("catalog");
+    if (!catalog) throw new Error("--catalog is required");
+    const registry = new ExperimentRegistry(registryPath, catalog);
     if (command === "add") {
       const input = parsed.get("input");
-      if (!input || parsed.size !== 2)
-        throw new Error("add accepts only --registry and --input");
+      if (!input || parsed.size !== 3)
+        throw new Error("add accepts only --registry, --catalog, and --input");
       const record = await registry.add(
         JSON.parse(await readFile(input, "utf8")) as ExperimentInput,
       );
@@ -47,6 +49,7 @@ export async function runExperimentRegistryCommand(
     if (command === "query") {
       const allowed = new Set([
         "registry",
+        "catalog",
         "hypothesis",
         "checkpoint",
         "baseline",
@@ -62,8 +65,14 @@ export async function runExperimentRegistryCommand(
       const status = parsed.get("status");
       const owner = parsed.get("owner");
       if (hypothesis) query.hypothesis = hypothesis;
-      if (checkpoint) query.checkpointSha = checkpoint;
-      if (baseline) query.parentBaselineFingerprint = baseline;
+      if (checkpoint)
+        query.checkpointSha =
+          experimentRecordSchema.shape.checkpointSha.parse(checkpoint);
+      if (baseline)
+        query.parentBaselineFingerprint =
+          experimentRecordSchema.shape.parentBaselineFingerprint.parse(
+            baseline,
+          );
       if (status)
         query.status = experimentRecordSchema.shape.status.parse(status);
       if (owner) query.ownerAgent = owner;
@@ -73,14 +82,16 @@ export async function runExperimentRegistryCommand(
       return 0;
     }
     if (command === "diff") {
-      const baseline = parsed.get("baseline-experiment");
+      const baseline = parsed.get("baseline");
       const experiment = parsed.get("experiment");
-      if (!baseline || !experiment || parsed.size !== 3)
+      if (!baseline || !experiment || parsed.size !== 4)
         throw new Error(
-          "diff accepts --registry, --baseline-experiment, and --experiment",
+          "diff accepts --registry, --catalog, --baseline, and --experiment",
         );
+      const fingerprint =
+        experimentRecordSchema.shape.parentBaselineFingerprint.parse(baseline);
       process.stdout.write(
-        `${JSON.stringify(await registry.diff(baseline, experiment), null, 2)}\n`,
+        `${JSON.stringify(await registry.diff(fingerprint, experiment), null, 2)}\n`,
       );
       return 0;
     }

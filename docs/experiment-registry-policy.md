@@ -16,11 +16,10 @@
 ## Usage
 
 ```sh
-npm run build
-experiment-registry add --registry registry/experiments.jsonl --input experiment.json
-experiment-registry query --registry registry/experiments.jsonl --hypothesis "Page alignment reduces reads"
-experiment-registry query --registry registry/experiments.jsonl --checkpoint 0123456789abcdef0123456789abcdef01234567
-experiment-registry diff --registry registry/experiments.jsonl --baseline-experiment exp_... --experiment exp_...
+npm run registry -- add --registry registry/experiments.jsonl --catalog minicpm5/baseline-fingerprints.json --input experiment.json
+npm run registry -- query --registry registry/experiments.jsonl --catalog minicpm5/baseline-fingerprints.json --hypothesis "Page alignment reduces reads"
+npm run registry -- query --registry registry/experiments.jsonl --catalog minicpm5/baseline-fingerprints.json --checkpoint 0123456789abcdef0123456789abcdef01234567
+npm run registry -- diff --registry registry/experiments.jsonl --catalog minicpm5/baseline-fingerprints.json --baseline 0123... --experiment exp_...
 ```
 
-The `add` input includes every schema field except `schemaVersion`; `experimentId` and `timestamp` are optional and generated when omitted. Status must be `succeeded`, `failed`, or `aborted`.
+The BL-08 catalog starts empty and is populated only with verified result fingerprints. Adds fail closed until their parent fingerprint appears there. The `add` input includes every schema field except `schemaVersion`; `experimentId` and `timestamp` are optional and generated when omitted. Status must be `succeeded`, `failed`, or `aborted`.
