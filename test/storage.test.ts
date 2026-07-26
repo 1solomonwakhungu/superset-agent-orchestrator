@@ -193,3 +193,48 @@ test("startup rejects an altered prior schema before applying migrations", async
     source.close();
   });
 });
+
+test("startup rejects prior foreign key corruption before applying migrations", async () => {
+  await temporaryDirectory((directory) => {
+    const path = join(directory, "registry.sqlite");
+    const storage = new OrchestratorStorage(path);
+    storage.rollback(1, join(directory, "backup.sqlite"));
+    storage.close();
+    const mutation = new DatabaseSync(path);
+    mutation.exec("PRAGMA foreign_keys = OFF");
+    mutation.prepare("INSERT INTO assignments VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
+      "orphan", "missing-batch", "storage", null, "workspace-1", null, "2026-07-26T00:00:00.000Z", null,
+    );
+    mutation.close();
+    assert.throws(() => new OrchestratorStorage(path), /foreign key validation failed before migration/);
+    const source = new DatabaseSync(path, { readOnly: true });
+    assert.equal(source.prepare("SELECT MAX(version) version FROM schema_migrations").get()?.version, 1);
+    assert.equal(source.prepare("SELECT COUNT(*) count FROM sqlite_schema WHERE name = 'workspace_leases'").get()?.count, 0);
+    source.close();
+  });
+});
+
+test("rejects invalid retention durations before opening storage", () => {
+  for (const resultRetentionDays of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.throws(() => new OrchestratorStorage(":memory:", { resultRetentionDays }), /finite non-negative/);
+  }
+  for (const idempotencyRetentionDays of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.throws(() => new OrchestratorStorage(":memory:", { idempotencyRetentionDays }), /finite non-negative/);
+  }
+});
+
+test("rollback refuses a logically invalid backup before changing the schema", async () => {
+  await temporaryDirectory((directory) => {
+    const path = join(directory, "registry.sqlite");
+    const storage = new OrchestratorStorage(path);
+    try {
+      storage.database.exec("PRAGMA foreign_keys = OFF");
+      storage.database.prepare("INSERT INTO assignments VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
+        "orphan", "missing-batch", "storage", null, "workspace-1", null, "2026-07-26T00:00:00.000Z", null,
+      );
+      assert.throws(() => storage.rollback(1, join(directory, "invalid-backup.sqlite")), /Backup integrity check failed/);
+      assert.equal(storage.schemaVersion(), CURRENT_SCHEMA_VERSION);
+      assert.equal(storage.database.prepare("SELECT COUNT(*) count FROM sqlite_schema WHERE name = 'workspace_leases'").get()?.count, 1);
+    } finally { storage.close(); }
+  });
+});
