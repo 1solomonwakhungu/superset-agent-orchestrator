@@ -7,7 +7,7 @@ import {
 } from "../src/concurrency-scheduler.js";
 import { ConcurrencyLimitedAgentAdapter } from "../src/concurrency-limited-agent-adapter.js";
 import { FakeAgentAdapter } from "../src/fake-agent-adapter.js";
-import type { AgentAdapter } from "../src/agent-adapter.js";
+import type { AgentAdapter, LaunchRequest } from "../src/agent-adapter.js";
 
 const base: AdmissionRequest = {
   id: "first",
@@ -16,6 +16,10 @@ const base: AdmissionRequest = {
   agentId: "codex",
   workspaceId: "workspace-1",
 };
+
+function launchRequest(idempotencyKey: string, prompt = idempotencyKey): LaunchRequest {
+  return { idempotencyKey, prompt, workspacePath: `/${idempotencyKey}`, environment: {}, revalidateWorkspace: async () => undefined };
+}
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve = (): void => undefined;
@@ -288,8 +292,8 @@ test("agent adapter holds capacity until terminal status, including after cancel
   }), () => ({
     hostId: "local", projectId: "project", agentId: "codex", workspaceId: "workspace",
   }));
-  const first = await adapter.launch({ idempotencyKey: "first", prompt: "first", workspacePath: "/first" });
-  const secondPromise = adapter.launch({ idempotencyKey: "second", prompt: "second", workspacePath: "/second" });
+  const first = await adapter.launch(launchRequest("first"));
+  const secondPromise = adapter.launch(launchRequest("second"));
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(delegate.launches.length, 1);
   assert.equal(scheduler.snapshot().queued[0]?.id, "second");
@@ -331,7 +335,7 @@ test("agent adapter preserves cancellation capability, outcomes, and abort signa
     resumeMetadata: (candidate) => scripted.resumeMetadata(candidate),
   };
   const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => base, () => base);
-  const handle = await adapter.launch({ idempotencyKey: "first", prompt: "first", workspacePath: "/first" });
+  const handle = await adapter.launch(launchRequest("first"));
   const abort = new AbortController();
   abort.abort();
 
@@ -358,7 +362,7 @@ test("retains an indeterminate launch permit until lookup resolves the outcome",
   const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => base, () => base);
 
   await assert.rejects(
-    adapter.launch({ idempotencyKey: "uncertain", prompt: "first", workspacePath: "/first" }),
+    adapter.launch(launchRequest("uncertain", "first")),
     /transport failed/,
   );
   const queued = scheduler.acquire({ ...base, id: "new-work", workspaceId: "workspace-2" });
@@ -378,7 +382,7 @@ test("releases an indeterminate launch permit when lookup proves absence", async
   const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => base, () => base);
 
   await assert.rejects(
-    adapter.launch({ idempotencyKey: "rejected", prompt: "first", workspacePath: "/first" }),
+    adapter.launch(launchRequest("rejected", "first")),
     /No fake run script/,
   );
   assert.equal(scheduler.snapshot().active, 1);
@@ -394,7 +398,7 @@ test("recovered running retries reacquire capacity without duplicate permits", a
   const scope = {
     hostId: "local", projectId: "project", agentId: "codex", workspaceId: "workspace",
   };
-  const original = await delegate.launch({ idempotencyKey: "recovered", prompt: "first", workspacePath: "/first" });
+  const original = await delegate.launch(launchRequest("recovered", "first"));
   const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => scope, () => scope);
 
   const [first, duplicate] = await Promise.all([
@@ -418,7 +422,7 @@ test("sequential recovery lookups reuse one active permit", async () => {
   const delegate = new FakeAgentAdapter([
     { statuses: ["running", "running", "succeeded"], result: { status: "succeeded", output: "recovered" } },
   ]);
-  const handle = await delegate.launch({ idempotencyKey: "recovered", prompt: "first", workspacePath: "/first" });
+  const handle = await delegate.launch(launchRequest("recovered", "first"));
   const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => base, () => base);
 
   assert.deepEqual(await adapter.findByIdempotencyKey("recovered"), handle);
@@ -434,7 +438,7 @@ test("terminal status can release a retained permit during a sequential recovery
   const delegate = new FakeAgentAdapter([
     { statuses: ["running", "succeeded"], result: { status: "succeeded", output: "recovered" } },
   ]);
-  const handle = await delegate.launch({ idempotencyKey: "recovered", prompt: "first", workspacePath: "/first" });
+  const handle = await delegate.launch(launchRequest("recovered", "first"));
   const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => base, () => base);
 
   assert.deepEqual(await adapter.findByIdempotencyKey("recovered"), handle);
@@ -462,7 +466,7 @@ test("retries recovery after a transient status failure without duplicating its 
   const delegate = new FakeAgentAdapter([
     { statuses: ["running", "succeeded"], result: { status: "succeeded", output: "recovered" } },
   ]);
-  const handle = await delegate.launch({ idempotencyKey: "recovered", prompt: "first", workspacePath: "/first" });
+  const handle = await delegate.launch(launchRequest("recovered", "first"));
   const status = delegate.status.bind(delegate);
   let attempts = 0;
   delegate.status = async (candidate) => {
@@ -486,7 +490,7 @@ test("recovery reserves capacity before a delayed backend lookup", async () => {
   const delegate = new FakeAgentAdapter([
     { statuses: ["running", "cancelled"], result: { status: "cancelled" } },
   ]);
-  const handle = await delegate.launch({ idempotencyKey: "recovered", prompt: "first", workspacePath: "/first" });
+  const handle = await delegate.launch(launchRequest("recovered", "first"));
   const lookup = deferred();
   const find = delegate.findByIdempotencyKey.bind(delegate);
   delegate.findByIdempotencyKey = async (key) => {
@@ -512,8 +516,8 @@ test("recovery accounts existing runs without deadlocking above the configured l
     { statuses: ["running", "cancelled"], result: { status: "cancelled" } },
     { statuses: ["running", "cancelled"], result: { status: "cancelled" } },
   ]);
-  const one = await delegate.launch({ idempotencyKey: "one", prompt: "one", workspacePath: "/one" });
-  const two = await delegate.launch({ idempotencyKey: "two", prompt: "two", workspacePath: "/two" });
+  const one = await delegate.launch(launchRequest("one"));
+  const two = await delegate.launch(launchRequest("two"));
   const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => base, () => base);
   assert.deepEqual(await adapter.findByIdempotencyKey("one"), one);
   assert.deepEqual(await adapter.findByIdempotencyKey("two"), two);
@@ -527,7 +531,7 @@ test("rejects a recovered run ID bound to a different idempotency key", async ()
   const delegate = new FakeAgentAdapter([
     { statuses: ["running", "cancelled"], result: { status: "cancelled" } },
   ]);
-  const handle = await delegate.launch({ idempotencyKey: "one", prompt: "one", workspacePath: "/one" });
+  const handle = await delegate.launch(launchRequest("one"));
   const find = delegate.findByIdempotencyKey.bind(delegate);
   delegate.findByIdempotencyKey = async (key) => key === "two" ? handle : find(key);
   const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => base, () => base);
@@ -541,7 +545,7 @@ test("does not consume capacity for recovered terminal runs", async () => {
   const delegate = new FakeAgentAdapter([
     { statuses: ["succeeded"], result: { status: "succeeded", output: "complete" } },
   ]);
-  const handle = await delegate.launch({ idempotencyKey: "complete", prompt: "first", workspacePath: "/first" });
+  const handle = await delegate.launch(launchRequest("complete", "first"));
   const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => base, () => base);
 
   assert.deepEqual(await adapter.findByIdempotencyKey("complete"), handle);
@@ -553,7 +557,7 @@ test("recovery retains over-limit capacity until the run becomes terminal", asyn
   const delegate = new FakeAgentAdapter([
     { statuses: ["running", "succeeded"], result: { status: "succeeded", output: "complete" } },
   ]);
-  const handle = await delegate.launch({ idempotencyKey: "recovered", prompt: "first", workspacePath: "/first" });
+  const handle = await delegate.launch(launchRequest("recovered", "first"));
   const blocker = await scheduler.acquire(base);
   const scope = {
     hostId: base.hostId,
@@ -578,7 +582,7 @@ test("recovery retains capacity when status is indeterminate", async () => {
   const delegate = new FakeAgentAdapter([
     { statuses: ["running", "succeeded"], result: { status: "succeeded", output: "complete" } },
   ]);
-  const handle = await delegate.launch({ idempotencyKey: "recovered", prompt: "first", workspacePath: "/first" });
+  const handle = await delegate.launch(launchRequest("recovered", "first"));
   delegate.status = async () => { throw new Error("status unavailable"); };
   const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => base, () => base);
 
@@ -594,7 +598,7 @@ test("status identity mismatch fails closed without releasing capacity", async (
     { statuses: ["running", "succeeded"], result: { status: "succeeded", output: "complete" } },
   ]);
   const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => base, () => base);
-  const handle = await adapter.launch({ idempotencyKey: "first", prompt: "first", workspacePath: "/first" });
+  const handle = await adapter.launch(launchRequest("first"));
   delegate.status = async () => ({ runId: "other-run", status: "succeeded", updatedAt: "2000-01-01T00:00:00.000Z" });
 
   await assert.rejects(adapter.status(handle), /other-run.*fake-1/);
