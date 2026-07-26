@@ -38,7 +38,10 @@ const refused = (result: CancellationResult) => {
 };
 
 async function launchedRun(adapter: FakeAgentAdapter, key: string): Promise<RunHandle> {
-  return adapter.launch({ idempotencyKey: key, prompt: "work", workspacePath: "/tmp/workspace" });
+  return adapter.launch({
+    idempotencyKey: key, prompt: "work", workspacePath: "/tmp/workspace",
+    environment: {}, revalidateWorkspace: async () => undefined,
+  });
 }
 
 test("unsupported cancellation is refused honestly and leaves durable state untouched", async () => harness(async (store) => {
@@ -828,7 +831,7 @@ test("an ignored abort retains its shared provider slot until the operation sett
   assert.ok(maximum <= 4);
 }));
 
-test("unavailable late result remains pending and a later result is retained", async () => harness(async (store) => {
+test("an eventually consistent late result remains pending and is retained", async () => harness(async (store) => {
   const created = await store.createBatch("late-result-retry", "client", [{ agent: "codex", task: "work" }]);
   const id = created.sessions[0]!.id;
   await store.bindWorkerRun(id, "run-1");
@@ -839,7 +842,7 @@ test("unavailable late result remains pending and a later result is retained", a
     cancel: async () => ({ status: "accepted" as const }),
     status: async ({ runId }) => ({ runId, status: "succeeded" as const, updatedAt: "2026-07-26T00:00:02.000Z" }),
     result: async () => {
-      if (resultCalls++ === 0) throw new Error("not ready");
+      if (resultCalls++ === 0) return undefined;
       return { status: "succeeded" as const, output: "eventual result" };
     },
   }));

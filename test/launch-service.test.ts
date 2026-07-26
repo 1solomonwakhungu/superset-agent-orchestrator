@@ -13,6 +13,12 @@ import {
 import { DurableStore, type DurableState } from "../src/store.js";
 import { LifecycleService } from "../src/lifecycle-service.js";
 
+const authorizer = {
+  authorize: async (workspaceId: string) => ({
+    workspaceId, projectId: "project-test", canonicalPath: "/workspace/per-338", revalidate: async () => undefined,
+  }),
+};
+
 const request: AsynchronousLaunchRequest = {
   idempotencyKey: "customer-operation-42",
   clientId: "desktop-client",
@@ -20,7 +26,6 @@ const request: AsynchronousLaunchRequest = {
   attribution: { agent: "codex", task: "implement durable launch" },
   prompt: "Implement the assignment",
   workspaceId: "workspace-per-338",
-  workspacePath: "/workspace/per-338",
 };
 
 const script = {
@@ -40,7 +45,7 @@ async function withStore(run: (path: string) => Promise<void>): Promise<void> {
 test("returns stable IDs only after durable acceptance and before adapter launch", async () => {
   await withStore(async (path) => {
     const adapter = new FakeAgentAdapter([script]);
-    const accepted = await new LaunchService(new DurableStore(path), adapter).accept(request);
+    const accepted = await new LaunchService(new DurableStore(path), adapter, authorizer).accept(request);
     const persisted = JSON.parse(await readFile(path, "utf8")) as DurableState;
 
     assert.equal(adapter.launches.length, 0);
@@ -73,7 +78,7 @@ test("cancellation racing adapter launch is delivered after the run is bound", a
       resumeMetadata: async () => undefined,
     };
     const store = new DurableStore(path);
-    const launch = new LaunchService(store, adapter);
+    const launch = new LaunchService(store, adapter, authorizer);
     const accepted = await launch.launch(request);
     await entered;
 
@@ -111,7 +116,7 @@ test("cancellation racing a rejected launch settles as failed launch_error", asy
       resumeMetadata: async () => undefined,
     };
     const store = new DurableStore(path);
-    const accepted = await new LaunchService(store, adapter).launch(request);
+    const accepted = await new LaunchService(store, adapter, authorizer).launch(request);
     await entered;
     await new LifecycleService(store, adapter).cancelSession(accepted.sessionId);
     rejectLaunch?.(new Error("launch rejected"));
@@ -140,8 +145,8 @@ test("malformed provider launch handle settles the lifecycle worker as launch_er
       resumeMetadata: async () => undefined,
     };
     const store = new DurableStore(path);
-    const accepted = await new LaunchService(store, adapter).accept(request);
-    await new LaunchService(store, adapter).dispatchPending();
+    const accepted = await new LaunchService(store, adapter, authorizer).accept(request);
+    await new LaunchService(store, adapter, authorizer).dispatchPending();
     assert.equal((await store.worker(accepted.sessionId))?.status, "failed");
     assert.equal((await store.worker(accepted.sessionId))?.stopReason, "launch_error");
   });
@@ -160,7 +165,7 @@ test("local cancellation prevents a dispatcher holding stale acceptance from lau
       resumeMetadata: async () => undefined,
     };
     const store = new DurableStore(path);
-    const service = new LaunchService(store, adapter);
+    const service = new LaunchService(store, adapter, authorizer);
     const accepted = await service.accept(request);
     const stale = await store.pendingAssignments();
     await new LifecycleService(store, adapter).cancelSession(accepted.sessionId);
@@ -190,7 +195,7 @@ test("deadline winning during launch stops and reconciles the late-bound run aft
       resumeMetadata: async () => undefined,
     };
     const store = new DurableStore(path);
-    const accepted = await new LaunchService(store, adapter).launch(request);
+    const accepted = await new LaunchService(store, adapter, authorizer).launch(request);
     await entered;
     const deadline = new Date("2026-07-26T00:00:00.000Z");
     await store.setWorkerDeadline(accepted.sessionId, deadline);
@@ -234,7 +239,7 @@ test("deadline winning during a rejected launch preserves deadline truth and cle
       resumeMetadata: async () => undefined,
     };
     const store = new DurableStore(path);
-    const accepted = await new LaunchService(store, adapter).launch(request);
+    const accepted = await new LaunchService(store, adapter, authorizer).launch(request);
     await entered;
     await store.setWorkerDeadline(accepted.sessionId, new Date("2026-07-26T00:00:00.000Z"));
     await new LifecycleService(store, adapter).enforceDeadlines(new Date("2026-07-26T00:00:01.000Z"));
@@ -269,7 +274,7 @@ test("asynchronous launch returns after acceptance without waiting for the adapt
       cancel: async () => undefined,
       resumeMetadata: async () => undefined,
     };
-    const service = new LaunchService(new DurableStore(path), adapter);
+    const service = new LaunchService(new DurableStore(path), adapter, authorizer);
 
     const accepted = await service.launch(request);
     assert.equal(accepted.status, "accepted");
@@ -290,15 +295,15 @@ test("asynchronous launch returns after acceptance without waiting for the adapt
 test("repeated idempotency keys return one acceptance and launch one provider run", async () => {
   await withStore(async (path) => {
     const adapter = new FakeAgentAdapter([script]);
-    const first = new LaunchService(new DurableStore(path), adapter);
+    const first = new LaunchService(new DurableStore(path), adapter, authorizer);
     const accepted = await Promise.all(Array.from({ length: 8 }, () => first.accept(request)));
     assert.equal(new Set(accepted.map(({ assignmentId }) => assignmentId)).size, 1);
 
     await Promise.all([
-      new LaunchService(new DurableStore(path), adapter).dispatchPending(),
-      new LaunchService(new DurableStore(path), adapter).dispatchPending(),
+      new LaunchService(new DurableStore(path), adapter, authorizer).dispatchPending(),
+      new LaunchService(new DurableStore(path), adapter, authorizer).dispatchPending(),
     ]);
-    await new LaunchService(new DurableStore(path), adapter).dispatchPending();
+    await new LaunchService(new DurableStore(path), adapter, authorizer).dispatchPending();
 
     const state = JSON.parse(await readFile(path, "utf8")) as DurableState;
     assert.equal(adapter.launches.length, 1);
@@ -314,7 +319,7 @@ test("repeated idempotency keys return one acceptance and launch one provider ru
 
 test("rejects reuse of an idempotency key for different work", async () => {
   await withStore(async (path) => {
-    const service = new LaunchService(new DurableStore(path), new FakeAgentAdapter([script]));
+    const service = new LaunchService(new DurableStore(path), new FakeAgentAdapter([script]), authorizer);
     await service.accept(request);
     await assert.rejects(service.accept({ ...request, prompt: "Different work" }), /already used for a different launch/);
   });
@@ -322,22 +327,30 @@ test("rejects reuse of an idempotency key for different work", async () => {
 
 test("rejects invalid nested attribution before durable acceptance", async () => {
   await withStore(async (path) => {
-    const service = new LaunchService(new DurableStore(path), new FakeAgentAdapter([script]));
+    const service = new LaunchService(new DurableStore(path), new FakeAgentAdapter([script]), authorizer);
     await assert.rejects(service.accept({ ...request, attribution: { agent: "", task: "work" } }), /attribution/);
     await assert.rejects(
       service.accept({ ...request, attribution: undefined } as unknown as AsynchronousLaunchRequest),
       /attribution/,
     );
-    await assert.rejects(readFile(path, "utf8"), /ENOENT/);
+    const persisted = JSON.parse(await readFile(path, "utf8")) as DurableState;
+    assert.deepEqual(persisted.assignments, []);
+    assert.deepEqual(persisted.sessions, []);
+    assert.deepEqual(
+      persisted.securityAuditEvents?.map(({ decision, reasonCode }) => ({ decision, reasonCode })),
+      [
+        { decision: "denied", reasonCode: "INVALID_ARGUMENT" },
+        { decision: "denied", reasonCode: "INVALID_ARGUMENT" },
+      ],
+    );
   });
 });
 
 test("canonical fingerprints accept equivalent requests with reordered properties", async () => {
   await withStore(async (path) => {
-    const service = new LaunchService(new DurableStore(path), new FakeAgentAdapter([script]));
+    const service = new LaunchService(new DurableStore(path), new FakeAgentAdapter([script]), authorizer);
     const first = await service.accept(request);
     const reordered = {
-      workspacePath: request.workspacePath,
       workspaceId: request.workspaceId,
       prompt: request.prompt,
       attribution: { task: request.attribution.task, agent: request.attribution.agent },
@@ -360,7 +373,7 @@ test("retries transient background dispatch failure without another launch reque
       if (attempts === 1) throw new Error("transient storage error");
       return pending();
     };
-    const service = new LaunchService(store, adapter, () => new Date(), () => undefined, 5);
+    const service = new LaunchService(store, adapter, authorizer, () => new Date(), () => undefined, 5);
     await service.launch(request);
 
     let launched = false;
@@ -370,6 +383,7 @@ test("retries transient background dispatch failure without another launch reque
       launched = state.assignments[0]?.status === "launched";
     }
     assert.equal(launched, true);
+    await service.close();
     assert.equal(adapter.launches.length, 1);
     assert.ok(attempts >= 2);
     await service.stop();
@@ -389,7 +403,7 @@ test("stop suppresses retries after an active background dispatch fails", async 
       markEntered?.();
       return new Promise((_, reject) => { rejectPending = reject; });
     };
-    const service = new LaunchService(store, adapter, () => new Date(), () => undefined, 5);
+    const service = new LaunchService(store, adapter, authorizer, () => new Date(), () => undefined, 5);
     await service.launch(request);
     await entered;
 
@@ -401,6 +415,23 @@ test("stop suppresses retries after an active background dispatch fails", async 
     assert.equal(attempts, 1);
     assert.equal(adapter.launches.length, 0);
     await assert.rejects(service.launch({ ...request, idempotencyKey: "after-stop" }), /stopped/);
+  });
+});
+
+test("closing during a failed background dispatch cancels its retry", async () => {
+  await withStore(async (path) => {
+    const store = new DurableStore(path);
+    let attempts = 0;
+    store.pendingAssignments = async () => {
+      attempts += 1;
+      throw new Error("persistent storage error");
+    };
+    const service = new LaunchService(store, new FakeAgentAdapter([script]), authorizer, () => new Date(), () => undefined, 5);
+    await service.launch({ ...request, idempotencyKey: "close-failed-dispatch" });
+    while (attempts === 0) await new Promise((resolve) => setTimeout(resolve, 1));
+    await service.close();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(attempts, 1);
   });
 });
 
@@ -423,7 +454,7 @@ test("recovers without duplicate work after crashes across every launch boundary
           throw new InjectedCrash(boundary);
         }
       };
-      const interrupted = new LaunchService(new DurableStore(path), adapter, () => new Date(), crash);
+      const interrupted = new LaunchService(new DurableStore(path), adapter, authorizer, () => new Date(), crash);
 
       if (boundary === "after_acceptance") {
         await assert.rejects(interrupted.accept(request), InjectedCrash);
@@ -432,7 +463,7 @@ test("recovers without duplicate work after crashes across every launch boundary
         await assert.rejects(interrupted.dispatchPending(), InjectedCrash);
       }
 
-      const restarted = new LaunchService(new DurableStore(path), adapter);
+      const restarted = new LaunchService(new DurableStore(path), adapter, authorizer);
       const retried = await restarted.accept(request);
       await restarted.dispatchPending();
       const state = JSON.parse(await readFile(path, "utf8")) as DurableState;

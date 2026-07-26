@@ -12,7 +12,6 @@ const request: AsynchronousLaunchRequest = {
   attribution: { agent: "synthetic", task: "process-death" },
   prompt: "synthetic",
   workspaceId: "fixture",
-  workspacePath: "/tmp/per-348-process-fixture",
 };
 
 async function existingRun(): Promise<RunHandle | undefined> {
@@ -43,7 +42,13 @@ const adapter: AgentAdapter = {
 const crash = (current: LaunchBoundary): void => {
   if (current === boundary) process.kill(process.pid, "SIGKILL");
 };
-const service = new LaunchService(new DurableStore(statePath, undefined, undefined, undefined, 2_000), adapter, () => new Date(), crash);
+const authorizer = {
+  authorize: async () => ({
+    workspaceId: "fixture", projectId: "project", canonicalPath: "/tmp/per-348-process-fixture",
+    revalidate: async () => undefined,
+  }),
+};
+const service = new LaunchService(new DurableStore(statePath, undefined, undefined, undefined, undefined, 2_000), adapter, authorizer, () => new Date(), crash);
 
 if (mode === "crash") await service.launch(request);
 else if (mode === "recover") await service.dispatchPending();
