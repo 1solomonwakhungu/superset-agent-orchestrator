@@ -22,7 +22,7 @@ const responseSchema = z.object({
   batch_id: z.string().optional(),
   sessions: z.array(sessionSchema).default([]),
   items: z.array(z.object({
-    canceled: z.boolean().optional(), workspace_id: z.string().optional(),
+    canceled: z.boolean().optional(), workspace_id: z.string().optional(), status: z.string().optional(),
     result: resultSchema.optional(), error: errorSchema.optional(),
   }).passthrough()).default([]),
   error: errorSchema.optional(),
@@ -48,10 +48,13 @@ test("production MCP server persists attributed completion, failure, cancellatio
     assert.equal(cancelResponse.items[0]?.canceled, true);
     const terminal = await results(harness.client, launched.sessions.map(({ sessionId }) => sessionId));
     assert.equal(terminal.items[0]?.result?.claim.output, "exact answer");
+    assert.equal(terminal.items[0]?.status, "succeeded");
     assert.equal(terminal.items[0]?.result?.attribution.task, "task-0");
     assert.equal(terminal.items[0]?.workspace_id, "workspace-0");
     assert.equal(terminal.items[1]?.result?.claim.error, "agent failed");
+    assert.equal(terminal.items[1]?.status, "failed");
     assert.equal(terminal.items[2]?.result?.claim.stopReason, "operator request");
+    assert.equal(terminal.items[2]?.status, "canceled");
     const terminalCancel = await call(harness.client, "provider_sessions_cancel", {
       request_id: "late-cancel", session_ids: [complete.sessionId],
     });
@@ -89,7 +92,9 @@ test("production MCP server exposes every provider error once without retries", 
     await withServer(scenario, async (harness) => {
       const launched = await launch(harness.client, 1);
       if (operation === "launch") {
-        assert.equal((await results(harness.client, [launched.sessions[0]!.sessionId])).items[0]?.error?.code, code);
+        const item = (await results(harness.client, [launched.sessions[0]!.sessionId])).items[0];
+        assert.equal(item?.error?.code, code);
+        assert.equal(item?.status, "failed");
       } else {
         const sessionId = launched.sessions[0]!.sessionId;
         const response = operation === "cancel"

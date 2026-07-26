@@ -555,6 +555,15 @@ locally.
   discovery skip), coverage, Python 5/5 with one optional checkpoint audit skip,
   schema no-diff, and provenance.
 - Next: push the exact PR head and merge only after exact-head checks succeed.
+- Final integration synchronized captured provider outcomes with canonical worker
+  lifecycle state, including launch rejection, completion, failure, cancellation,
+  malformed output, and missing results. Provider-backed sessions now use the
+  configured adapter for lifecycle operations, and stopped launch services reject
+  new batches before durable acceptance.
+- Verification against current `main`: focused provider, launch, and result tests
+  passed 32/32; lifecycle tests passed 40/40 across five consecutive runs; the
+  complete quality gate passed once before the final state assertions and is being
+  rerun at the exact commit head before merge.
 
 PER-348 adversarial resilience regression coverage is complete locally.
 

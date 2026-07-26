@@ -54,6 +54,8 @@ export interface SupersetProcessAdapterOptions {
 
 /** Agent adapter for Superset-compatible command processes with one JSON response per invocation. */
 export class SupersetProcessAdapter implements AgentAdapter {
+  readonly cancellation = "supported" as const;
+
   constructor(private readonly options: SupersetProcessAdapterOptions) {}
 
   async findByIdempotencyKey(idempotencyKey: string): Promise<RunHandle | undefined> {
