@@ -143,16 +143,28 @@ test("admits same-tick work up to available capacity before rejecting overload",
 
 test("resource and rate-limit hooks back off the FIFO head without bypass", async () => {
   let checks = 0;
+  let markBlocked: (() => void) | undefined;
+  const blocked = new Promise<void>((resolve) => { markBlocked = resolve; });
   const scheduler = new ConcurrencyScheduler(
     { global: 2 },
     [() => {
       checks += 1;
-      return checks === 1 ? { ready: false, retryAfterMs: 5, reason: "provider_rate_limit" } : { ready: true };
+      if (checks === 1) {
+        return {
+          ready: false,
+          retryAfterMs: 5,
+          get reason() {
+            queueMicrotask(() => markBlocked?.());
+            return "provider_rate_limit";
+          },
+        };
+      }
+      return { ready: true };
     }],
   );
   const first = scheduler.acquire(base);
   const second = scheduler.acquire({ ...base, id: "second", workspaceId: "workspace-2" });
-  await new Promise((resolve) => setImmediate(resolve));
+  await blocked;
 
   assert.deepEqual(scheduler.snapshot().queued.map(({ id }) => id), ["first", "second"]);
   assert.deepEqual(scheduler.snapshot().queued[0]?.blockedBy, ["provider_rate_limit"]);
