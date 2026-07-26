@@ -1,19 +1,19 @@
 {
-  "recordedAt": "2026-07-25T16:57:57.538Z",
+  "recordedAt": "2000-01-01T00:00:00.000Z",
   "recordedFromVersion": "1.16.1",
-  "note": "Recorded from a real local Superset CLI by scripts/record-discovery-fixture.mjs. Field names, types, and null/absent distinctions are verbatim; identifying values are pseudonymised.",
+  "note": "Recorded from a real local Superset CLI by scripts/record-discovery-fixture.mjs. Field names, types, and null/absent distinctions are verbatim; live values follow the strict privacy classification documented in docs/configuration-and-discovery.md.",
   "responses": {
     "--version": "1.16.1\n",
     "status --json": {
       "running": true,
       "healthy": true,
-      "pid": 1044,
-      "port": 48707,
-      "endpoint": "http://127.0.0.1:48707",
+      "pid": 1,
+      "port": 40001,
+      "endpoint": "http://127.0.0.1:40001",
       "organizationId": "00000000-0000-4000-8000-000000000001",
       "hostId": "00000000000000000000000000000001",
       "hostName": "recorded-hostname-1",
-      "uptimeSec": 52562
+      "uptimeSec": 1
     },
     "projects list --local --json": [
       {
@@ -55,8 +55,8 @@
         "type": "main",
         "createdByUserId": "00000000-0000-4000-8000-000000000006",
         "taskId": null,
-        "createdAt": "2026-07-05T18:54:50.536Z",
-        "updatedAt": "2026-07-05T18:54:50.536Z",
+        "createdAt": "2000-01-01T00:00:01.000Z",
+        "updatedAt": "2000-01-01T00:00:01.000Z",
         "worktreePath": "/recorded/workspace-2",
         "worktreeExists": true,
         "projectName": "recorded-projectname-1",
@@ -72,8 +72,8 @@
         "type": "main",
         "createdByUserId": "00000000-0000-4000-8000-000000000006",
         "taskId": null,
-        "createdAt": "2026-07-05T18:54:56.220Z",
-        "updatedAt": "2026-07-05T18:54:56.220Z",
+        "createdAt": "2000-01-01T00:00:02.000Z",
+        "updatedAt": "2000-01-01T00:00:02.000Z",
         "worktreePath": "/recorded/workspace-3",
         "worktreeExists": true,
         "projectName": "recorded-projectname-2",
@@ -89,8 +89,8 @@
         "type": "main",
         "createdByUserId": "00000000-0000-4000-8000-000000000006",
         "taskId": null,
-        "createdAt": "2026-07-05T19:01:29.521Z",
-        "updatedAt": "2026-07-05T19:01:29.521Z",
+        "createdAt": "2000-01-01T00:00:03.000Z",
+        "updatedAt": "2000-01-01T00:00:03.000Z",
         "worktreePath": "/recorded/workspace-1",
         "worktreeExists": true,
         "projectName": "recorded-projectname-3",
@@ -106,8 +106,8 @@
         "type": "main",
         "createdByUserId": null,
         "taskId": null,
-        "createdAt": "2026-07-22T00:47:28.695Z",
-        "updatedAt": "2026-07-22T00:47:28.695Z",
+        "createdAt": "2000-01-01T00:00:04.000Z",
+        "updatedAt": "2000-01-01T00:00:04.000Z",
         "worktreePath": "/recorded/workspace-4",
         "worktreeExists": true,
         "projectName": "recorded-projectname-4",
@@ -123,8 +123,8 @@
         "type": "worktree",
         "createdByUserId": null,
         "taskId": null,
-        "createdAt": "2026-07-22T00:48:15.033Z",
-        "updatedAt": "2026-07-22T00:48:15.033Z",
+        "createdAt": "2000-01-01T00:00:05.000Z",
+        "updatedAt": "2000-01-01T00:00:05.000Z",
         "worktreePath": "/recorded/workspace-5",
         "worktreeExists": true,
         "projectName": "recorded-projectname-1",
@@ -140,8 +140,8 @@
         "type": "main",
         "createdByUserId": null,
         "taskId": null,
-        "createdAt": "2026-07-22T00:49:54.284Z",
-        "updatedAt": "2026-07-22T00:49:54.284Z",
+        "createdAt": "2000-01-01T00:00:06.000Z",
+        "updatedAt": "2000-01-01T00:00:06.000Z",
         "worktreePath": "/recorded/workspace-6",
         "worktreeExists": true,
         "projectName": "recorded-projectname-5",
@@ -157,8 +157,8 @@
         "type": "worktree",
         "createdByUserId": null,
         "taskId": "00000000-0000-4000-8000-000000000015",
-        "createdAt": "2026-07-22T00:50:43.502Z",
-        "updatedAt": "2026-07-22T00:50:43.502Z",
+        "createdAt": "2000-01-01T00:00:07.000Z",
+        "updatedAt": "2000-01-01T00:00:07.000Z",
         "worktreePath": "/recorded/workspace-7",
         "worktreeExists": true,
         "projectName": "recorded-projectname-1",
@@ -174,8 +174,8 @@
         "type": "worktree",
         "createdByUserId": null,
         "taskId": null,
-        "createdAt": "2026-07-22T01:33:42.871Z",
-        "updatedAt": "2026-07-22T01:33:42.871Z",
+        "createdAt": "2000-01-01T00:00:08.000Z",
+        "updatedAt": "2000-01-01T00:00:08.000Z",
         "worktreePath": "/recorded/workspace-8",
         "worktreeExists": true,
         "projectName": "recorded-projectname-5",
@@ -185,12 +185,12 @@
     "agents list --local --json": [
       {
         "id": "00000000-0000-4000-8000-000000000017",
-        "presetId": "claude",
+        "presetId": "recorded-presetid-1",
         "iconId": null,
-        "label": "Claude",
-        "command": "claude",
+        "label": "recorded-label-1",
+        "command": "recorded-command-1",
         "args": [
-          "--dangerously-skip-permissions"
+          "recorded-arg-1"
         ],
         "promptTransport": "argv",
         "promptArgs": [],
@@ -199,10 +199,10 @@
       },
       {
         "id": "00000000-0000-4000-8000-000000000018",
-        "presetId": "amp",
+        "presetId": "recorded-presetid-2",
         "iconId": null,
-        "label": "Amp",
-        "command": "amp",
+        "label": "recorded-label-2",
+        "command": "recorded-command-2",
         "args": [],
         "promptTransport": "stdin",
         "promptArgs": [],
@@ -211,28 +211,28 @@
       },
       {
         "id": "00000000-0000-4000-8000-000000000019",
-        "presetId": "codex",
+        "presetId": "recorded-presetid-3",
         "iconId": null,
-        "label": "Codex",
-        "command": "codex",
+        "label": "recorded-label-3",
+        "command": "recorded-command-3",
         "args": [
-          "--dangerously-bypass-approvals-and-sandbox"
+          "recorded-arg-1"
         ],
         "promptTransport": "argv",
         "promptArgs": [
-          "--"
+          "recorded-arg-1"
         ],
         "env": {},
         "order": 2
       },
       {
         "id": "00000000-0000-4000-8000-000000000020",
-        "presetId": "gemini",
+        "presetId": "recorded-presetid-4",
         "iconId": null,
-        "label": "Gemini",
-        "command": "gemini",
+        "label": "recorded-label-4",
+        "command": "recorded-command-4",
         "args": [
-          "--approval-mode=auto_edit"
+          "recorded-arg-1"
         ],
         "promptTransport": "argv",
         "promptArgs": [],
@@ -241,38 +241,38 @@
       },
       {
         "id": "00000000-0000-4000-8000-000000000021",
-        "presetId": "mastracode",
+        "presetId": "recorded-presetid-5",
         "iconId": null,
-        "label": "Mastracode",
-        "command": "mastracode",
+        "label": "recorded-label-5",
+        "command": "recorded-command-5",
         "args": [],
         "promptTransport": "argv",
         "promptArgs": [
-          "--prompt"
+          "recorded-arg-1"
         ],
         "env": {},
         "order": 4
       },
       {
         "id": "00000000-0000-4000-8000-000000000022",
-        "presetId": "opencode",
+        "presetId": "recorded-presetid-6",
         "iconId": null,
-        "label": "OpenCode",
-        "command": "opencode",
+        "label": "recorded-label-6",
+        "command": "recorded-command-6",
         "args": [],
         "promptTransport": "argv",
         "promptArgs": [
-          "--prompt"
+          "recorded-arg-1"
         ],
         "env": {},
         "order": 5
       },
       {
         "id": "00000000-0000-4000-8000-000000000023",
-        "presetId": "pi",
+        "presetId": "recorded-presetid-7",
         "iconId": null,
-        "label": "Pi",
-        "command": "pi",
+        "label": "recorded-label-7",
+        "command": "recorded-command-7",
         "args": [],
         "promptTransport": "argv",
         "promptArgs": [],
@@ -281,26 +281,26 @@
       },
       {
         "id": "00000000-0000-4000-8000-000000000024",
-        "presetId": "copilot",
+        "presetId": "recorded-presetid-8",
         "iconId": null,
-        "label": "Copilot",
-        "command": "copilot",
+        "label": "recorded-label-8",
+        "command": "recorded-command-8",
         "args": [
-          "--allow-tool=write"
+          "recorded-arg-1"
         ],
         "promptTransport": "argv",
         "promptArgs": [
-          "-i"
+          "recorded-arg-1"
         ],
         "env": {},
         "order": 7
       },
       {
         "id": "00000000-0000-4000-8000-000000000025",
-        "presetId": "cursor-agent",
+        "presetId": "recorded-presetid-9",
         "iconId": null,
-        "label": "Cursor Agent",
-        "command": "cursor-agent",
+        "label": "recorded-label-9",
+        "command": "recorded-command-9",
         "args": [],
         "promptTransport": "argv",
         "promptArgs": [],
@@ -309,10 +309,10 @@
       },
       {
         "id": "00000000-0000-4000-8000-000000000026",
-        "presetId": "droid",
+        "presetId": "recorded-presetid-10",
         "iconId": null,
-        "label": "Droid",
-        "command": "droid",
+        "label": "recorded-label-10",
+        "command": "recorded-command-10",
         "args": [],
         "promptTransport": "argv",
         "promptArgs": [],
@@ -321,16 +321,16 @@
       },
       {
         "id": "00000000-0000-4000-8000-000000000027",
-        "presetId": "claude-opus-medium",
+        "presetId": "recorded-presetid-11",
         "iconId": null,
-        "label": "Claude Opus (medium)",
-        "command": "claude",
+        "label": "recorded-label-11",
+        "command": "recorded-command-1",
         "args": [
-          "--dangerously-skip-permissions",
-          "--model",
-          "opus",
-          "--effort",
-          "medium"
+          "recorded-arg-1",
+          "recorded-arg-2",
+          "recorded-arg-3",
+          "recorded-arg-4",
+          "recorded-arg-5"
         ],
         "promptTransport": "argv",
         "promptArgs": [],
@@ -339,77 +339,77 @@
       },
       {
         "id": "00000000-0000-4000-8000-000000000028",
-        "presetId": "custom",
+        "presetId": "recorded-presetid-12",
         "iconId": null,
-        "label": "OpenCode (Low)",
-        "command": "opencode",
+        "label": "recorded-label-12",
+        "command": "recorded-command-6",
         "args": [
-          "--agent",
-          "opencode-low"
+          "recorded-arg-1",
+          "recorded-arg-2"
         ],
         "promptTransport": "argv",
         "promptArgs": [
-          "--prompt"
+          "recorded-arg-1"
         ],
         "env": {},
         "order": 11
       },
       {
         "id": "00000000-0000-4000-8000-000000000029",
-        "presetId": "custom",
+        "presetId": "recorded-presetid-12",
         "iconId": null,
-        "label": "OpenCode (Medium)",
-        "command": "opencode",
+        "label": "recorded-label-13",
+        "command": "recorded-command-6",
         "args": [
-          "--agent",
-          "opencode-medium"
+          "recorded-arg-1",
+          "recorded-arg-2"
         ],
         "promptTransport": "argv",
         "promptArgs": [
-          "--prompt"
+          "recorded-arg-1"
         ],
         "env": {},
         "order": 12
       },
       {
         "id": "00000000-0000-4000-8000-000000000030",
-        "presetId": "custom",
+        "presetId": "recorded-presetid-12",
         "iconId": null,
-        "label": "OpenCode (High)",
-        "command": "opencode",
+        "label": "recorded-label-14",
+        "command": "recorded-command-6",
         "args": [
-          "--agent",
-          "opencode-high"
+          "recorded-arg-1",
+          "recorded-arg-2"
         ],
         "promptTransport": "argv",
         "promptArgs": [
-          "--prompt"
+          "recorded-arg-1"
         ],
         "env": {},
         "order": 13
       },
       {
         "id": "00000000-0000-4000-8000-000000000031",
-        "presetId": "custom",
+        "presetId": "recorded-presetid-12",
         "iconId": null,
-        "label": "OpenCode (XHigh)",
-        "command": "opencode",
+        "label": "recorded-label-15",
+        "command": "recorded-command-6",
         "args": [
-          "--agent",
-          "opencode-xhigh"
+          "recorded-arg-1",
+          "recorded-arg-2"
         ],
         "promptTransport": "argv",
         "promptArgs": [
-          "--prompt"
+          "recorded-arg-1"
         ],
         "env": {},
         "order": 14
       },
       {
         "id": "00000000-0000-4000-8000-000000000032",
-        "presetId": "superset",
-        "label": "Superset",
-        "command": "(superset runtime)"
+        "presetId": "recorded-presetid-13",
+        "label": "recorded-label-16",
+        "command": "recorded-command-11"
       }
     ]
   }

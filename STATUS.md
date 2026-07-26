@@ -56,6 +56,88 @@
   94.78% statement / 87.47% branch / 92.47% function coverage. Focused
   launch/lifecycle/MCP tests passed 52/52 across 10 runs (520 checks), and
   `git diff --check` passed.
+## PER-364 MiniCPM5 architecture audit
+
+- Added a no-model-load audit of the pinned checkpoint's actual safetensors header,
+  config, tokenizer metadata, special tokens, and exact chat template.
+- Generates deterministic tensor inventory, layer/module totals, tokenizer report,
+  exact template, and a round-tripped tool-call rendering under `audit/`.
+- Verified 219 tensors and 1,080,632,832 parameters; `npm run verify` passed
+  131 runnable TypeScript tests and 6 Python tests with one explicit skip.
+- Next: PR delivery, exact-head CI, merge, and merged-main readback.
+
+## PER-344 concurrency limits and backpressure
+
+- Added configurable global, per-host, per-project, per-agent, and per-workspace
+  admission limits with a bounded FIFO queue and structured overload errors.
+- Added observable active/queued scope counts, abortable admission, guaranteed
+  release, and resource-pressure/rate-limit backoff hooks that cannot skip the
+  FIFO head.
+- Recovered running retries reacquire capacity, duplicate recovery shares one
+  permit, and terminal transitions while recovery waits cannot leak capacity.
+- Cancellation interrupts asynchronous pressure checks, including hooks that
+  never settle, without disturbing the next queued request.
+- Unknown launch outcomes retain capacity until reconciliation authoritatively
+  proves absence or transfers the permit to the accepted run; cancellation
+  acknowledgements retain capacity until a terminal state is observed.
+- Recovery now reserves capacity before status inspection, fails closed on
+  status errors or identity mismatches, and releases terminal runs safely.
+- Existing runs are accounted before backend lookup without deadlocking startup,
+  and pressure hooks are bounded.
+- Added deterministic tests proving retries and batches hold capacity,
+  cancellation frees capacity, every scope is enforced, and overload stays
+  bounded or fails structurally when waiting is disabled.
+- Verification after integrating current `main`: `npm ci` and
+  `npm audit --audit-level=high` passed (2 moderate transitive advisories); the
+  focused concurrency suite passed 25/25; `npm run check` passed formatting,
+  lint, typecheck, build, 157 tests (156 pass, 0 fail, 1 explicit live-discovery
+  skip), coverage, Python 3/3, schema no-diff, and provenance verification;
+  `git diff --check` passed.
+- Next: push pull request 23, verify exact-head checks, resolve review threads,
+  and merge with exact-head protection.
+
+## PER-362 MiniCPM5 reproducible environment
+
+- Added a uv 0.8.3 lock for Python 3.12 targeting Linux x86-64 and macOS arm64.
+- Pinned MiniCPM5-1B, container bases, Python dependencies, MLX wheels, and
+  recorded llama.cpp/MLX source revisions.
+- Added deterministic fingerprint tooling and Linux/macOS environment capture.
+- Verified two independent 29-package frozen installs, 4/4 Python tests, and an
+  unprivileged Linux/amd64 image build plus environment-capture smoke test.
+- No model fingerprint result is claimed: overnight workers are prohibited from
+  loading or querying the model.
+- Remaining: capture a native Linux x86-64 host and run same-host fingerprints
+  on both targets using an authorized executor.
+
+## PER-361 MiniCPM5 checkpoint provenance
+
+- Pinned the authoritative BF16 checkpoint and the published SFT, GGUF, and MLX
+  variant families to immutable Hugging Face revision hashes.
+- Recorded exact model-input and variant artifact sizes and SHA-256 values.
+- Added an Apache-2.0 license audit and offline manifest verification.
+- Next: run full verification, deliver through PR, and verify merged `main`.
+
+## PER-354 recurring system cleanup
+
+Completed PER-354 with a conservative macOS cleanup utility: dry-run default, explicit flags for disruptive operations, path-boundary and symlink checks, stale-file retention, protected Hermes queue handling, installer-DMG validation, disk reporting, and LM Studio size reporting. Execute mode counts removals and Downloads moves only after success; Downloads collisions, malformed host data, and external-command failures are handled without unsafe fallback or tracebacks.
+
+Verification completed:
+
+- `python3 -m unittest -v`: 16 tests passed
+- `ruff check cleanup.py test_cleanup.py`: passed
+- `mypy --strict cleanup.py test_cleanup.py`: passed with no issues in 2 files
+- `python3 -m py_compile cleanup.py test_cleanup.py`: passed
+- `./cleanup.py --help`: passed
+- `python3 -m zipapp ...` plus packaged `--help` smoke test: passed
+- `npm ci`: passed after integration with current `origin/main`
+- `npm audit --audit-level=high`: passed (2 moderate transitive advisories)
+- `npm run check`: passed after integration with current `origin/main`
+- `npm pack --dry-run`: passed
+- `git diff --check`: passed
+
+No host cleanup, Hermes access, or destructive operation was executed. The
+implementation is ready for review; invoke a dry-run from an appropriately
+authorized host before considering `--execute`.
 
 ## PER-352 cross-platform compatibility CI
 
@@ -195,7 +277,7 @@ PER-341 startup reconciliation and batch recovery are complete.
 - GitHub reported the exact head clean and mergeable with no required checks.
 - Next: merge PR 7 and reconcile PER-341 in Linear.
 
-PER-336 embedded persistence implementation is in progress.
+Historical PER-336 implementation status before PR 26 merged:
 
 - Added typed repositories for every durable SQLite entity.
 - Added transactional repository operations and atomic logical export.
@@ -295,7 +377,41 @@ PER-331 idempotency and restart recovery implementation is complete locally.
 - Next: commit, push, open the PER-331 pull request, verify its exact head, merge,
   verify `main`, and mark Linear Done.
 
-PER-336 embedded persistence and migrations is complete and verified locally.
+PER-348 adversarial resilience regression coverage is complete locally.
+
+- Added deterministic launch interruption, forced dispatch contention,
+  cancellation race, stale-event, conflicting-result, corruption, migration,
+  stale-lease, hostile-parser, hostile-identifier, and secret-canary tests.
+- Replaced process-local dispatch exclusion with a filesystem-backed assignment
+  lock and added exact result-attribution enforcement.
+- All fixtures use temporary synthetic state and do not invoke Superset, cron, or
+  user repositories.
+- Resolved PR review findings by fencing retries after shutdown, reclaiming only
+  expired read-only leases, and tolerating backward wall-clock adjustments.
+- Hardened acceptance and transition evidence against mismatched assignments,
+  event types, and conflicting reused audit IDs.
+- Verification: all 117 offline Node tests and 19 focused regressions passed;
+  build, typecheck, schema generation, the 3-test configuration contract, strict
+  local-routing verification, focused Markdown lint, and `git diff --check` passed.
+- The full Node command's real Superset smoke test remains unavailable because the
+  executable is absent and prohibited for this assignment. The merged Python
+  monitor suite has one unrelated recovery failure; `pytest` is not installed.
+- Full-tree Markdown lint still reports pre-existing issues in `README.md`,
+  `docs/mcp-tool-contract.md`, and historical `STATUS.md` entries; the changed
+  matrix passes focused Markdown lint.
+- Integrated current `main` through secured persistence PR 38 without regressing
+  exact schema, ownership, mode, path-alias, sidecar, backup, or export controls.
+- Added real child-process `SIGKILL` coverage at all five launch boundaries and
+  made atomic adapter launch idempotency explicit so stale lock recovery cannot
+  create a second provider run.
+- Current verification: focused resilience and storage coverage passed 52/52;
+  `npm run check` passed formatting, ESLint, typecheck, build, 150 tests (149
+  pass, 0 fail, 1 optional live Superset skip), coverage, Python 3/3, and schema
+  no-diff. `npm ci` reported 2 pre-existing moderate advisories.
+- Next: commit and push the exact reviewed head, resolve all PR 34 threads, verify
+  GitHub checks, and merge with exact-head protection.
+
+Historical PER-336 local verification before PR 26 merged:
 
 - Reconciled the feature branch with `origin/main` at `90cef0d` via a clean merge
   commit. No conflicts, no force push, no history rewrite, no data deleted.
@@ -318,7 +434,7 @@ PER-336 embedded persistence and migrations is complete and verified locally.
   106/106 passing, storage/migration/corruption suites 12/12 passing.
 - Next: PR review and merge. Linear is owned by the parent factory.
 
-PER-336 attempt 2 makes discovery verification deterministic without a Superset install.
+Historical PER-336 discovery verification before PR 26 merged:
 
 - Root cause: `test/superset-discovery.smoke.test.ts` unconditionally shelled out
   to the optional `superset` executable, so the suite failed with
@@ -347,7 +463,7 @@ PER-336 attempt 2 makes discovery verification deterministic without a Superset 
   fail-closed (`storage-cli`) 2/2 passing.
 - Next: PR review and merge. Linear is owned by the parent factory.
 
-PER-336 merge-readiness review fixes are complete locally.
+Historical PER-336 merge-readiness review before PR 26 merged:
 
 - Expired unreleased writer leases remain durable and continue fencing later writers until evidence-based reconciliation releases them.
 - Startup validates exact schema definitions and foreign keys before repositories are exposed, and validates an existing prior schema before applying migrations.
@@ -358,7 +474,7 @@ PER-336 merge-readiness review fixes are complete locally.
 - Verification: clean `npm ci` passed with 2 pre-existing moderate audit findings; build and typecheck passed; 110 tests ran with 109 passing, 0 failing, and 1 optional live-discovery skip; schema generation, compatibility probe, PER-323 routing verification, and `git diff --check` passed.
 - Next: commit, push, and verify PR 26 exact-head checks and merge state. Do not merge; independent verifier owns merge.
 
-PER-336 is reconciled with the repository quality gates from `cbd44e1`.
+Historical PER-336 quality-gate reconciliation before PR 26 merged:
 
 - Preserved the storage CLI, discovery recorder, compatibility report, platform declaration, and all format, type-aware lint, typecheck, build, coverage, Python, and schema gates while resolving generated lock metadata.
 - Existing prior schemas now undergo exact schema and foreign-key validation before migration; rejected registries remain at their original ledger version.
@@ -386,3 +502,16 @@ PER-336 is reconciled with the repository quality gates from `cbd44e1`.
   `git diff --check` passed.
 - Next: deliver the companion PR into the primary PER-342 branch and verify its
   exact-head CI.
+
+PER-336 security hotfix is complete locally after insecure PR 26 merged as `8989716`.
+
+- Work continues on new branch `1solomonwakhungu/per-336-storage-permissions-hotfix`, rooted at exact merged main `8989716`; the obsolete PR 26 branch is not reused.
+- Missing dedicated registry, backup, and export directories are created as `0700`. Preexisting directories must already be owner-only and are never chmodded; permissive cwd, `/tmp`, and other shared parents fail closed unchanged.
+- Newly created registry, sidecar, backup, and export files are `0600`; preexisting registry and sidecar files must already be singly linked owner-only regular files. No-follow descriptor checks reject symlinks, dangling links, multiply linked files, existing output destinations, live/sidecar destinations, and hard-link aliases of the database or sidecars without chmodding them.
+- Read-only diagnostics validate permissions without mutating them. Invalid retention configuration touches no filesystem path. Backup/export diagnostics include foreign-key details.
+- Discovery recording now has a bounded exact-version parser and a closed recursive field classifier. Unknown fields fail even when null or empty containers; identifying values, process/endpoint metadata, timestamps, commands, arguments, preset labels/IDs, and environment names/values are deterministic pseudonyms. The checked fixture passes a complete privacy scan.
+- Docs now describe explicit live-discovery opt-in, full backup validation, dedicated private CLI paths, permission refusal semantics, and the same-user residual threat boundary.
+- Verification: clean `npm ci` passed with 2 pre-existing moderate advisories; `npm run check` passed format, ESLint, typecheck, build, 130 tests (129 pass, 0 fail, 1 optional live skip), coverage, Python 3/3, and schema no-diff. The focused security/persistence suite passed 30 runnable tests plus 1 optional skip in three consecutive runs; `git diff --check` passed.
+- Follow-up PR 38 was opened at `2ae84ac`, then verifier review required committed no-overwrite concurrency coverage. New deterministic worker-barrier tests prove two simultaneous exports produce exactly one valid `0600` output and one refusal, while preexisting backup/export files and hard-link sources retain exact bytes and modes. The storage-focused 20/20 suite passed five consecutive runs.
+- Exact-head review then found missing ownership checks. Preexisting directories, registries, and sidecars now fail closed unless their UID matches the effective process UID where the platform exposes ownership; generated artifacts are explicitly ownership-tested.
+- Next: push the coverage follow-up to PR 38 and leave it unmerged for independent verification.

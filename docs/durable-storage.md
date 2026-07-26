@@ -4,7 +4,7 @@
 
 The orchestrator owns a standalone SQLite registry. It never opens, imports, copies, or derives a path from Superset Desktop's databases, manifests, logs, or temporary files. Configuration must point `OrchestratorStorage` at an orchestrator-specific path. The default deployment location should be the platform application-data directory under `superset-agent-orchestrator/registry.sqlite`, not a Superset directory.
 
-SQLite is embedded in the supported Node runtime. The registry enables foreign keys, a five-second busy timeout, WAL journaling, and full synchronous writes. File creation uses owner-only directory permissions where the platform honors POSIX modes.
+SQLite is embedded in the supported Node runtime. The registry enables foreign keys, a five-second busy timeout, WAL journaling, and full synchronous writes. A missing dedicated registry directory is created as `0700`; a preexisting directory must already be owner-only, belong to the process's effective user where ownership is available, and is never silently chmodded. Before SQLite opens, a new registry is created as `0600`; preexisting registry and sidecar files must already belong to the effective user and be singly linked, regular, non-symlink `0600` files or startup fails without chmodding them. New SQLite sidecars are normalized and ownership-checked through no-follow file descriptors inside the private directory. Backup and export follow the same dedicated-directory and ownership rules, preventing access while SQLite or the atomic writer creates the file; completed output files are `0600`.
 
 ## Schema
 
@@ -49,16 +49,29 @@ Run export and backup before shortening retention. Cleanup is idempotent and nev
 
 `exportJson(path)` writes an atomic, UTF-8, versioned logical export containing every table and the schema version. Exports can be inspected without SQLite and are intended for portability and support. Sensitive prompt and result payloads remain present until retention cleanup, so exports require the same access controls as the live registry.
 
+Backup and export destinations must not already exist. This avoids overwriting or
+chmodding an unrelated file and rejects hard-link aliases of the live registry
+or any existing SQLite sidecar.
+
 The operator CLI exposes both supported diagnostics without opening Superset private storage:
 
 ```sh
-superset-agent-orchestrator-storage export --database registry.sqlite --output export.json
-superset-agent-orchestrator-storage integrity-check --database registry.sqlite
+superset-agent-orchestrator-storage export \
+  --database "$HOME/.local/share/superset-agent-orchestrator/registry.sqlite" \
+  --output "$HOME/.local/share/superset-agent-orchestrator-exports/export.json"
+superset-agent-orchestrator-storage integrity-check \
+  --database "$HOME/.local/share/superset-agent-orchestrator/registry.sqlite"
 ```
 
-Integrity checks open the registry read-only and verify all SQLite integrity results, foreign keys, the contiguous migration ledger, and required tables, triggers, and indexes. The command exits nonzero on any failure and never migrates or repairs the live registry.
+Integrity checks require an already owner-only source directory, registry, and sidecars, then open the registry read-only and verify all SQLite integrity results, foreign keys, the contiguous migration ledger, and exact table, trigger, and index definitions. The command exits nonzero on any failure and never migrates, chmods, or repairs the live registry.
 
-`backup(path)` checkpoints WAL, uses SQLite `VACUUM INTO` for a consistent online physical backup, and opens the result read-only for `PRAGMA integrity_check`. A backup never targets the live database path. Operators should keep periodic backups outside the registry directory and test restores using the exact application version that created them.
+The permission checks prevent exposure to other operating-system users. They do
+not defend against another process already running as the same user replacing
+directory entries; operators must keep the dedicated directory under that
+user's exclusive control and stop same-user writers before diagnostics or
+recovery.
+
+`backup(path)` checkpoints WAL, uses SQLite `VACUUM INTO` for a consistent online physical backup, and opens the result read-only to verify SQLite page integrity, foreign keys, the contiguous migration ledger, and exact canonical schema definitions. A backup never targets the live database path. Operators should keep periodic backups outside the registry directory and test restores using the exact application version that created them.
 
 ## Corruption and recovery
 
