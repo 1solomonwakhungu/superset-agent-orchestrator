@@ -259,9 +259,13 @@ export class LaunchService {
           );
           return;
         }
+        if (error instanceof MalformedRunHandleError) {
+          await this.recordLaunchFailure(assignment, error.message);
+          return;
+        }
         if (!hasErrorCode(error, "LAUNCH_REJECTED")) throw error;
         const message = error instanceof Error ? error.message : String(error);
-        await this.recordLaunchFailure(assignment, message);
+        await this.recordLaunchFailure(assignment, message, error.code);
         return;
       }
       if (handle === undefined) {
@@ -279,11 +283,14 @@ export class LaunchService {
     });
   }
 
-  private async recordLaunchFailure(assignment: Assignment, error: string): Promise<void> {
+  private async recordLaunchFailure(assignment: Assignment, error: string, errorCode?: string): Promise<void> {
     await this.store.recordLaunchEvent(
       assignment.id,
       "failed",
-      event(assignment.id, "launch_failed", this.now().toISOString(), { error }),
+      event(assignment.id, "launch_failed", this.now().toISOString(), {
+        error,
+        ...(errorCode === undefined ? {} : { errorCode }),
+      }),
     );
   }
 }
