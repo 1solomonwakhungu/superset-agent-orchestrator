@@ -66,14 +66,28 @@ def inventory(header: dict[str, object]) -> list[dict[str, object]]:
     return rows
 
 
-def render_tool_fixture() -> str:
+def render_tool_fixture(template: str) -> str:
+    try:
+        from jinja2 import Environment
+    except ImportError as error:
+        raise RuntimeError("rendering requires the pinned minicpm5 environment") from error
+
     tool = {"type": "function", "function": {"name": "weather", "description": "Get weather",
             "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}}}
-    return ("<s><|im_start|>system\n# Tools\n\nYou are provided with function signatures within "
-            f"<tools></tools> XML tags:\n<tools>\n{json.dumps(tool, separators=(',', ':'))}\n</tools>\n"
-            "<|im_end|>\n<|im_start|>user\nWhat is the weather in Nairobi?<|im_end|>\n"
-            "<|im_start|>assistant\n<function name=\"weather\"><param name=\"city\">Nairobi</param>"
-            "</function><|im_end|>\n")
+    messages = [
+        {"role": "user", "content": "What is the weather in Nairobi?"},
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"type": "function", "function": {"name": "weather", "arguments": {"city": "Nairobi"}}}
+        ]},
+    ]
+    environment = Environment(autoescape=False, keep_trailing_newline=True)
+    environment.filters["tojson"] = lambda value, ensure_ascii=False: json.dumps(
+        value, ensure_ascii=ensure_ascii, separators=(",", ":")
+    )
+    return environment.from_string(template).render(
+        bos_token="<s>", tools=[tool], messages=messages,
+        add_generation_prompt=False, has_tool_sep=False,
+    )
 
 
 def run(root: Path, output: Path) -> None:
@@ -108,10 +122,10 @@ def run(root: Path, output: Path) -> None:
         writer.writeheader()
         writer.writerows(rows)
     (output / "chat_template.jinja").write_text(template)
-    rendered = render_tool_fixture()
+    rendered = render_tool_fixture(template)
     if '<function name="weather"><param name="city">Nairobi</param></function>' not in rendered:
         raise ValueError("tool-call fixture did not round-trip")
-    (output / "template_render.txt").write_text(rendered)
+    (output / "template_render.txt").write_text(rendered.rstrip() + "\n")
     report = {
         "checkpoint": lock, "tokenizer_class": tokenizer["tokenizer_class"],
         "vocab_size": config["vocab_size"], "special_tokens": special,
