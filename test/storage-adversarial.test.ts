@@ -41,11 +41,17 @@ test("retention reclaims expired readers without revoking an unreleased writer",
     const storage = new OrchestratorStorage(join(directory, "registry.sqlite"));
     storage.database.prepare("INSERT INTO batches VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
       .run("batch", "fixture", "test", "running", "{}", "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z", null);
-    storage.database.prepare("INSERT INTO workspace_leases VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+    storage.database.prepare(`INSERT INTO workspace_leases
+      (id, workspace_id, mode, owner_session_id, owner_batch_id, acquired_at, expires_at, released_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
       .run("writer", "workspace", "writer", null, "batch", "2026-01-01T00:00:00.000Z", "2026-01-02T00:00:00.000Z", null);
-    storage.database.prepare("INSERT INTO workspace_leases VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+    storage.database.prepare(`INSERT INTO workspace_leases
+      (id, workspace_id, mode, owner_session_id, owner_batch_id, acquired_at, expires_at, released_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
       .run("expired-reader", "workspace", "read-only", null, "batch", "2026-01-01T00:00:00.000Z", "2026-01-02T00:00:00.000Z", null);
-    storage.database.prepare("INSERT INTO workspace_leases VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+    storage.database.prepare(`INSERT INTO workspace_leases
+      (id, workspace_id, mode, owner_session_id, owner_batch_id, acquired_at, expires_at, released_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
       .run("active-reader", "workspace", "read-only", null, "batch", "2026-07-23T00:00:00.000Z", "2026-07-25T00:00:00.000Z", null);
     const summary = storage.cleanup(new Date("2026-07-24T00:00:00.000Z"));
     assert.equal(summary.leasesDeleted, 1);

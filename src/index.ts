@@ -10,6 +10,7 @@ export * from "./provider-protocol.js";
 export * from "./result-capture.js";
 export * from "./launch-coordinator.js";
 export * from "./storage.js";
+export * from "./workspace-safety.js";
 export * from "./repositories.js";
 export * from "./store.js";
 export * from "./security.js";

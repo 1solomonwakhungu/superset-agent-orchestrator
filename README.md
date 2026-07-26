@@ -3,6 +3,9 @@
 Local-first MCP server for durable orchestration of parallel coding agents through
 Superset.
 
+Performance benchmarks and the safe-default controlled load runner are documented
+in [performance and load testing](docs/performance-and-load-testing.md).
+
 ## Product status
 
 The backend-neutral core and fake adapter exercise complete lifecycle semantics,
@@ -34,17 +37,43 @@ stale.
 
 ## Recovery
 
-The server reconciles its durable JSON state before accepting MCP requests and periodically while
-it runs. Existing worker processes remain tracked by PID and process start token; vanished processes
-are marked `unknown_outcome` and are never relaunched merely because a server or client restarted.
-State writes are locked, synced, and atomically renamed. A corrupt state file is left untouched.
+The server reconciles its durable JSON state before accepting MCP requests and
+periodically while it runs. Existing worker processes remain tracked by PID and
+process start token; vanished processes are marked `unknown_outcome` and are
+never relaunched merely because a server or client restarted. State writes are
+locked, synced, and atomically renamed. A corrupt state file is left untouched.
+
+Writer admission uses two independent layers: an exclusive cross-process
+operating-system lock on a key derived from the workspace, and a transactional
+SQLite lease with a monotonically increasing generation. Generations are never
+reused. The bearer fencing token is random per generation and only its digest is
+stored, so it never reaches the prompt, audit log, or an MCP response. Heartbeat,
+release, and every controlled action compare-and-set on lease ID, generation,
+token digest, owner identity, state, and row version, so a stale owner is fenced.
+
+Expiry alone never releases a lease. `WorkspaceSafetyTool` reconciles a workspace
+only with evidence: it preserves the lease while another process may hold the
+lock, quarantines a lease whose owner is alive or whose identity is unverifiable,
+and retires a generation only when the exact owner PID and process start token
+are proven absent after expiry. Quarantine is cleared by one fixed repair flow
+that retires the old generation and never assigns an active lease. Admissions,
+denials, quarantines, repairs, and recoveries are append-only audit events.
+
+Writer launch remains disabled: canonical workspace identity resolution and
+read-only sandbox enforcement are still outstanding. See
+[the lease policy](docs/workspace-lease-and-writer-safety.md) and
+[the enforcement evidence](evidence/per-343/lease-enforcement.json).
 
 Recovery tools:
 
-- `recent_sessions` lists durable sessions independently of the connected client.
-- `reopen_batch` restores the newest exact-name batch with sessions, workers, results, and attribution.
-- `batches_create` durably accepts up to 250 attributed sessions and returns stable IDs immediately.
-- `batches_get`, `batches_status`, and `batches_results` provide indexed, ordered pagination without per-agent polling.
+- `recent_sessions` lists durable sessions independently of the connected
+  client.
+- `reopen_batch` restores the newest exact-name batch with sessions, workers,
+  results, and attribution.
+- `batches_create` durably accepts up to 250 attributed sessions and returns
+  stable IDs immediately.
+- `batches_get`, `batches_status`, and `batches_results` provide indexed, ordered
+  pagination without per-agent polling.
 - `recovery_diagnostics` reports orphan, unknown-outcome, and missing-result records.
 
 Lifecycle tools:
@@ -86,13 +115,23 @@ node --test test/configuration-contract.test.mjs
 - [Idempotency and reconciliation contract](docs/idempotency-and-reconciliation.md)
 - [Workspace lease and writer-safety policy](docs/workspace-lease-and-writer-safety.md)
 
-The MCP contract publishes typed TypeScript/Zod schemas and a client-neutral JSON Schema catalog. It defines asynchronous launch, stable IDs, batches of 100 sessions, pagination, bounded wait, cancellation, deadlines, results, and restart recovery. The versioned lifecycle tools listed above are registered runtime handlers; other normative tools remain contract-only until their implementations land.
+The MCP contract publishes typed TypeScript/Zod schemas and a client-neutral JSON
+Schema catalog. It defines asynchronous launch, stable IDs, batches of 100
+sessions, pagination, bounded wait, cancellation, deadlines, results, and restart
+recovery. The versioned lifecycle tools listed above are registered runtime
+handlers; other normative tools remain contract-only until their implementations
+land.
 
 ## Agent adapter boundary
 
-`AgentAdapter` isolates core orchestration from coding-agent lifecycle APIs. It provides launch, status, terminal result, cancellation, and resume metadata operations. Provider-specific response formats are normalized in adapter modules before they reach core domain code.
+`AgentAdapter` isolates core orchestration from coding-agent lifecycle APIs. It
+provides launch, status, terminal result, cancellation, and resume metadata
+operations. Provider-specific response formats are normalized in adapter modules
+before they reach core domain code.
 
-`FakeAgentAdapter` accepts ordered run scripts and a caller-controlled clock. Integration tests can therefore drive queued, running, succeeded, failed, and cancelled paths without timing or network dependencies.
+`FakeAgentAdapter` accepts ordered run scripts and a caller-controlled clock.
+Integration tests can therefore drive queued, running, succeeded, failed, and
+cancelled paths without timing or network dependencies.
 
 Run `npm run verify` to type-check the complete implementation and execute all tests.
 
