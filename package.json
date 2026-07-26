@@ -26,6 +26,8 @@
     "schema": "npm run build && node scripts/generate-tool-schema.mjs",
     "schema:check": "npm run schema && git diff --exit-code -- config/mcp-tools.schema.json",
     "compatibility:probe": "node scripts/probe-compatibility.mjs",
+    "test:real:preflight": "node scripts/run-real-superset-codex-e2e.mjs --preflight",
+    "test:real": "node scripts/run-real-superset-codex-e2e.mjs",
     "benchmark:fake": "npm run build && node dist/src/fake-backend-benchmark.js",
     "load:real": "npm run build && node dist/src/real-agent-load-runner.js",
     "reports:verify": "npm run build && node dist/src/report-verifier.js",
