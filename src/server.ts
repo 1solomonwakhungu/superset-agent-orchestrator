@@ -5,12 +5,13 @@ import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { RedactionPolicy } from "./security.js";
+import { RedactionPolicy, RegisteredWorkspaceAuthorizer } from "./security.js";
 import type { WorkspaceAuthorizer } from "./security.js";
 import { BatchQueryError, DurableStore } from "./store.js";
 import { LaunchService } from "./launch-service.js";
 import { ResultCaptureService } from "./result-capture.js";
 import { SupersetProcessAdapter, SupersetProcessError } from "./superset-process-adapter.js";
+import { SupersetDiscoveryAdapter } from "./superset-discovery.js";
 import { assertRegisteredToolNames, assertSafeToolNames } from "./tool-security.js";
 import type { AgentAdapter } from "./agent-adapter.js";
 import { LifecycleService } from "./lifecycle-service.js";
@@ -107,9 +108,9 @@ async function main(): Promise<void> {
     lifecycleSweep = lifecycle.enforceDeadlines().then(async (expired) => {
       await lifecycle.reconcileCancellations();
       await lifecycle.reconcileTimedOutResults();
-      if (expired.length > 0) console.error(`Deadlines enforced: ${JSON.stringify(expired)}`);
+      if (expired.length > 0) console.error(`Deadlines enforced: ${JSON.stringify(store.redactValue(expired))}`);
     }).catch((error: unknown) => {
-      console.error("Lifecycle enforcement failed:", error);
+      console.error("Lifecycle enforcement failed:", store.safeError(error));
     }).finally(() => {
       lifecycleSweep = undefined;
     });
@@ -117,6 +118,8 @@ async function main(): Promise<void> {
   deadlineTimer.unref();
 
   const server = new McpServer({ name: "superset-agent-orchestrator", version: "0.1.0" });
+  const integrationToolsEnabled = process.env.SUPERSET_ORCHESTRATOR_ENABLE_PROVIDER_TEST_TOOLS === "1";
+  const discovery = providerExecutable === undefined ? undefined : new SupersetDiscoveryAdapter({ executable: providerExecutable });
   const integrationWorkspaceAuthorizer: WorkspaceAuthorizer = {
     authorize: async (workspaceId) => ({
       workspaceId,
@@ -125,13 +128,17 @@ async function main(): Promise<void> {
       revalidate: async () => undefined,
     }),
   };
-  const launches = provider === undefined
+  const workspaceAuthorizer = integrationToolsEnabled
+    ? integrationWorkspaceAuthorizer
+    : discovery === undefined
     ? undefined
-    : new LaunchService(store, provider, integrationWorkspaceAuthorizer);
+    : new RegisteredWorkspaceAuthorizer(() => discovery.inventory());
+  const launches = provider === undefined || workspaceAuthorizer === undefined
+    ? undefined
+    : new LaunchService(store, provider, workspaceAuthorizer);
   const capture = provider === undefined ? undefined : new ResultCaptureService(store, provider);
   if (launches !== undefined) await launches.dispatchPending();
 
-  const integrationToolsEnabled = process.env.SUPERSET_ORCHESTRATOR_ENABLE_PROVIDER_TEST_TOOLS === "1";
   const integrationAssignment = z.object({
     label: z.string().min(1), prompt: z.string().min(1), workspace_id: z.string().min(1),
     agent_preset_id: z.string().min(1), idempotency_key: z.string().min(1),
@@ -156,7 +163,6 @@ async function main(): Promise<void> {
             idempotencyKey: assignment.idempotency_key,
             attribution: { agent: assignment.agent_preset_id, task: assignment.label },
             prompt: assignment.prompt, workspaceId: assignment.workspace_id,
-            workspacePath: assignment.workspace_id,
           })),
         });
         await launches.dispatchPending();
