@@ -45,8 +45,9 @@
 - Executable fake-Superset tests prove preflight, launch/receipt attribution,
   unsupported lifecycle reporting, sentinel redaction, workspace isolation, and
   opt-in refusal.
-- Verification: `npm run verify` passed build and all 104 tests; focused harness
-  tests passed 3/3; `git diff --check` passed.
+- Verification: build and typecheck passed; all 105 deterministic tests passed;
+  focused harness tests passed 5/5; `git diff --check` passed. The one excluded
+  smoke test requires the unavailable live Superset executable.
 - Real preflight passed again at 2026-07-25T20:06:57Z against Superset CLI
   1.16.1 and Node 22.23.1 with zero failures, unchanged HEAD/status, and the
   current isolated workspace resolved by exact canonical path.
@@ -55,4 +56,7 @@
 - Real classification is `blocked`, not passed: exact sentinel retrieval and
   backend restart recovery are unsupported, while cancellation passed through
   the explicitly allowed unsupported-cancel outcome.
+- PR review fixes require the capability-vetted CLI version, keep reports
+  outside the target worktree, and avoid claiming isolation after an
+  asynchronous launch receipt without a supported completion API.
 - Next: deliver the commits through an unmerged pull request.

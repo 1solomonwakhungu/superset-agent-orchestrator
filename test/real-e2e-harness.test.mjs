@@ -10,7 +10,7 @@ const execFileAsync = promisify(execFile);
 const repositoryRoot = resolve(new URL("..", import.meta.url).pathname);
 const harnessSource = join(repositoryRoot, "scripts", "run-real-superset-codex-e2e.mjs");
 
-async function createFixture(t) {
+async function createFixture(t, { version = "1.16.1" } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "per-349-"));
   const main = join(directory, "main");
   const worktree = join(directory, "isolated");
@@ -31,7 +31,7 @@ async function createFixture(t) {
   await writeFile(executable, `#!/usr/bin/env node
 const args = process.argv.slice(2);
 const workspace = { id: "workspace-fixture", name: "isolated", type: "worktree", projectId: "project-fixture", worktreePath: ${JSON.stringify(worktree)}, worktreeExists: true };
-if (args[0] === "--version") console.log("superset-fake 1.16.1");
+if (args[0] === "--version") console.log("superset-fake ${version}");
 else if (args.join(" ") === "workspaces list --local --json") console.log(JSON.stringify([workspace]));
 else if (args.join(" ") === "agents list --local --json") console.log(JSON.stringify([{ id: "preset-instance", presetId: "codex", command: "codex" }]));
 else if (args[0] === "agents" && args[1] === "create") console.log(JSON.stringify({ sessionId: "session-fixture" }));
@@ -80,6 +80,9 @@ test("real launch records receipt and fail-closed unsupported lifecycle outcomes
   assert.equal(report.scenarios.find(({ name }) => name === "exact-sentinel-result").status, "unsupported");
   assert.equal(report.scenarios.find(({ name }) => name === "cancel-or-unsupported-cancel").outcome, "unsupported");
   assert.equal(report.scenarios.find(({ name }) => name === "restart-recovery").status, "unsupported");
+  assert.equal(report.scenarios.find(({ name }) => name === "workspace-state-at-launch-receipt").status, "passed");
+  assert.equal(report.scenarios.find(({ name }) => name === "post-completion-workspace-isolation").status, "unsupported");
+  assert.equal(report.scenarios.some(({ name }) => name === "workspace-isolation"), false);
   assert.doesNotMatch(JSON.stringify(report), /PER_349_EXACT_SENTINEL/);
 });
 
@@ -89,4 +92,21 @@ test("real launch remains opt-in", async (t) => {
   const report = JSON.parse(await readFile(fixture.reportPath, "utf8"));
   assert.equal(report.classification, "failed");
   assert.match(report.failures[0].message, /SUPERSET_REAL_E2E=1/);
+});
+
+test("rejects unvetted Superset CLI versions", async (t) => {
+  const fixture = await createFixture(t, { version: "1.17.0" });
+  await assert.rejects(invoke(fixture, ["--preflight"]));
+  const report = JSON.parse(await readFile(fixture.reportPath, "utf8"));
+  assert.equal(report.classification, "failed");
+  assert.match(report.failures[0].message, /1\.16\.1 is required; detected 1\.17\.0/);
+});
+
+test("rejects reports inside the authorized worktree", async (t) => {
+  const fixture = await createFixture(t);
+  const reportPath = join(fixture.worktree, "fixture.txt");
+  await assert.rejects(invoke(fixture, ["--preflight"], { SUPERSET_REAL_E2E_REPORT: reportPath }));
+  assert.equal(await readFile(reportPath, "utf8"), "fixture\n");
+  const status = await execFileAsync("git", ["status", "--porcelain=v1", "--untracked-files=all"], { cwd: fixture.worktree });
+  assert.equal(status.stdout, "");
 });

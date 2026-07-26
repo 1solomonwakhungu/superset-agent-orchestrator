@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, open, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { resourceUsage } from "node:process";
 import { fileURLToPath } from "node:url";
 
@@ -13,12 +13,15 @@ const preflightOnly = process.argv.includes("--preflight");
 const executable = process.env.SUPERSET_ORCHESTRATOR_EXECUTABLE ?? "superset";
 const workspaceId = process.env.SUPERSET_REAL_E2E_WORKSPACE_ID;
 const expectedPathInput = process.env.SUPERSET_REAL_E2E_WORKSPACE_PATH;
-const outputPath = resolve(process.env.SUPERSET_REAL_E2E_REPORT ?? join(root, "artifacts", "real-e2e-report.json"));
+const runId = randomUUID();
+const outputPath = resolve(process.env.SUPERSET_REAL_E2E_REPORT ?? join(tmpdir(), "superset-real-e2e", `${runId}.json`));
 const sentinel = process.env.SUPERSET_REAL_E2E_SENTINEL ?? `PER_349_${randomUUID().replaceAll("-", "").toUpperCase()}`;
+const supportedSupersetCliVersion = "1.16.1";
+let reportPathAllowed = true;
 const startedUsage = resourceUsage();
 const report = {
   schemaVersion: 1,
-  runId: randomUUID(),
+  runId,
   mode: preflightOnly ? "preflight" : "real",
   startedAt: new Date().toISOString(),
   completedAt: null,
@@ -115,6 +118,27 @@ function exactOne(values, description) {
   return values[0];
 }
 
+function pathIsInside(parent, child) {
+  const pathFromParent = relative(parent, child);
+  return pathFromParent === "" || (!pathFromParent.startsWith("..") && !isAbsolute(pathFromParent));
+}
+
+async function canonicalizePotentialPath(path) {
+  const missingSegments = [];
+  let existingPath = path;
+  while (true) {
+    try {
+      return join(await realpath(existingPath), ...missingSegments);
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      const parent = dirname(existingPath);
+      if (parent === existingPath) throw error;
+      missingSegments.unshift(basename(existingPath));
+      existingPath = parent;
+    }
+  }
+}
+
 async function main() {
   if (!workspaceId || !expectedPathInput) {
     throw new Error("SUPERSET_REAL_E2E_WORKSPACE_ID and SUPERSET_REAL_E2E_WORKSPACE_PATH are required");
@@ -124,9 +148,18 @@ async function main() {
   }
 
   const expectedPath = await realpath(expectedPathInput);
+  const canonicalOutputPath = await canonicalizePotentialPath(outputPath);
+  if (pathIsInside(expectedPath, canonicalOutputPath)) {
+    reportPathAllowed = false;
+    throw new Error("SUPERSET_REAL_E2E_REPORT must be outside the authorized worktree");
+  }
   const version = await run("superset-version", executable, ["--version"], {
     observed: ({ stdout }) => ({ version: stdout.trim() }),
   });
+  const detectedVersion = version.stdout.match(/\b\d+\.\d+\.\d+\b/)?.[0];
+  if (detectedVersion !== supportedSupersetCliVersion) {
+    throw new Error(`Superset CLI ${supportedSupersetCliVersion} is required; detected ${detectedVersion ?? "no semantic version"}`);
+  }
   const workspacesResult = await run("local-workspace-discovery-under-relay-outage", executable,
     ["workspaces", "list", "--local", "--json"], { relayOutage: true });
   const presetsResult = await run("local-preset-discovery-under-relay-outage", executable,
@@ -164,6 +197,7 @@ async function main() {
   };
 
   report.environment.supersetCli = version.stdout.trim();
+  report.environment.supersetCliVersion = detectedVersion;
   report.target = {
     workspaceId,
     workspaceName: workspace.name,
@@ -213,10 +247,10 @@ async function main() {
     });
   }
 
-  const after = await gitSnapshot(root, "after");
+  const after = await gitSnapshot(root, preflightOnly ? "after" : "launch-receipt");
   report.target.finalStatusSha256 = sha256(after.status);
   report.scenarios.push({
-    name: "workspace-isolation",
+    name: preflightOnly ? "workspace-isolation" : "workspace-state-at-launch-receipt",
     status: before.head === after.head && before.status === after.status ? "passed" : "failed",
     beforeHead: before.head,
     afterHead: after.head,
@@ -226,6 +260,14 @@ async function main() {
     commandTargetWorkspaceId: workspaceId,
   });
   if (before.head !== after.head || before.status !== after.status) throw new Error("Target repository changed during the real-system test");
+  if (!preflightOnly) {
+    report.scenarios.push({
+      name: "post-completion-workspace-isolation",
+      status: "unsupported",
+      code: "UNSUPPORTED_OPERATION",
+      reason: "Superset CLI 1.16.1 returns an asynchronous launch receipt and exposes no supported completion API",
+    });
+  }
   report.classification = preflightOnly ? "passed" : "blocked";
 }
 
@@ -242,8 +284,10 @@ try {
     systemCpuTimeMicros: endedUsage.systemCPUTime - startedUsage.systemCPUTime,
     maxRssKiB: endedUsage.maxRSS,
   };
-  await mkdir(dirname(outputPath), { recursive: true });
-  await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
-  process.stdout.write(`${outputPath}\n`);
+  if (reportPathAllowed) {
+    await mkdir(dirname(outputPath), { recursive: true });
+    await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
+    process.stdout.write(`${outputPath}\n`);
+  }
   if (report.classification === "failed") process.exitCode = 1;
 }
