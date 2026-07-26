@@ -1,5 +1,17 @@
 # Status
 
+## PER-261 recurring maintenance, 2026-07-26
+
+- Conservatively removed three npm cache trees and reclaimed 112.0 KiB; an
+  immediate second run removed nothing, confirming idempotence.
+- Preserved the current Hermes queue, all protected artifacts/configuration,
+  Downloads, Trash, Docker state, mounted images, and 19.0 GiB of LM Studio
+  models; 105 permission-protected macOS paths were left untouched.
+- Verification passed 16/16 cleanup tests and a dry run with 112 proposed paths
+  and zero errors. Exact evidence is in `evidence/per-261/maintenance-report.md`.
+- Next: deliver the evidence through PR, merge after exact-head CI, and update
+  the canonical Linear note with the exact PR URL and merge SHA.
+
 ## PER-347 PR #82 final hardening integration, 2026-07-26
 
 - Integrated current `origin/main` `764f0a7e227e5e8bae863a5846e4ec063efd3d33`
