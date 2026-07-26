@@ -16,7 +16,7 @@ test("repositories persist and retrieve every durable entity transactionally", a
       storage.repositories.sessions.insert({ id: "session", assignmentId: "assignment", backend: "superset", backendSessionId: "backend", attempt: 1, state: "running", createdAt: at, updatedAt: at, terminalAt: null });
       storage.repositories.results.insert({ id: "result", sessionId: "session", body: "complete", artifacts: ["pr"], stopReason: "completed", capturedAt: at, payloadPurgedAt: null });
       storage.repositories.events.append({ id: "event", aggregateType: "session", aggregateId: "session", eventType: "result.captured", actor: "system", data: { resultId: "result" }, occurredAt: at });
-      storage.repositories.workspaceLeases.insert({ id: "lease", workspaceId: "workspace", mode: "writer", ownerSessionId: "session", ownerBatchId: "batch", acquiredAt: at, expiresAt: "2026-07-25T20:00:00.000Z", releasedAt: null });
+      storage.repositories.workspaceLeases.insert({ id: "lease", workspaceId: "workspace", mode: "read-only", ownerSessionId: "session", ownerBatchId: "batch", acquiredAt: at, expiresAt: "2026-07-25T20:00:00.000Z", releasedAt: null });
       storage.repositories.idempotency.insert({ scope: "launch", key: "key", requestHash: "hash", response: { sessionId: "session" }, resourceType: "session", resourceId: "session", createdAt: at, expiresAt: "2026-07-25T20:00:00.000Z" });
     });
 
@@ -25,7 +25,9 @@ test("repositories persist and retrieve every durable entity transactionally", a
     assert.equal(storage.repositories.sessions.listByAssignment("assignment")[0]?.id, "session");
     assert.deepEqual(storage.repositories.results.getBySession("session")?.artifacts, ["pr"]);
     assert.deepEqual(storage.repositories.events.list("session", "session")[0]?.data, { resultId: "result" });
-    assert.equal(storage.repositories.workspaceLeases.activeWriter("workspace")?.id, "lease");
+    assert.equal(storage.repositories.workspaceLeases.get("lease")?.id, "lease");
+    assert.equal(storage.repositories.workspaceLeases.activeWriter("workspace"), undefined);
+    assert.throws(() => storage.repositories.workspaceLeases.insert({ id: "writer", workspaceId: "workspace", mode: "writer", ownerSessionId: "session", ownerBatchId: "batch", acquiredAt: at, expiresAt: "2026-07-25T20:00:00.000Z", releasedAt: null }), /fenced acquisition/);
     assert.deepEqual(storage.repositories.idempotency.get("launch", "key")?.response, { sessionId: "session" });
   } finally {
     storage.close();
