@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   LeaseFencedError,
   LeaseRecoveryAmbiguousError,
+  LeaseStateCorruptError,
   OrchestratorStorage,
   WorkspaceWriterBusyError,
   type LeaseAuthority,
@@ -244,6 +245,9 @@ test("recovery mutations reject a stale observed lease snapshot", async () => {
     assert.throws(() => storage.repairQuarantinedWriterLease(observedQuarantined,
       { ownerProcessAbsent: true }, "operator-b", after(3_000)), LeaseFencedError);
 
+    const observedReleased = storage.workspaceLeaseById(lease.leaseId)!;
+    assert.throws(() => storage.quarantineWriterLease(observedReleased,
+      "released authority cannot be revived", "reconciler-c", after(3_000)), LeaseStateCorruptError);
     assert.equal(storage.workspaceLeaseStatus("ws")?.state, "released");
     assert.equal(storage.acquireWriterLease({ workspaceId: "ws", ownerBatchId: "batch-2", ttlMs: 30_000 })
       .generation, 2);
