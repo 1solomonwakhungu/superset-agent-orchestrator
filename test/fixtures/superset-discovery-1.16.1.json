@@ -1,0 +1,110 @@
+{
+  "recordedFrom": "superset v1.16.1 local host, macOS, 2026-07-25",
+  "note": "Shapes, key sets, and optional-field variation are reproduced exactly from real CLI responses. Identifiers, hostnames, and filesystem paths are sanitized placeholders because production discovery output is private operational configuration.",
+  "responses": {
+    "--version": "1.16.1\n",
+    "status --json": {
+      "running": true,
+      "healthy": true,
+      "pid": 1044,
+      "port": 48707,
+      "endpoint": "http://127.0.0.1:48707",
+      "organizationId": "00000000-0000-4000-8000-000000000001",
+      "hostId": "0000000000000000000000000000000a",
+      "hostName": "fixture-host",
+      "uptimeSec": 52709
+    },
+    "projects list --local --json": [
+      {
+        "id": "00000000-0000-4000-8000-000000000101",
+        "name": "orchestrator",
+        "slug": "orchestrator",
+        "repoCloneUrl": null,
+        "githubRepositoryId": null,
+        "setUp": "yes",
+        "path": "/tmp/superset-fixture/orchestrator"
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000102",
+        "name": "homelab",
+        "slug": "homelab",
+        "repoCloneUrl": "https://github.com/example/homelab.git",
+        "githubRepositoryId": "R_fixture000001",
+        "setUp": "no",
+        "path": null
+      }
+    ],
+    "workspaces list --local --json": [
+      {
+        "id": "00000000-0000-4000-8000-000000000201",
+        "organizationId": "00000000-0000-4000-8000-000000000001",
+        "projectId": "00000000-0000-4000-8000-000000000101",
+        "hostId": "0000000000000000000000000000000a",
+        "name": "main",
+        "branch": "main",
+        "type": "main",
+        "createdByUserId": null,
+        "taskId": null,
+        "createdAt": "2026-07-24T18:51:41.000Z",
+        "updatedAt": "2026-07-24T18:51:41.000Z",
+        "worktreePath": "/tmp/superset-fixture/orchestrator",
+        "worktreeExists": true,
+        "projectName": "orchestrator",
+        "hostName": "fixture-host"
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000202",
+        "organizationId": "00000000-0000-4000-8000-000000000001",
+        "projectId": "00000000-0000-4000-8000-000000000101",
+        "hostId": "0000000000000000000000000000000a",
+        "name": "per-342",
+        "branch": "batch/per-342",
+        "type": "worktree",
+        "createdByUserId": "00000000-0000-4000-8000-000000000301",
+        "taskId": "00000000-0000-4000-8000-000000000401",
+        "createdAt": "2026-07-24T19:02:03.000Z",
+        "updatedAt": "2026-07-25T03:00:24.000Z",
+        "worktreePath": "/tmp/superset-fixture/orchestrator-per-342",
+        "worktreeExists": true,
+        "projectName": "orchestrator",
+        "hostName": "fixture-host"
+      }
+    ],
+    "agents list --local --json": [
+      {
+        "id": "00000000-0000-4000-8000-000000000501",
+        "presetId": "codex",
+        "iconId": null,
+        "label": "Codex",
+        "command": "codex",
+        "args": [],
+        "promptTransport": "argv",
+        "promptArgs": ["--"],
+        "env": {},
+        "order": 0
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000502",
+        "presetId": "opencode",
+        "iconId": null,
+        "label": "OpenCode",
+        "command": "opencode",
+        "args": ["run"],
+        "promptTransport": "stdin",
+        "promptArgs": [],
+        "env": {},
+        "order": 1
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000503",
+        "presetId": "claude",
+        "iconId": null,
+        "label": "Claude Code",
+        "command": "claude",
+        "args": [],
+        "env": {},
+        "order": 2
+      }
+    ]
+  }
+}
