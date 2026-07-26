@@ -8,10 +8,11 @@ import { FakeAgentAdapter } from "../src/fake-agent-adapter.js";
 import { LifecycleService, isCancellationRefused, type CancellationResult } from "../src/lifecycle-service.js";
 import { DurableStore, type AgentResultClaim } from "../src/store.js";
 
-async function harness(run: (store: DurableStore) => Promise<void>): Promise<void> {
+async function harness(run: (store: DurableStore, path: string) => Promise<void>): Promise<void> {
   const directory = await mkdtemp(join(tmpdir(), "orchestrator-lifecycle-"));
+  const path = join(directory, "state.json");
   try {
-    await run(new DurableStore(join(directory, "state.json")));
+    await run(new DurableStore(path), path);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -454,7 +455,7 @@ test("a result arriving after a terminal transition is retained without regressi
   ]);
 }));
 
-test("deadline reconciliation retains a later provider result without regressing timeout", async () => harness(async (store) => {
+test("restart reconciliation retains a later provider result without regressing timeout", async () => harness(async (store, path) => {
   const created = await store.createBatch("late-provider", "client", [{ agent: "codex", task: "work" }]);
   const id = created.sessions[0]!.id;
   await store.bindWorkerRun(id, "run-1");
@@ -467,9 +468,14 @@ test("deadline reconciliation retains a later provider result without regressing
   }));
 
   await service.enforceDeadlines(new Date("2026-07-25T01:00:01.000Z"));
-  await service.reconcileTimedOutResults();
+  const restarted = new DurableStore(path);
+  await new LifecycleService(restarted, stub({
+    cancellation: "supported",
+    status: async (handle) => ({ ...handle, status: "succeeded" as const, updatedAt: "2026-07-25T01:00:02.000Z" }),
+    result: async () => ({ status: "succeeded" as const, output: "arrived after timeout" }),
+  })).reconcileTimedOutResults();
 
-  const worker = await store.worker(id);
+  const worker = await restarted.worker(id);
   assert.equal(worker!.status, "failed");
   assert.equal(worker!.stopReason, "deadline_exceeded");
   assert.equal((worker!.result as AgentResultClaim).output, "arrived after timeout");
@@ -492,6 +498,82 @@ test("provider execution identity mismatch cannot settle a session", async () =>
   const outcome = refused(await service.cancelSession(id));
   assert.equal(outcome.error, "PROVIDER_PROTOCOL_ERROR");
   assert.equal((await store.worker(id))!.status, "canceling");
+}));
+
+test("malformed cancel and status payloads retain durable cancellation intent", async () => harness(async (store) => {
+  const created = await store.createBatch("malformed-protocol", "client", [
+    { agent: "codex", task: "cancel" },
+    { agent: "codex", task: "status" },
+  ]);
+  const [cancelId, statusId] = created.sessions.map(({ id }) => id) as [string, string];
+  await store.bindWorkerRun(cancelId, "run-cancel");
+  await store.bindWorkerRun(statusId, "run-status");
+
+  const malformedCancel = stub({
+    cancellation: "supported",
+    cancel: async () => ({ status: "accepted", extra: true }) as never,
+  });
+  const cancelOutcome = refused(await new LifecycleService(store, malformedCancel).cancelSession(cancelId));
+  assert.equal(cancelOutcome.error, "PROVIDER_PROTOCOL_ERROR");
+  assert.equal((await store.worker(cancelId))!.status, "canceling");
+  assert.equal((await store.worker(cancelId))!.cancellationDeliveryPending, true);
+
+  const malformedStatus = stub({
+    cancellation: "supported",
+    cancel: async () => ({ status: "accepted" }),
+    status: async () => ({ runId: "run-status", status: "running", updatedAt: "invalid" }) as never,
+  });
+  const statusOutcome = refused(await new LifecycleService(store, malformedStatus).cancelSession(statusId));
+  assert.equal(statusOutcome.error, "PROVIDER_PROTOCOL_ERROR");
+  assert.equal((await store.worker(statusId))!.status, "canceling");
+  assert.equal((await store.worker(statusId))!.cancellationDeliveryPending, undefined);
+}));
+
+test("a valid terminal status preserves malformed result evidence without inventing output", async () => harness(async (store) => {
+  const created = await store.createBatch("malformed-result", "client", [{ agent: "codex", task: "work" }]);
+  const id = created.sessions[0]!.id;
+  await store.bindWorkerRun(id, "run-1");
+  const service = new LifecycleService(store, stub({
+    cancellation: "supported",
+    cancel: async () => ({ status: "accepted" }),
+    status: async (handle) => ({ ...handle, status: "cancelled", updatedAt: "2026-07-25T00:00:00.000Z" }),
+    result: async () => ({ status: "cancelled", output: 42 }) as never,
+  }));
+
+  assert.equal(accepted(await service.cancelSession(id)).status, "canceled");
+  assert.deepEqual((await store.worker(id))!.result, {
+    status: "malformed",
+    completeness: "malformed",
+    error: "Provider result response was malformed",
+  });
+}));
+
+test("a reconstructed service deterministically completes pending cancellation without redelivery", async () => harness(async (store, path) => {
+  const created = await store.createBatch("restart-cancel", "client", [{ agent: "codex", task: "work" }]);
+  const id = created.sessions[0]!.id;
+  await store.bindWorkerRun(id, "run-1");
+  let cancelCalls = 0;
+  let terminal = false;
+  const adapter = stub({
+    cancellation: "supported",
+    cancel: async () => { cancelCalls += 1; return { status: "accepted" }; },
+    status: async (handle) => ({
+      ...handle,
+      status: terminal ? "cancelled" : "running",
+      updatedAt: "2026-07-25T00:00:00.000Z",
+    }),
+    result: async () => ({ status: "cancelled", reason: "user_requested", output: "partial" }),
+  });
+
+  assert.equal(accepted(await new LifecycleService(store, adapter).cancelSession(id)).status, "canceling");
+  terminal = true;
+  const restarted = new DurableStore(path);
+  const [outcome] = await new LifecycleService(restarted, adapter).reconcileCancellations();
+
+  assert.equal(accepted(outcome!).status, "canceled");
+  assert.equal(cancelCalls, 1, "a delivered cancellation is not sent again after restart");
+  assert.equal((await restarted.worker(id))!.status, "canceled");
+  assert.equal(((await restarted.worker(id))!.result as AgentResultClaim).output, "partial");
 }));
 
 test("a provider call that never settles is aborted within the configured bound", async () => harness(async (store) => {

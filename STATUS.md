@@ -367,3 +367,22 @@ PER-336 is reconciled with the repository quality gates from `cbd44e1`.
 - Recorded discovery remains deterministic while live discovery requires explicit smoke opt-in or the required-live setting.
 - Verification: clean `npm ci` passed with 2 pre-existing moderate advisories; focused persistence tests passed 18/18; `npm run check` passed formatting, ESLint, typecheck, build, 119 tests (118 pass, 0 fail, 1 optional live skip), coverage, Python 3/3, and schema no-diff; `git diff --check` passed.
 - Next: commit and push the current-main integration, verify exact-head Quality and Compatibility checks and review threads, then leave PR 26 unmerged for independent verification.
+
+## PER-342 companion runtime protocol hardening
+
+- Added strict runtime schemas for provider status, result, and cancellation
+  responses, including closed objects, discriminated variants, timestamps,
+  execution identities, and resume metadata.
+- Added byte and field-length ceilings before provider payloads can reach the
+  lifecycle state machine or durable result storage.
+- Malformed status/cancel payloads now fail closed as provider protocol errors;
+  malformed terminal results are retained as bounded malformed claims without
+  invented output.
+- Added deterministic restart coverage for delivered cancellation and late
+  timeout-result reconciliation, plus malformed and oversized protocol tests.
+- Verification: focused protocol/lifecycle/result tests passed 51/51 in five
+  repeated runs; `npm run verify` passed 172 tests with 171 passing and one
+  optional live-discovery skip; Python passed 3/3; schema check and
+  `git diff --check` passed.
+- Next: deliver the companion PR into the primary PER-342 branch and verify its
+  exact-head CI.
