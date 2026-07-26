@@ -993,3 +993,13 @@ PER-336 security hotfix is complete locally after insecure PR 26 merged as `8989
 - Added focused cancellation and deadline reconciliation regressions proving no overlapping duplicate stop is issued and delivery resumes after settlement.
 - Verification: lifecycle service tests passed 59/59; `npm run check` passed the full format, lint, typecheck, build, TypeScript, coverage, Python, schema, provenance, and research gates; `git diff --check` passed.
 - Next: commit and push the companion, open it against PR 66's head branch, verify exact-head CI, and merge.
+## PER-390 CallForge typed call DAG IR
+
+- Implemented versioned typed call graph schema, structural/type validation,
+  canonical JSON serialization, deterministic topology/frontier derivation, and
+  MiniCPM5 XML bridging.
+- Added 200-case deterministic XML round-trip corpus and invalid-graph tests.
+- Verification: `npm run check`, focused Python tests, and `git diff --check`
+  pass. Contract review findings for invalid scheduling, type soundness, schema
+  outputs, binding exclusivity, XML coercion, and serial frontiers were resolved.
+- Next: open, verify, and merge the pull request.
