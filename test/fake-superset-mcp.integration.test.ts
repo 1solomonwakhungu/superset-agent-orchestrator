@@ -6,10 +6,10 @@ import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { z } from "zod";
+import { orchestratorErrorSchema } from "../src/tool-contract.js";
 
 const server = resolve("dist/src/server.js");
 const fake = resolve("test/fixtures/fake-superset.mjs");
-const errorSchema = z.object({ code: z.string() }).passthrough();
 const claimSchema = z.object({
   output: z.string().optional(), error: z.string().optional(), stopReason: z.string().optional(),
 }).passthrough();
@@ -23,9 +23,9 @@ const responseSchema = z.object({
   sessions: z.array(sessionSchema).default([]),
   items: z.array(z.object({
     canceled: z.boolean().optional(), workspace_id: z.string().optional(), status: z.string().optional(),
-    result: resultSchema.optional(), error: errorSchema.optional(),
+    result: resultSchema.optional(), error: orchestratorErrorSchema.optional(),
   }).passthrough()).default([]),
-  error: errorSchema.optional(),
+  error: orchestratorErrorSchema.optional(),
 }).passthrough();
 
 test("production MCP server persists attributed completion, failure, cancellation, and restart", async () => {
@@ -101,6 +101,10 @@ test("production MCP server exposes every provider error once without retries", 
           ? await call(harness.client, "provider_sessions_cancel", { request_id: "cancel", session_ids: [sessionId] })
           : await results(harness.client, [sessionId]);
         assert.equal(response.items[0]?.error?.code, code);
+        assert.deepEqual(
+          response.items[0]?.error,
+          orchestratorErrorSchema.parse(response.items[0]?.error),
+        );
       }
       const command = operation === "launch" ? "launch" : operation === "cancel" ? "cancel" : "status";
       assert.equal((await harness.calls()).filter((call) => call.command === command).length, 1);
@@ -116,6 +120,8 @@ test("production MCP server exposes every provider error once without retries", 
   try {
     const unavailable = await call(connection.client, "provider_batches_launch", launchArguments(1));
     assert.equal(unavailable.error?.code, "PROVIDER_UNAVAILABLE");
+    assert.equal(unavailable.error?.layer, "provider");
+    assert.equal(unavailable.error?.retryable, true);
   } finally {
     await connection.transport.close();
     await rm(directory, { recursive: true, force: true });
