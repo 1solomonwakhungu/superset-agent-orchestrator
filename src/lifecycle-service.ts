@@ -412,7 +412,7 @@ export class LifecycleService {
       result: claim,
       ...(stopReason === undefined ? {} : { stopReason }),
       at: this.wallClockNow(),
-      ...(resultFailure === undefined ? {} : { keepReconciliationPending: true }),
+      ...(resultFailure === undefined && result !== undefined ? {} : { keepReconciliationPending: true }),
     };
     const { worker: settled, claimed } = await this.store.settleWorkerCancellation(sessionId, terminal, options);
     return {
