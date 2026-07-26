@@ -89,7 +89,14 @@ export class LaunchService {
     if (new Set(request.assignments.map(({ idempotencyKey }) => idempotencyKey)).size !== request.assignments.length) {
       throw new Error("Batch assignment idempotency keys must be unique");
     }
-    const authorized = await Promise.all(request.assignments.map(async (item) => {
+    const clientId = this.store.redactText(assertBoundedText(request.clientId, "clientId", 256));
+    const batchName = this.store.redactText(assertBoundedText(request.batchName, "batchName", 256));
+    assertIdentifier(request.idempotencyKey, "idempotencyKey", MAX_IDEMPOTENCY_KEY_BYTES);
+    if (this.store.redactText(request.idempotencyKey) !== request.idempotencyKey) {
+      throw new SecurityError("INVALID_ARGUMENT", "Launch identities must not contain credentials");
+    }
+    const authorized: Array<{ request: AsynchronousLaunchRequest; grant: WorkspaceGrant }> = [];
+    for (const item of request.assignments) {
       const fullRequest = { ...item, clientId: request.clientId, batchName: request.batchName };
       let grant: WorkspaceGrant;
       let sanitized: AsynchronousLaunchRequest;
@@ -102,6 +109,10 @@ export class LaunchService {
         }
         assertIdentifier(item.idempotencyKey, "idempotencyKey", MAX_IDEMPOTENCY_KEY_BYTES);
         assertIdentifier(item.workspaceId, "workspaceId");
+        if (this.store.redactText(item.idempotencyKey) !== item.idempotencyKey
+          || this.store.redactText(item.workspaceId) !== item.workspaceId) {
+          throw new SecurityError("INVALID_ARGUMENT", "Launch identities must not contain credentials");
+        }
         assertIdentifier(item.attribution.agent, "attribution.agent", MAX_ATTRIBUTION_BYTES);
         assertBoundedText(item.attribution.task, "attribution.task", MAX_ATTRIBUTION_BYTES);
         sanitized = {
@@ -116,27 +127,27 @@ export class LaunchService {
         await this.audit(fullRequest, "denied", reasonCode(error));
         throw error;
       }
-      return { request: sanitized, grant };
-    }));
+      authorized.push({ request: sanitized, grant });
+    }
     const acceptedAt = this.now().toISOString();
-    const batchScope = scopedKey(authorized[0]!.request.clientId, request.idempotencyKey);
+    const batchScope = scopedKey(clientId, request.idempotencyKey);
     const batchId = stableId("batch", batchScope);
     const sessions = authorized.map(({ request: item }) => ({
-      id: stableId("session", scopedKey(item.clientId, item.idempotencyKey)), clientId: item.clientId,
+      id: stableId("session", scopedKey(clientId, item.idempotencyKey)), clientId,
       createdAt: acceptedAt, lastSeenAt: acceptedAt,
     }));
     const batch: Batch = {
-      id: batchId, name: request.batchName, sessionId: sessions[0]!.id,
+      id: batchId, name: batchName, sessionId: sessions[0]!.id,
       createdAt: acceptedAt, updatedAt: acceptedAt,
     };
     const assignments = authorized.map(({ request: item, grant }, index): Assignment => {
       return {
-        id: stableId("assignment", scopedKey(item.clientId, item.idempotencyKey)),
-        idempotencyKey: scopedKey(item.clientId, item.idempotencyKey),
+        id: stableId("assignment", scopedKey(clientId, item.idempotencyKey)),
+        idempotencyKey: scopedKey(clientId, item.idempotencyKey),
         requestFingerprint: fingerprint(item), batchId, sessionId: sessions[index]!.id,
         status: "accepted", attribution: item.attribution, prompt: item.prompt,
         workspaceId: item.workspaceId, workspacePath: assertDataOperand(grant.canonicalPath, "workspace path"),
-        attemptId: stableId("attempt", scopedKey(item.clientId, item.idempotencyKey)), attempt: 1,
+        attemptId: stableId("attempt", scopedKey(clientId, item.idempotencyKey)), attempt: 1,
         acceptedAt, updatedAt: acceptedAt,
       };
     });

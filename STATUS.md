@@ -673,6 +673,29 @@ locally.
   95.35% lines, and Python 3.11 tests 3/3; the focused 71-test suite passed 20
   consecutive runs (1,420/1,420), with schema no-diff, routing, Markdown lint,
   compileall, and `git diff --check` also passing.
+PER-347/PER-345 merge resolution is complete locally.
+
+- Preserved fake-provider batch, lifecycle, restart, typed-error, and exact
+  attribution behavior while applying canonical workspace authorization, bounded
+  redaction, strict schemas, executable pinning, and hash-chained security audits.
+- Batch acceptance now persists one allowed security audit per assignment in the
+  same transaction, and the bounded redactor supports the documented 100-session
+  response size without truncating array items.
+- Verification: `npm run build` passed; focused launch, result, security,
+  discovery, fake-provider, and MCP integration tests passed 79/79; staged diff
+  checks passed with no unresolved merge paths.
+
+- Concurrent PER-347 merge resolution retained canonical production workspace
+  discovery and authorization while isolating the explicitly enabled fake-provider
+  tools behind their deterministic test authorizer. Launch rejection codes and
+  lifecycle failure state now persist atomically with launch evidence.
+- Merge verification: `npm run build` passed; focused security, launch,
+  idempotency, fake-provider process/MCP, and result tests passed 88/88; focused
+  lifecycle tests passed 40/40; conflict-marker and whitespace checks passed.
+- Latest concurrent PER-347 merge resolution preserves atomic batch acceptance
+  rollback, assignment/worker launch-failure transitions, hash-chained security
+  audits, typed provider errors, canonical workspace authorization, and lifecycle
+  synchronization. `npm run build` and 122 focused tests passed.
 
 PER-348 adversarial resilience regression coverage is complete locally.
 

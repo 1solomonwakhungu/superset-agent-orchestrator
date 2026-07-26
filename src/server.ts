@@ -120,8 +120,9 @@ async function main(): Promise<void> {
 
   const server = new McpServer({ name: "superset-agent-orchestrator", version: "0.1.0" });
   const integrationToolsEnabled = process.env.SUPERSET_ORCHESTRATOR_ENABLE_PROVIDER_TEST_TOOLS === "1";
+  const discovery = providerExecutable === undefined ? undefined : new SupersetDiscoveryAdapter({ executable: providerExecutable });
   const integrationWorkspaceRoot = process.env.SUPERSET_ORCHESTRATOR_PROVIDER_TEST_WORKSPACE_ROOT;
-  const workspaceAuthorizer: WorkspaceAuthorizer = integrationToolsEnabled && integrationWorkspaceRoot !== undefined
+  const workspaceAuthorizer: WorkspaceAuthorizer | undefined = integrationToolsEnabled && integrationWorkspaceRoot !== undefined
     ? {
         authorize: async (workspaceId) => {
           const canonicalPath = assertDataOperand(await realpath(join(integrationWorkspaceRoot, workspaceId)), "workspace path");
@@ -135,8 +136,12 @@ async function main(): Promise<void> {
           };
         },
       }
-    : new RegisteredWorkspaceAuthorizer(() => new SupersetDiscoveryAdapter().inventory());
-  const launches = provider === undefined ? undefined : new LaunchService(store, provider, workspaceAuthorizer);
+    : discovery === undefined
+    ? undefined
+    : new RegisteredWorkspaceAuthorizer(() => discovery.inventory());
+  const launches = provider === undefined || workspaceAuthorizer === undefined
+    ? undefined
+    : new LaunchService(store, provider, workspaceAuthorizer);
   const capture = provider === undefined ? undefined : new ResultCaptureService(store, provider);
   if (launches !== undefined) await launches.dispatchPending();
 
