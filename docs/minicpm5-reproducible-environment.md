@@ -1,7 +1,9 @@
-# MiniCPM5-1B Reproducible Baseline
+# MiniCPM5-1B Reproducibility Environment
 
 The `minicpm5/` project pins software and model inputs for same-hardware
-reproducibility experiments with `openbmb/MiniCPM5-1B`.
+reproducibility experiments with `openbmb/MiniCPM5-1B`. The lock, scripts, and
+Linux/amd64 container build are verified, but the full cross-platform acceptance
+matrix requires verification on its target hosts.
 
 ## Pinned Inputs
 
@@ -10,7 +12,7 @@ reproducibility experiments with `openbmb/MiniCPM5-1B`.
 - Python: `3.12.*`
 - uv: `0.8.3`
 - Python resolution and artifact hashes: `minicpm5/uv.lock`
-- llama.cpp and MLX source revisions: `minicpm5/toolchains.lock`
+- Recorded llama.cpp and MLX source revisions: `minicpm5/toolchains.lock`
 
 The model revision was resolved from the Hugging Face model API. A revision pin
 does not establish model quality, performance, or architectural claims.
@@ -34,10 +36,11 @@ Line Tools, Python 3.12, and uv 0.8.3, then run:
 uv sync --project minicpm5 --frozen --extra macos-mlx
 ```
 
-The Python MLX wheels are version-locked. Experiments that compile MLX or
-llama.cpp must check out the exact commit in `toolchains.lock` and record build
-flags. A GGUF conversion must record its source checkpoint, conversion command,
-quantization, and output hash.
+The Python MLX wheels are version-locked. The source revisions are recorded
+inputs, not reproducible native builds by themselves. Experiments that compile
+MLX or llama.cpp must check out the exact commit in `toolchains.lock` and record
+the compiler, build flags, and binary hashes. A GGUF conversion must record its
+source checkpoint, conversion command, quantization, and output hash.
 
 ## Fingerprint Protocol
 
@@ -53,6 +56,11 @@ diff -u artifacts/run-1.json artifacts/run-2.json
 The script uses eight fixed token IDs, disables cache and sampling, runs
 float32 inference with one intra-op and inter-op thread, and hashes all logits
 after canonical little-endian float32 serialization.
+
+Running this protocol downloads or loads the model and is therefore prohibited
+for overnight workers. An explicitly authorized executor must bind reported
+results to the repository commit and an environment capture. No fingerprint
+result is claimed by this change.
 
 Bitwise identity is an acceptance target only within the same hardware class.
 Cross-CPU, BLAS, OS, PyTorch, MLX, and quantization comparisons must store raw

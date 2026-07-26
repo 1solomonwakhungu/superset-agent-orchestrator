@@ -39,9 +39,12 @@ def cpu_model() -> str:
         return command("sysctl", "-n", "machdep.cpu.brand_string")
     path = Path("/proc/cpuinfo")
     if path.exists():
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if line.lower().startswith("model name"):
-                return line.split(":", 1)[1].strip()
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if line.lower().startswith("model name") and ":" in line:
+                    return line.split(":", 1)[1].strip() or "unavailable"
+        except (OSError, UnicodeError):
+            return "unavailable"
     return platform.processor() or "unavailable"
 
 
@@ -50,8 +53,11 @@ def ram_bytes() -> str:
         return command("sysctl", "-n", "hw.memsize")
     path = Path("/proc/meminfo")
     if path.exists():
-        first = path.read_text(encoding="utf-8").splitlines()[0].split()
-        return str(int(first[1]) * 1024)
+        try:
+            first = path.read_text(encoding="utf-8").splitlines()[0].split()
+            return str(int(first[1]) * 1024)
+        except (OSError, UnicodeError, IndexError, ValueError):
+            return "unavailable"
     return "unavailable"
 
 

@@ -13,4 +13,4 @@ capture:
 	uv run --frozen python scripts/capture_env.py
 
 fingerprint:
-	uv run --frozen python scripts/logit_fingerprint.py
+	sh scripts/run_fingerprint.sh

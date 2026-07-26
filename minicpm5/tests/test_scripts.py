@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -34,3 +35,41 @@ def test_capture_contains_required_host_fields(monkeypatch) -> None:
         assert f"- {field}:" in capture
     assert "`OMP_NUM_THREADS=1`" in capture
     assert "`torch==" in capture
+
+
+def test_capture_tolerates_unreadable_proc_files(monkeypatch) -> None:
+    script = load_script("capture_env.py")
+    monkeypatch.setattr(script.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(script.Path, "exists", lambda _path: True)
+    monkeypatch.setattr(
+        script.Path, "read_text", lambda _path, **_kwargs: (_ for _ in ()).throw(OSError())
+    )
+
+    assert script.cpu_model() == "unavailable"
+    assert script.ram_bytes() == "unavailable"
+
+
+def test_fingerprint_wrapper_sets_deterministic_environment(tmp_path) -> None:
+    project = Path(__file__).parents[1]
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_uv = fake_bin / "uv"
+    fake_uv.write_text(
+        "#!/bin/sh\n"
+        "test \"$OMP_NUM_THREADS,$MKL_NUM_THREADS,$OPENBLAS_NUM_THREADS,"
+        "$VECLIB_MAXIMUM_THREADS,$NUMEXPR_NUM_THREADS,$PYTHONHASHSEED,"
+        "$TOKENIZERS_PARALLELISM\" = \"1,1,1,1,1,0,false\"\n"
+        "test \"$*\" = \"run --frozen python scripts/logit_fingerprint.py "
+        "--local-files-only\"\n",
+        encoding="utf-8",
+    )
+    fake_uv.chmod(0o755)
+
+    completed = subprocess.run(
+        ["/bin/sh", "scripts/run_fingerprint.sh", "--local-files-only"],
+        cwd=project,
+        env={"PATH": str(fake_bin)},
+        check=False,
+    )
+
+    assert completed.returncode == 0
