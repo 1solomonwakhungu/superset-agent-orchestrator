@@ -1,5 +1,25 @@
 # Status
 
+## PER-352 cross-platform compatibility CI
+
+- Added exact-head macOS 14 and Ubuntu 24.04 CI lanes for Node.js 22 and 24 with
+  npm 10.9.8, plus a report job that accepts only four passing same-commit results.
+- Added real portable filesystem, process, timeout, signal, and process-identity
+  tests and removed ambient-working-directory assumptions from stdio tests.
+- Made the Superset Desktop smoke skip visible and justified on generic runners.
+- Made Windows explicitly unsupported in package metadata, startup, probe policy,
+  matrix evidence, documentation, and tests.
+- Verification: `npm run verify` passed 106 runnable tests with one explicit
+  Superset Desktop skip; `npm run compatibility:probe` returned the expected
+  actionable unknown; focused Markdown lint and `git diff --check` passed.
+- Fixed exact-head checkout attribution, fail-closed detected lane validation,
+  and stale machine-readable Linux/Node 24 evidence at `3fd2ce6`.
+- The PR's latest exact-head run passed all four macOS 14/Ubuntu 24.04 and
+  Node.js 22/24 lanes plus the generated compatibility report job.
+- Pull request: https://github.com/1solomonwakhungu/superset-agent-orchestrator/pull/32
+- Next: independently verify and merge PR 32, then verify fetched `main` before
+  closing PER-352.
+
 ## PER-258 agency availability monitoring
 
 - Completed: Implemented and verified the PER-258 monitor, production service
@@ -258,7 +278,8 @@ locally.
   with their hash-chained security audit records, rejects a removed audit trail,
   bounds result claims and live discovery output to 4 MiB, isolates retryable
   workspace failures per assignment, and adds deterministic background shutdown.
-- Final verification: `npm run verify` passed 129 tests with 1 opt-in smoke
+- Final verification after integrating current `origin/main`: `npm run verify`
+  passed 135 tests with 1 opt-in smoke
   skip; the 56-test security/launch/discovery focus passed 20 consecutive runs
   (1,120/1,120); check, schema, routing contract, security Markdown lint, Python
   bytecode compilation, and `git diff --check` passed.
