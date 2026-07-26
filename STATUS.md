@@ -409,9 +409,11 @@ locally.
   without touching open PR 35; updated the merged PER-348 synthetic worker to
   expect client-scoped provider idempotency keys.
 - Latest verification: focused fake-provider, launch, and resilience tests passed
-  28/28; `npm run check` passed formatting, lint, typecheck, build, 186 tests (185
-  pass, 0 fail, 1 explicit live-discovery skip), coverage, Python 5/5 with one
-  optional checkpoint audit skip, schema no-diff, and provenance.
+  28/28 and workspace lease tests passed 12/12; after integrating current `main`
+  at `abcb71d681f93f530e9e4c3f8fe2d3bd17cdedc0`, `npm run check` passed
+  formatting, lint, typecheck, build, 198 tests (197 pass, 0 fail, 1 explicit
+  live-discovery skip), coverage, Python 5/5 with one optional checkpoint audit
+  skip, schema no-diff, and provenance.
 - Next: push the exact PR head and merge only after exact-head checks succeed.
 
 PER-348 adversarial resilience regression coverage is complete locally.
