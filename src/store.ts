@@ -1026,6 +1026,7 @@ export class DurableStore {
     batch: Batch;
     workers: Worker[];
     events: LaunchAuditEvent[];
+    securityAudits: SecurityAuditInput[];
   }): Promise<{ assignments: Assignment[]; created: boolean }> {
     return this.withLock(async () => {
       await this.load();
@@ -1035,6 +1036,7 @@ export class DurableStore {
       batchSchema.parse(input.batch);
       input.events.forEach((auditEvent) => auditEventSchema.parse(auditEvent));
       if (input.workers.length !== input.assignments.length
+        || input.securityAudits.length !== input.assignments.length
         || input.workers.some((worker, index) => worker.sessionId !== input.assignments[index]?.sessionId)) {
         throw new Error("Launch batch workers must match assignments in order");
       }
@@ -1061,6 +1063,7 @@ export class DurableStore {
       this.state.assignments.push(...input.assignments);
       this.state.workers.push(...input.workers);
       this.state.auditEvents.push(...input.events);
+      input.securityAudits.forEach((audit) => this.appendSecurityAuditToState(audit, new Date(input.batch.createdAt)));
       this.rebuildIndexes();
       await this.persist();
       return { assignments: structuredClone(input.assignments), created: true };
@@ -1161,7 +1164,15 @@ export class DurableStore {
           if (worker.runId !== undefined && worker.runId !== event.runId) throw new Error("Worker is already bound to another run");
           worker.runId = event.runId;
         }
+        if (status === "failed") {
+          const worker = this.state.workers.find(({ id }) => id === assignment.sessionId);
+          if (worker === undefined) throw new Error(`Missing lifecycle worker for assignment: ${assignmentId}`);
+          worker.status = "failed";
+          worker.stopReason = "launch_error";
+          worker.completedAt = event.occurredAt;
+        }
         if (event.error !== undefined) assignment.error = this.redaction.text(event.error);
+        if (event.errorCode !== undefined) assignment.errorCode = event.errorCode;
         if (existingEvent === undefined) this.state.auditEvents.push({
           ...event,
           ...(event.error === undefined ? {} : { error: this.redaction.text(event.error) }),
@@ -1172,14 +1183,6 @@ export class DurableStore {
         this.state = previousState;
         this.rebuildIndexes();
         throw error;
-      }
-      if (event.errorCode !== undefined) assignment.errorCode = event.errorCode;
-      if (status === "failed") {
-        const worker = this.state.workers.find(({ id }) => id === assignment.sessionId);
-        if (worker === undefined) throw new Error(`Missing lifecycle worker for assignment: ${assignmentId}`);
-        worker.status = "failed";
-        worker.stopReason = "launch_error";
-        worker.completedAt = event.occurredAt;
       }
       return { assignment: structuredClone(assignment), transitioned: true };
     });

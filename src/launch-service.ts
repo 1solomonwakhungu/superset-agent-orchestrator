@@ -138,6 +138,13 @@ export class LaunchService {
     const stored = await this.store.acceptLaunchBatch({
       assignments, sessions, batch, workers,
       events: assignments.map(({ id }) => event(id, "launch_accepted", acceptedAt)),
+      securityAudits: assignments.map((assignment, index) => this.auditInput(
+        { ...request.assignments[index]!, clientId: request.clientId, batchName: request.batchName },
+        "allowed",
+        "launch_accepted",
+        assignment.id,
+        grants[index]!.projectId,
+      )),
     });
     this.injectCrash("after_acceptance");
     return stored.assignments.map(acceptance);
@@ -180,7 +187,7 @@ export class LaunchService {
         : new Error(message, { cause: sanitizedCause });
     }
     const acceptedAt = this.now().toISOString();
-    const key = scopedKey(request.clientId, request.idempotencyKey);
+    const key = scopedKey(clientId, request.idempotencyKey);
     const assignmentId = stableId("assignment", key);
     const attemptId = stableId("attempt", key);
     const session: Session = {
