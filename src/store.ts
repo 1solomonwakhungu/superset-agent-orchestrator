@@ -220,15 +220,15 @@ export interface ReconciliationSummary {
   reconciledAt: string;
 }
 
-const attributionSchema = z.object({ agent: z.string().min(1), task: z.string().min(1) });
+const attributionSchema = z.object({ agent: z.string().min(1), task: z.string().min(1) }).strict();
 const sessionSchema = z.object({
   id: z.string().min(1), clientId: z.string().min(1), createdAt: z.iso.datetime(), lastSeenAt: z.iso.datetime(),
-});
+}).strict();
 const batchSchema = z.object({
   id: z.string().min(1), name: z.string().min(1), sessionId: z.string().min(1),
   createdAt: z.iso.datetime(), updatedAt: z.iso.datetime(), idempotencyKey: z.string().min(1).optional(),
   clientId: z.string().min(1).optional(), requestFingerprint: z.string().min(1).optional(),
-});
+}).strict();
 const workerSchema = z.object({
   id: z.string().min(1), batchId: z.string().min(1), sessionId: z.string().min(1),
   pid: z.number().int().positive().optional(),
@@ -236,7 +236,7 @@ const workerSchema = z.object({
   status: z.enum(["requested", "running", "succeeded", "failed", "unknown_outcome"]),
   attribution: attributionSchema, startedAt: z.iso.datetime(), completedAt: z.iso.datetime().optional(),
   result: z.unknown().optional(), position: z.number().int().nonnegative().optional(),
-}).superRefine((worker, context) => {
+}).strict().superRefine((worker, context) => {
   if (worker.status === "running" && (worker.pid === undefined || worker.processStartedAt === undefined)) {
     context.addIssue({ code: "custom", message: "Running workers require a PID and process start token" });
   }
@@ -244,7 +244,7 @@ const workerSchema = z.object({
 const diagnosticSchema = z.object({
   id: z.string().min(1), kind: z.enum(["orphan", "unknown_outcome", "missing_result"]),
   workerId: z.string().min(1), message: z.string().min(1), detectedAt: z.iso.datetime(),
-});
+}).strict();
 const assignmentSchema = z.object({
   id: z.string().min(1), idempotencyKey: z.string().min(1), requestFingerprint: z.string().min(1),
   batchId: z.string().min(1), sessionId: z.string().min(1),
@@ -252,26 +252,26 @@ const assignmentSchema = z.object({
   prompt: z.string().min(1), workspaceId: z.string().min(1).optional(), workspacePath: z.string().min(1),
   attemptId: z.string().min(1).optional(), attempt: z.number().int().positive().optional(), acceptedAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(), runId: z.string().min(1).optional(), error: z.string().min(1).optional(),
-});
+}).strict();
 const resultClaimSchema = z.object({
   status: z.enum(["succeeded", "failed", "cancelled", "stopped_without_result", "malformed"]),
   completeness: z.enum(["complete", "empty", "partial", "missing", "malformed"]),
   output: z.string().optional(), error: z.string().min(1).optional(), retryable: z.boolean().optional(),
   stopReason: z.string().min(1).optional(),
-  resume: z.object({ adapter: z.string().min(1), token: z.string().min(1) }).optional(),
-});
+  resume: z.object({ adapter: z.string().min(1), token: z.string().min(1) }).strict().optional(),
+}).strict();
 const capturedResultSchema = z.object({
   deliveryId: z.string().min(1), deliveryFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   assignmentId: z.string().min(1), batchId: z.string().min(1), sessionId: z.string().min(1),
   workspaceId: z.string().min(1), workspacePath: z.string().min(1), attemptId: z.string().min(1),
   attempt: z.number().int().positive(), runId: z.string().min(1), attribution: attributionSchema,
   claim: resultClaimSchema, verifiedArtifacts: z.tuple([]), capturedAt: z.iso.datetime(),
-});
+}).strict();
 const auditEventSchema = z.object({
   id: z.string().min(1), assignmentId: z.string().min(1),
   type: z.enum(["launch_accepted", "launch_reserved", "execution_started", "launch_failed"]),
   occurredAt: z.iso.datetime(), runId: z.string().min(1).optional(), error: z.string().min(1).optional(),
-});
+}).strict();
 const securityAuditEventSchema = z.object({
   id: z.string().min(1), sequence: z.number().int().positive(), occurredAt: z.iso.datetime(),
   requesterId: z.string().min(1),
@@ -280,7 +280,7 @@ const securityAuditEventSchema = z.object({
   workspaceId: z.string().min(1).optional(), projectId: z.string().min(1).optional(),
   assignmentId: z.string().min(1).optional(),
   previousEventHash: z.string().regex(/^[a-f0-9]{64}$/), eventHash: z.string().regex(/^[a-f0-9]{64}$/),
-});
+}).strict();
 const launchIntentSchema = z.object({
   idempotencyKey: z.string().min(1), requestHash: z.string().regex(/^[a-f0-9]{64}$/),
   sessionId: z.string().min(1), batchId: z.string().min(1), workerId: z.string().min(1), workspaceId: z.string().min(1).optional(),
@@ -288,7 +288,7 @@ const launchIntentSchema = z.object({
   status: z.enum(["reserved", "dispatching", "unknown_outcome", "bound"]),
   createdAt: z.iso.datetime(), updatedAt: z.iso.datetime(), runId: z.string().min(1).optional(),
   diagnostic: z.string().min(1).optional(),
-}).superRefine((intent, context) => {
+}).strict().superRefine((intent, context) => {
   if (intent.status === "bound" && intent.runId === undefined) {
     context.addIssue({ code: "custom", message: "Bound launch intents require a run ID" });
   }
@@ -301,9 +301,9 @@ const stateSchema = z.object({
   securityAuditEvents: z.array(securityAuditEventSchema).default([]),
   securityAuditHead: z.object({
     sequence: z.number().int().nonnegative(), eventHash: z.string().regex(/^[a-f0-9]{64}$/),
-  }).optional(),
+  }).strict().optional(),
   reconciledAt: z.iso.datetime().optional(),
-}).superRefine((state, context) => {
+}).strict().superRefine((state, context) => {
   for (const [kind, records] of [["session", state.sessions], ["batch", state.batches], ["worker", state.workers],
     ["assignment", state.assignments], ["audit event", state.auditEvents]] as const) {
     const ids = new Set<string>();

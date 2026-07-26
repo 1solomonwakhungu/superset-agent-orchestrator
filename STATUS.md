@@ -1,5 +1,18 @@
 # Status
 
+## PER-345 companion redaction hardening, 2026-07-26
+
+- Added bounded structured redaction with 20-level and 1,000-entry limits,
+  accessor-safe traversal, and prototype-pollution-safe output construction.
+- Added common password/API, AWS access/session, Slack, npm, JWT, GitHub,
+  authorization, private-key, sensitive-key, and configured-canary redaction.
+- Audit fields now strip Unicode bidi and zero-width formatting controls, and
+  every persisted state object schema rejects unknown fields.
+- Verification: focused security tests passed 33/33; `npm run verify` passed
+  159 tests with one explicit skip, coverage and generated-schema checks, and
+  3/3 Python tests; lint, typecheck, build, and `git diff --check` passed.
+- Next: merge the companion PR into the primary PER-345 branch after CI.
+
 ## PER-352 cross-platform compatibility CI
 
 - Added exact-head macOS 14 and Ubuntu 24.04 CI lanes for Node.js 22 and 24 with
