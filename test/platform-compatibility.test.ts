@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, copyFile, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { access, chmod, copyFile, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -50,6 +50,39 @@ test("real process runner reports missing executables and timeouts", async () =>
     runProcess(NODE_EXECUTABLE, ["-e", "setInterval(() => {}, 1000)"], 50),
     (error: unknown) => error instanceof SupersetDiscoveryError && error.code === "TIMED_OUT",
   );
+});
+
+test("a discovery timeout terminates descendant processes", { skip: process.platform === "win32" }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "orchestrator-discovery-timeout-"));
+  const ready = join(directory, "descendant-started");
+  const marker = join(directory, "descendant-survived");
+  const fixture = join(directory, "parent.mjs");
+  const descendant = `
+    require("node:fs").writeFileSync(${JSON.stringify(ready)}, "started");
+    setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(marker)}, "survived"), 500);
+  `;
+  await writeFile(fixture, `
+    import { spawn } from "node:child_process";
+    spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], { stdio: "ignore" });
+    setInterval(() => {}, 1000);
+  `);
+
+  try {
+    const result = runProcess(NODE_EXECUTABLE, [fixture], 300);
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      if (await access(ready).then(() => true, () => false)) break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    await access(ready);
+    await assert.rejects(
+      result,
+      (error: unknown) => error instanceof SupersetDiscoveryError && error.code === "TIMED_OUT",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await assert.rejects(access(marker), { code: "ENOENT" });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("process identity is stable for the current process and absent for an impossible PID", () => {

@@ -1,0 +1,11 @@
+[
+  {
+    "statuses": ["queued", "running", "succeeded"],
+    "result": { "status": "succeeded", "output": "fixture result" },
+    "resume": { "adapter": "fake", "token": "fixture-token" }
+  },
+  {
+    "statuses": ["queued", "failed"],
+    "result": { "status": "failed", "error": "fixture failure", "retryable": true }
+  }
+]

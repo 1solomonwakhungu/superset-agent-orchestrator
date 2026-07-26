@@ -163,6 +163,7 @@ export class LaunchService {
   }
 
   async dispatchPending(): Promise<void> {
+    if (this.dispatching !== undefined) return this.dispatching;
     let retryableFailure: unknown;
     for (const assignment of await this.store.pendingAssignments()) {
       try {

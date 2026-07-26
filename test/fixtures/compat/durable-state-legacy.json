@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "sessions": [
+    { "id": "session-legacy-1", "clientId": "hermes-cli", "createdAt": "2026-05-01T09:00:00.000Z", "lastSeenAt": "2026-05-01T09:30:00.000Z" }
+  ],
+  "batches": [
+    { "id": "batch-legacy-1", "name": "overnight-sweep", "sessionId": "session-legacy-1", "createdAt": "2026-05-01T09:00:00.000Z", "updatedAt": "2026-05-01T09:30:00.000Z" }
+  ],
+  "workers": [
+    {
+      "id": "worker-legacy-1", "batchId": "batch-legacy-1", "sessionId": "session-legacy-1", "status": "succeeded",
+      "attribution": { "agent": "codex", "task": "upgrade dependencies" },
+      "startedAt": "2026-05-01T09:00:00.000Z", "completedAt": "2026-05-01T09:20:00.000Z",
+      "result": { "output": "Dependencies upgraded." }, "position": 0
+    },
+    {
+      "id": "worker-legacy-2", "batchId": "batch-legacy-1", "sessionId": "session-legacy-1", "status": "failed",
+      "attribution": { "agent": "opencode", "task": "run the integration suite" },
+      "startedAt": "2026-05-01T09:00:00.000Z", "completedAt": "2026-05-01T09:25:00.000Z", "position": 1
+    },
+    {
+      "id": "worker-legacy-3", "batchId": "batch-legacy-1", "sessionId": "session-legacy-1", "status": "running",
+      "pid": 31337, "processStartedAt": "Fri May  1 09:00:00 2026",
+      "attribution": { "agent": "codex", "task": "write the release notes" },
+      "startedAt": "2026-05-01T09:00:00.000Z", "position": 2
+    }
+  ],
+  "diagnostics": []
+}
