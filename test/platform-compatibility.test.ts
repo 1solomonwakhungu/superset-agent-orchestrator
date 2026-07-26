@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { chmod, copyFile, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { DurableStore } from "../src/store.js";
+import { SecurityError } from "../src/security.js";
 import { runProcess, SupersetDiscoveryError } from "../src/superset-discovery.js";
+
+const NODE_FIXTURE_DIRECTORY = await mkdtemp(join(tmpdir(), "orchestrator-portable-node-"));
+const NODE_EXECUTABLE = join(NODE_FIXTURE_DIRECTORY, "node");
+await copyFile(process.execPath, NODE_EXECUTABLE);
+await chmod(NODE_EXECUTABLE, 0o700);
+test.after(async () => rm(NODE_FIXTURE_DIRECTORY, { recursive: true, force: true }));
 
 test("durable state supports nested paths with spaces and non-ASCII characters", async () => {
   const directory = await mkdtemp(join(tmpdir(), "orchestrator portability "));
@@ -24,7 +31,7 @@ test("durable state supports nested paths with spaces and non-ASCII characters",
 
 test("real process runner preserves literal arguments and separates output", async () => {
   const literal = "space ; $HOME [brackets]";
-  const result = await runProcess(process.execPath, [
+  const result = await runProcess(NODE_EXECUTABLE, [
     "-e",
     "process.stdout.write(process.argv[1]); process.stderr.write('diagnostic')",
     literal,
@@ -36,11 +43,11 @@ test("real process runner preserves literal arguments and separates output", asy
 
 test("real process runner reports missing executables and timeouts", async () => {
   await assert.rejects(
-    runProcess(`missing-orchestrator-command-${process.pid}`, [], 1_000),
-    (error: unknown) => error instanceof SupersetDiscoveryError && error.code === "UNAVAILABLE",
+    runProcess(join(tmpdir(), `missing-orchestrator-command-${process.pid}`), [], 1_000),
+    (error: unknown) => error instanceof SecurityError && error.code === "POLICY_DENIED",
   );
   await assert.rejects(
-    runProcess(process.execPath, ["-e", "setInterval(() => {}, 1000)"], 50),
+    runProcess(NODE_EXECUTABLE, ["-e", "setInterval(() => {}, 1000)"], 50),
     (error: unknown) => error instanceof SupersetDiscoveryError && error.code === "TIMED_OUT",
   );
 });
