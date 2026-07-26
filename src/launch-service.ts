@@ -152,6 +152,7 @@ export class LaunchService {
       }
     } catch (error) {
       await this.auditAssignment(assignment, "denied", reasonCode(error));
+      if (error instanceof SecurityError && error.retryable) throw error;
       await this.store.recordLaunchEvent(assignment.id, "failed", event(
         assignment.id, "launch_failed", this.now().toISOString(), { error: safeErrorMessage(error) },
       ));

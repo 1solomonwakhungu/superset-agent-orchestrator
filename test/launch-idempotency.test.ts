@@ -132,3 +132,26 @@ test("unknown outcome remains unresolved when backend cannot rediscover acceptan
     assert.equal(adapter.launches.length, 1);
   });
 });
+
+test("audit persistence failure remains reserved before adapter acceptance", async () => {
+  await harness(async (_path, store, adapter) => {
+    const appendSecurityAudit = store.appendSecurityAudit.bind(store);
+    let failAllowedIntent = true;
+    store.appendSecurityAudit = async (input, now) => {
+      if (failAllowedIntent && input.reasonCode === "launch_intent") {
+        failAllowedIntent = false;
+        throw new Error("audit storage unavailable");
+      }
+      return appendSecurityAudit(input, now);
+    };
+    const coordinator = new LaunchCoordinator(store, adapter, authorizer);
+
+    await assert.rejects(coordinator.launch(request), /audit storage unavailable/);
+    assert.equal(store.launchIntents()[0]?.status, "reserved");
+    assert.equal(adapter.launches.length, 0);
+
+    const recovered = await coordinator.launch(request);
+    assert.equal(recovered.status, "bound");
+    assert.equal(adapter.launches.length, 1);
+  });
+});

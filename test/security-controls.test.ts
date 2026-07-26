@@ -463,6 +463,31 @@ test("T-ENV-01 launch adapters receive only allowlisted environment and final re
   });
 });
 
+test("T-PATH-02 retryable workspace discovery failures remain pending", async () => {
+  await withStore(async (path) => {
+    const store = new DurableStore(path);
+    const adapter = new FakeAgentAdapter([{ statuses: ["succeeded"], result: { status: "succeeded", output: "done" } }]);
+    let authorizations = 0;
+    const authorizer = {
+      authorize: async (workspaceId: string): Promise<WorkspaceGrant> => {
+        authorizations += 1;
+        if (authorizations === 2) throw new SecurityError("WORKSPACE_UNAVAILABLE", "Inventory is temporarily unavailable", true);
+        return { workspaceId, projectId: "project-1", canonicalPath: "/base/project/worktrees/per-345", revalidate: async () => undefined };
+      },
+    };
+    const service = new LaunchService(store, adapter, authorizer);
+    const accepted = await service.accept(launchRequest());
+
+    await assert.rejects(service.dispatchPending(), /temporarily unavailable/);
+    assert.equal((await store.assignmentForResult(accepted.assignmentId)).status, "accepted");
+    assert.equal(adapter.launches.length, 0);
+
+    await service.dispatchPending();
+    assert.equal((await store.assignmentForResult(accepted.assignmentId)).status, "launched");
+    assert.equal(adapter.launches.length, 1);
+  });
+});
+
 test("T-TOOLS-01 the registered surface excludes destructive and generic capabilities", () => {
   assert.deepEqual([...REGISTERED_TOOL_NAMES], [
     "batches_create", "batches_get", "batches_status", "batches_results",
