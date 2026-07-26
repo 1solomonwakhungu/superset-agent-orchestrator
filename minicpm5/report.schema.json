@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/1solomonwakhungu/superset-agent-orchestrator/minicpm5/report.schema.json",
+  "title": "MiniCPM5 deterministic baseline report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "provenance", "results", "result_fingerprint"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["checkpoint_sha", "environment_fingerprint", "corpus_hash", "harness_commit", "decode_config"],
+      "properties": {
+        "checkpoint_sha": { "type": "string", "minLength": 1 },
+        "environment_fingerprint": { "type": "string", "minLength": 1 },
+        "corpus_hash": { "type": "string", "minLength": 1 },
+        "harness_commit": { "type": "string", "minLength": 1 },
+        "decode_config": { "type": "object" }
+      }
+    },
+    "results": { "type": "object" },
+    "result_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}
