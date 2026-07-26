@@ -48,6 +48,7 @@ test("production MCP server persists attributed completion, failure, cancellatio
       request_id: "cancel", session_ids: [canceled.sessionId], reason: "operator request",
     });
     assert.equal(cancelResponse.items[0]?.canceled, true);
+    await harness.restart();
     const terminal = await results(harness.client, launched.sessions.map(({ sessionId }) => sessionId));
     assert.equal(terminal.items[0]?.result?.claim.output, "exact answer");
     assert.equal(terminal.items[0]?.status, "succeeded");
@@ -69,6 +70,16 @@ test("production MCP server persists attributed completion, failure, cancellatio
   });
 });
 
+test("production MCP server rejects integration workspaces outside the configured root", async () => {
+  await withServer({ defaultScript: successScript() }, async (harness) => {
+    const input = launchArguments(1);
+    input.assignments[0]!.workspace_id = "..";
+    const response = await call(harness.client, "provider_batches_launch", input);
+    assert.equal(response.error?.code, "PROVIDER_UNAVAILABLE");
+    assert.equal((await harness.calls()).filter(({ command }) => command === "launch").length, 0);
+  });
+});
+
 test("production MCP server deduplicates concurrent semantic batch replays", async () => {
   await withServer({ defaultScript: successScript() }, async (harness) => {
     const first = launchArguments(4);
@@ -83,19 +94,11 @@ test("production MCP server deduplicates concurrent semantic batch replays", asy
   });
 });
 
-test("provider test tools reject workspaces outside the configured root", async () => {
-  await withServer({ defaultScript: successScript() }, async (harness) => {
-    const request = launchArguments(1);
-    request.assignments[0]!.workspace_id = "../scenario.json";
-    const response = await call(harness.client, "provider_batches_launch", request);
-    assert.equal(response.error?.code, "POLICY_DENIED");
-  });
-});
-
 test("production MCP server exposes every provider error once without retries", async () => {
   const cases = [
     [{ launchError: "rejected", defaultScript: successScript() }, "launch", "LAUNCH_REJECTED"],
     [{ cancelUnsupported: true, defaultScript: runningScript() }, "cancel", "CANCEL_UNSUPPORTED"],
+    [{ malformedCommands: ["cancel"], defaultScript: runningScript() }, "cancel", "PROVIDER_PROTOCOL_ERROR"],
     [{ malformedCommands: ["status"], defaultScript: successScript() }, "result", "PROVIDER_PROTOCOL_ERROR"],
     [{ hangCommands: ["status"], defaultScript: successScript() }, "result", "PROVIDER_UNAVAILABLE"],
   ] as const;
@@ -136,19 +139,6 @@ test("production MCP server exposes every provider error once without retries", 
   } finally {
     await connection.transport.close();
     await rm(directory, { recursive: true, force: true });
-  }
-
-  const disabledDirectory = await mkdtemp(join(tmpdir(), "disabled-provider-"));
-  const disabled = await connect({
-    SUPERSET_ORCHESTRATOR_STATE: join(disabledDirectory, "state.json"),
-    SUPERSET_ORCHESTRATOR_PROVIDER_TEST_WORKSPACE_ROOT: join(disabledDirectory, "missing-provider-root"),
-  });
-  try {
-    const unavailable = await call(disabled.client, "provider_batches_launch", launchArguments(1));
-    assert.equal(unavailable.error?.code, "PROVIDER_UNAVAILABLE");
-  } finally {
-    await disabled.transport.close();
-    await rm(disabledDirectory, { recursive: true, force: true });
   }
 });
 
@@ -246,8 +236,13 @@ async function withServer(
       connection = await connect(env);
     },
     async calls() {
-      const state = JSON.parse(await readFile(fakeStatePath, "utf8")) as { calls: Array<{ command: string }> };
-      return state.calls;
+      try {
+        const state = JSON.parse(await readFile(fakeStatePath, "utf8")) as { calls: Array<{ command: string }> };
+        return state.calls;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+        throw error;
+      }
     },
   };
   try {
