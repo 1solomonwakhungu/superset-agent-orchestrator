@@ -11,6 +11,8 @@
 - Verification: focused concurrency suite passed 30/30; `npm run check` passed
   262 runnable TypeScript tests with 1 optional skip, Python 5/5 with 1 skip,
   coverage, schema, provenance, and research gates; `git diff --check` passed.
+- The current-main integrated tree passed Quality, bounded load, MiniCPM5, all
+  four macOS/Linux Node 22/24 lanes, and the generated compatibility report.
 
 ## PER-342 cancellation, timeouts, and bounded wait
 
