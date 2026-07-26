@@ -101,6 +101,7 @@ export interface Assignment {
   updatedAt: string;
   runId?: string;
   error?: string;
+  errorCode?: string;
 }
 
 export interface AgentResultClaim {
@@ -139,6 +140,7 @@ export interface LaunchAuditEvent {
   occurredAt: string;
   runId?: string;
   error?: string;
+  errorCode?: string;
 }
 
 export interface LaunchIntent {
@@ -209,6 +211,7 @@ const assignmentSchema = z.object({
   prompt: z.string().min(1), workspaceId: z.string().min(1).optional(), workspacePath: z.string().min(1),
   attemptId: z.string().min(1).optional(), attempt: z.number().int().positive().optional(), acceptedAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(), runId: z.string().min(1).optional(), error: z.string().min(1).optional(),
+  errorCode: z.string().min(1).optional(),
 });
 const resultClaimSchema = z.object({
   status: z.enum(["succeeded", "failed", "cancelled", "stopped_without_result", "malformed"]),
@@ -228,6 +231,7 @@ const auditEventSchema = z.object({
   id: z.string().min(1), assignmentId: z.string().min(1),
   type: z.enum(["launch_accepted", "launch_reserved", "execution_started", "launch_failed"]),
   occurredAt: z.iso.datetime(), runId: z.string().min(1).optional(), error: z.string().min(1).optional(),
+  errorCode: z.string().min(1).optional(),
 });
 const launchIntentSchema = z.object({
   idempotencyKey: z.string().min(1), requestHash: z.string().regex(/^[a-f0-9]{64}$/),
@@ -597,6 +601,7 @@ export class DurableStore {
       assignment.updatedAt = event.occurredAt;
       if (event.runId !== undefined) assignment.runId = event.runId;
       if (event.error !== undefined) assignment.error = event.error;
+      if (event.errorCode !== undefined) assignment.errorCode = event.errorCode;
       if (!this.state.auditEvents.some(({ id }) => id === event.id)) this.state.auditEvents.push(event);
       await this.persist();
       return structuredClone(assignment);

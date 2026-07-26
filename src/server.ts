@@ -51,6 +51,7 @@ async function main(): Promise<void> {
   const capture = provider === undefined ? undefined : new ResultCaptureService(store, provider);
   if (launches !== undefined) await launches.dispatchPending();
 
+  const integrationToolsEnabled = process.env.SUPERSET_ORCHESTRATOR_ENABLE_PROVIDER_TEST_TOOLS === "1";
   const integrationAssignment = z.object({
     label: z.string().min(1), prompt: z.string().min(1), workspace_id: z.string().min(1),
     agent_preset_id: z.string().min(1), idempotency_key: z.string().min(1),
@@ -60,15 +61,17 @@ async function main(): Promise<void> {
     {
       description: "Durably launch one real batch through the configured Superset provider",
       inputSchema: {
-        request_id: z.string().min(1), name: z.string().min(1), idempotency_key: z.string().min(1),
+        request_id: z.string().min(1), client_id: z.string().min(1), name: z.string().min(1),
+        idempotency_key: z.string().min(1),
         assignments: z.array(integrationAssignment).min(1).max(100),
       },
     },
-    async ({ request_id, name, idempotency_key, assignments }) => {
+    async ({ request_id, client_id, name, idempotency_key, assignments }) => {
+      if (!integrationToolsEnabled) return providerError(request_id, "PROVIDER_UNAVAILABLE", "Provider test tools are disabled");
       if (launches === undefined) return providerError(request_id, "PROVIDER_UNAVAILABLE", "No Superset provider is configured");
       try {
         const accepted = await launches.acceptBatch({
-          idempotencyKey: idempotency_key, clientId: request_id, batchName: name,
+          idempotencyKey: idempotency_key, clientId: client_id, batchName: name,
           assignments: assignments.map((assignment) => ({
             idempotencyKey: assignment.idempotency_key,
             attribution: { agent: assignment.agent_preset_id, task: assignment.label },
@@ -90,6 +93,7 @@ async function main(): Promise<void> {
       inputSchema: { request_id: z.string().min(1), session_ids: z.array(z.string().min(1)).min(1).max(100) },
     },
     async ({ request_id, session_ids }) => {
+      if (!integrationToolsEnabled) return providerError(request_id, "PROVIDER_UNAVAILABLE", "Provider test tools are disabled");
       if (capture === undefined) return providerError(request_id, "PROVIDER_UNAVAILABLE", "No Superset provider is configured");
       const assignments = await store.assignmentsForSessions(session_ids);
       const items = [];
@@ -116,7 +120,9 @@ async function main(): Promise<void> {
           status: assignment.status, attribution: assignment.attribution,
           workspace_id: assignment.workspaceId, run_id: assignment.runId,
           ...(captured === undefined ? {} : { result: captured }),
-          ...(assignment.error === undefined ? {} : { error: { code: "LAUNCH_REJECTED", message: assignment.error } }),
+          ...(assignment.error === undefined ? {} : {
+            error: { code: assignment.errorCode ?? "INTERNAL_ERROR", message: assignment.error },
+          }),
         });
       }
       return result({ request_id, items });
@@ -132,6 +138,7 @@ async function main(): Promise<void> {
       },
     },
     async ({ request_id, session_ids, reason }) => {
+      if (!integrationToolsEnabled) return providerError(request_id, "PROVIDER_UNAVAILABLE", "Provider test tools are disabled");
       if (provider === undefined) return providerError(request_id, "PROVIDER_UNAVAILABLE", "No Superset provider is configured");
       const assignments = await store.assignmentsForSessions(session_ids);
       const captured = await store.resultsForSessions(session_ids);
@@ -150,6 +157,14 @@ async function main(): Promise<void> {
           continue;
         }
         try {
+          const state = await provider.status({ runId: assignment.runId });
+          if (state.status !== "queued" && state.status !== "running") {
+            items.push({
+              session_id: sessionId,
+              error: { code: "INVALID_TRANSITION", message: "A terminal session cannot be canceled" },
+            });
+            continue;
+          }
           await provider.cancel({ runId: assignment.runId }, reason);
           items.push({ session_id: sessionId, canceled: true });
         } catch (error) {

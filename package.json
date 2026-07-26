@@ -20,7 +20,9 @@
     "schema": "npm run build && node scripts/generate-tool-schema.mjs",
     "compatibility:probe": "node scripts/probe-compatibility.mjs",
     "start": "node dist/src/server.js",
+    "pretest": "npm run build",
     "test": "tsx --test test/**/*.test.ts test/**/*.test.mjs",
+    "test:real-superset": "SUPERSET_ORCHESTRATOR_REAL_SMOKE=1 tsx --test test/superset-discovery.smoke.test.ts",
     "verify": "npm run build && npm test",
     "check": "tsc -p tsconfig.json --noEmit"
   },
