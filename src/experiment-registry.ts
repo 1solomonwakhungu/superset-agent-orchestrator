@@ -199,6 +199,7 @@ export class ExperimentRegistry {
 
   async query(query: ExperimentQuery = {}): Promise<ExperimentRecord[]> {
     return this.withLock(async () => {
+      await this.readBaselines();
       const records = await this.readUnlocked();
       return records
         .filter((record) =>
