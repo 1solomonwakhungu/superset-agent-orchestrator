@@ -162,14 +162,13 @@ test("retries transient background dispatch failure without another launch reque
     const service = new LaunchService(store, adapter, () => new Date(), () => undefined, 5);
     const accepted = await service.launch(request);
 
-    // Wait for the durable effect rather than the adapter call alone. Dispatch
-    // records the launch after the adapter returns, so leaving this block on the
-    // adapter signal would race the temporary directory cleanup.
-    for (let attempt = 0; attempt < 200; attempt += 1) {
-      if ((await store.assignmentForResult(accepted.assignmentId)).status === "launched") break;
+    let launched = false;
+    for (let attempt = 0; attempt < 100 && !launched; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 10));
+      const state = JSON.parse(await readFile(path, "utf8")) as DurableState;
+      launched = state.assignments[0]?.status === "launched";
     }
-    assert.equal((await store.assignmentForResult(accepted.assignmentId)).status, "launched");
+    assert.equal(launched, true);
     assert.equal(adapter.launches.length, 1);
     assert.ok(attempts >= 2);
   });
