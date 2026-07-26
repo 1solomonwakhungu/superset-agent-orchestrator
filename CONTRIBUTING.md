@@ -13,3 +13,12 @@ Before requesting review:
 Keep changes scoped, add tests for changed behavior, and do not include secrets,
 private infrastructure details, generated runtime state, or release/versioning
 changes unless the pull request explicitly owns them.
+
+Update `docs/public-readiness.md` when a change affects contracts, tools,
+capabilities, configuration, limitations, or requirement-to-test evidence. Fake
+and provider-fixture tests do not prove a capability exists in Superset. Core
+behavior must remain client-independent and must not depend on Hermes.
+
+Use exact-head pull request checks as review evidence. Do not add tags, publish a
+package, introduce a changelog policy, or change release versions unless a
+separate task explicitly owns release management.

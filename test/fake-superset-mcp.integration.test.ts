@@ -83,6 +83,15 @@ test("production MCP server deduplicates concurrent semantic batch replays", asy
   });
 });
 
+test("provider test tools reject workspaces outside the configured root", async () => {
+  await withServer({ defaultScript: successScript() }, async (harness) => {
+    const request = launchArguments(1);
+    request.assignments[0]!.workspace_id = "../scenario.json";
+    const response = await call(harness.client, "provider_batches_launch", request);
+    assert.equal(response.error?.code, "POLICY_DENIED");
+  });
+});
+
 test("production MCP server exposes every provider error once without retries", async () => {
   const cases = [
     [{ launchError: "rejected", defaultScript: successScript() }, "launch", "LAUNCH_REJECTED"],
