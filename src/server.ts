@@ -125,7 +125,7 @@ async function main(): Promise<void> {
     : new SupersetDiscoveryAdapter({ executable: providerExecutable, args: providerArgs });
   const integrationToolsEnabled = process.env.SUPERSET_ORCHESTRATOR_ENABLE_PROVIDER_TEST_TOOLS === "1";
   const integrationWorkspaceRoot = process.env.SUPERSET_ORCHESTRATOR_PROVIDER_TEST_WORKSPACE_ROOT;
-  const canonicalIntegrationWorkspaceRoot = integrationWorkspaceRoot === undefined
+  const canonicalIntegrationWorkspaceRoot = !integrationToolsEnabled || integrationWorkspaceRoot === undefined
     ? undefined
     : await realpath(integrationWorkspaceRoot);
   const workspaceAuthorizer: WorkspaceAuthorizer | undefined = integrationToolsEnabled && integrationWorkspaceRoot !== undefined

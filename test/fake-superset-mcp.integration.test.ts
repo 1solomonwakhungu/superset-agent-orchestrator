@@ -137,6 +137,17 @@ test("production MCP server exposes every provider error once without retries", 
     await connection.transport.close();
     await rm(directory, { recursive: true, force: true });
   }
+
+  const disabled = await connect({
+    SUPERSET_ORCHESTRATOR_STATE: join(tmpdir(), `disabled-provider-${Date.now()}.json`),
+    SUPERSET_ORCHESTRATOR_PROVIDER_TEST_WORKSPACE_ROOT: join(tmpdir(), "missing-provider-root"),
+  });
+  try {
+    const unavailable = await call(disabled.client, "provider_batches_launch", launchArguments(1));
+    assert.equal(unavailable.error?.code, "PROVIDER_UNAVAILABLE");
+  } finally {
+    await disabled.transport.close();
+  }
 });
 
 test("production MCP server launches one deterministic 100-session batch", async () => {
