@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   LeaseFencedError,
   LeaseRecoveryAmbiguousError,
+  LeaseStateCorruptError,
   OrchestratorStorage,
   WorkspaceWriterBusyError,
   type LeaseAuthority,
@@ -241,6 +242,9 @@ test("recovery mutations reject a stale observed lease snapshot", async () => {
     const observedQuarantined = storage.workspaceLeaseById(lease.leaseId)!;
     storage.repairQuarantinedWriterLease(observedQuarantined,
       { ownerProcessAbsent: true }, "operator-a", after(3_000));
+    const observedReleased = storage.workspaceLeaseById(lease.leaseId)!;
+    assert.throws(() => storage.quarantineWriterLease(observedReleased,
+      "must not resurrect retired authority", "reconciler-c", after(3_000)), LeaseStateCorruptError);
     assert.throws(() => storage.repairQuarantinedWriterLease(observedQuarantined,
       { ownerProcessAbsent: true }, "operator-b", after(3_000)), LeaseFencedError);
 
