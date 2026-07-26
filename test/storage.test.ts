@@ -136,6 +136,7 @@ test("cleanup redacts payloads but preserves attribution and immutable history",
       assert.equal(storage.database.prepare("SELECT prompt FROM assignments").get()?.prompt, null);
       assert.equal(storage.database.prepare("SELECT body FROM results").get()?.body, null);
       assert.equal(storage.database.prepare("SELECT requester FROM batches").get()?.requester, "solomon");
+      assert.equal(storage.database.prepare("SELECT id FROM workspace_leases").get()?.id, "lease-1");
       assert.deepEqual(storage.database.prepare("SELECT event_type FROM events ORDER BY sequence").all()
         .map((row) => (row as { event_type: string }).event_type), ["session.completed", "retention.cleanup_completed"]);
     } finally { storage.close(); }
