@@ -47,6 +47,7 @@ export interface LaunchAcceptance {
 export class LaunchService {
   private dispatchTimer: NodeJS.Timeout | undefined;
   private dispatching: Promise<void> | undefined;
+  private closed = false;
 
   constructor(
     private readonly store: DurableStore,
@@ -115,18 +116,40 @@ export class LaunchService {
     const accepted = await this.store.acceptLaunch({
       assignment, session, batch,
       event: event(assignmentId, "launch_accepted", acceptedAt),
+      securityAudit: this.auditInput(request, "allowed", "launch_accepted", assignmentId, grant.projectId),
     });
-    await this.audit(request, "allowed", "launch_accepted", assignmentId, grant.projectId);
     this.injectCrash("after_acceptance");
     return acceptance(accepted.assignment);
   }
 
+  /** Stops scheduled work and waits for an in-flight background dispatch. */
+  async close(): Promise<void> {
+    this.closed = true;
+    if (this.dispatchTimer !== undefined) {
+      clearTimeout(this.dispatchTimer);
+      this.dispatchTimer = undefined;
+    }
+    await this.dispatching?.catch(() => undefined);
+    if (this.dispatchTimer !== undefined) {
+      clearTimeout(this.dispatchTimer);
+      this.dispatchTimer = undefined;
+    }
+  }
+
   async dispatchPending(): Promise<void> {
-    for (const assignment of await this.store.pendingAssignments()) await this.dispatch(assignment);
+    let retryableFailure: unknown;
+    for (const assignment of await this.store.pendingAssignments()) {
+      try {
+        await this.dispatch(assignment);
+      } catch (error) {
+        retryableFailure = error;
+      }
+    }
+    if (retryableFailure !== undefined) throw retryableFailure;
   }
 
   private scheduleDispatch(delayMs: number): void {
-    if (this.dispatchTimer !== undefined || this.dispatching !== undefined) return;
+    if (this.closed || this.dispatchTimer !== undefined || this.dispatching !== undefined) return;
     this.dispatchTimer = setTimeout(() => {
       this.dispatchTimer = undefined;
       this.dispatching = this.dispatchPending();
@@ -135,7 +158,7 @@ export class LaunchService {
           () => { this.dispatching = undefined; },
           () => {
             this.dispatching = undefined;
-            this.scheduleDispatch(this.retryDelayMs);
+            if (!this.closed) this.scheduleDispatch(this.retryDelayMs);
           },
         );
     }, delayMs);
@@ -195,6 +218,7 @@ export class LaunchService {
       assignment.id,
       "launched",
       event(assignment.id, "execution_started", launchedAt, { runId: handle.runId }),
+      this.auditAssignmentInput(assignment, "allowed", "launch_started", grant.projectId),
     );
     this.injectCrash("after_launch_recorded");
   }
@@ -206,13 +230,23 @@ export class LaunchService {
     assignmentId?: string,
     projectId?: string,
   ): Promise<unknown> {
-    return this.store.appendSecurityAudit({
+    return this.store.appendSecurityAudit(this.auditInput(request, decision, reason, assignmentId, projectId));
+  }
+
+  private auditInput(
+    request: AsynchronousLaunchRequest,
+    decision: "allowed" | "denied" | "failed",
+    reason: string,
+    assignmentId?: string,
+    projectId?: string,
+  ) {
+    return {
       requesterId: request.clientId || "invalid-requester", operation: "sessions_launch", decision,
       reasonCode: reason, correlationId: request.idempotencyKey || "invalid-correlation",
       ...(request.workspaceId ? { workspaceId: request.workspaceId } : {}),
       ...(projectId === undefined ? {} : { projectId }),
       ...(assignmentId === undefined ? {} : { assignmentId }),
-    });
+    };
   }
 
   private auditAssignment(
@@ -221,12 +255,21 @@ export class LaunchService {
     reason: string,
     projectId?: string,
   ): Promise<unknown> {
-    return this.store.appendSecurityAudit({
+    return this.store.appendSecurityAudit(this.auditAssignmentInput(assignment, decision, reason, projectId));
+  }
+
+  private auditAssignmentInput(
+    assignment: Assignment,
+    decision: "allowed" | "denied" | "failed",
+    reason: string,
+    projectId?: string,
+  ) {
+    return {
       requesterId: assignment.sessionId, operation: "sessions_launch", decision,
       reasonCode: reason, correlationId: assignment.idempotencyKey, assignmentId: assignment.id,
       ...(assignment.workspaceId === undefined ? {} : { workspaceId: assignment.workspaceId }),
       ...(projectId === undefined ? {} : { projectId }),
-    });
+    };
   }
 }
 

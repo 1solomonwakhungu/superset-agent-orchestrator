@@ -254,3 +254,11 @@ locally.
   Markdown lint, Python bytecode compilation, and `git diff --check` passed. The
   merged PER-258 Python suite passed 2/3 under Apple system Python; its TLS
   recovery fixture fails because LibreSSL ignores the subprocess `SSL_CERT_FILE`.
+- Final review hardening made launch acceptance and successful outcomes atomic
+  with their hash-chained security audit records, rejects a removed audit trail,
+  bounds result claims and live discovery output to 4 MiB, isolates retryable
+  workspace failures per assignment, and adds deterministic background shutdown.
+- Final verification: `npm run verify` passed 129 tests with 1 opt-in smoke
+  skip; the 56-test security/launch/discovery focus passed 20 consecutive runs
+  (1,120/1,120); check, schema, routing contract, security Markdown lint, Python
+  bytecode compilation, and `git diff --check` passed.

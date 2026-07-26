@@ -14,6 +14,7 @@ import {
   assertPinnedExecutable,
   auditField,
   childEnvironment,
+  MAX_RESULT_BYTES,
   redactText,
   redactValue,
   RegisteredWorkspaceAuthorizer,
@@ -232,6 +233,26 @@ test("T-CMD-02 only a pinned executable and a control-free argument vector can s
     ["workspaces", "list", "--local", "--json"]);
 });
 
+test("T-CMD-02 discovery output is bounded while the child is running", async () => {
+  await assert.rejects(
+    runProcess(
+      process.execPath,
+      ["-e", `process.stdout.write("x".repeat(${4 * 1024 * 1024 + 1}))`],
+      20_000,
+    ),
+    /output exceeded the supported limit/,
+  );
+});
+
+test("T-CMD-02 discovery preserves UTF-8 split across child writes", async () => {
+  const result = await runProcess(
+    process.execPath,
+    ["-e", "process.stdout.write(Buffer.from([0xe2])); setTimeout(() => process.stdout.write(Buffer.from([0x82, 0xac])), 10)"],
+    20_000,
+  );
+  assert.equal(result.stdout, "€");
+});
+
 test("T-CMD-03 bounded text and data operands reject injected payloads", () => {
   assert.throws(() => assertBoundedText("", "prompt"), SecurityError);
   assert.throws(() => assertBoundedText("prompt\u0000", "prompt"), SecurityError);
@@ -372,9 +393,10 @@ test("T-AUDIT-01 allowed and denied launches produce a chained attributable trai
     assert.deepEqual(events.map(({ decision, reasonCode }) => `${decision}:${reasonCode}`), [
       "allowed:launch_accepted",
       "allowed:launch_intent",
+      "allowed:launch_started",
       "denied:INVALID_ARGUMENT",
     ]);
-    assert.deepEqual(events.map(({ sequence }) => sequence), [1, 2, 3]);
+    assert.deepEqual(events.map(({ sequence }) => sequence), [1, 2, 3, 4]);
     for (const event of events) {
       assert.equal(event.policyVersion, SECURITY_POLICY_VERSION);
       assert.equal(event.operation, "sessions_launch");
@@ -382,11 +404,31 @@ test("T-AUDIT-01 allowed and denied launches produce a chained attributable trai
       assert.match(event.occurredAt, /^\d{4}-\d{2}-\d{2}T/);
     }
     assert.equal(events[0]?.projectId, "project-1");
-    assert.deepEqual(store.verifySecurityAuditChain(), { valid: true, length: 3 });
+    assert.deepEqual(store.verifySecurityAuditChain(), { valid: true, length: 4 });
 
     const reopened = new DurableStore(path);
     await reopened.reconcile();
-    assert.deepEqual(reopened.verifySecurityAuditChain(), { valid: true, length: 3 });
+    assert.deepEqual(reopened.verifySecurityAuditChain(), { valid: true, length: 4 });
+  });
+});
+
+test("T-RESULT-01 rejects oversized adapter output before persistence", async () => {
+  await withStore(async (path) => {
+    const store = new DurableStore(path);
+    const adapter = new FakeAgentAdapter([{
+      statuses: ["succeeded"],
+      result: { status: "succeeded", output: "x".repeat(MAX_RESULT_BYTES + 1) },
+    }]);
+    const service = new LaunchService(store, adapter, allowingAuthorizer());
+    const accepted = await service.accept(launchRequest());
+    await service.dispatchPending();
+    const { ResultCaptureService } = await import("../src/result-capture.js");
+
+    await assert.rejects(
+      new ResultCaptureService(store, adapter).collect(accepted.assignmentId, "delivery-oversized"),
+      /result output exceeds/,
+    );
+    assert.doesNotMatch(await readFile(path, "utf8"), /delivery-oversized/);
   });
 });
 
@@ -437,6 +479,24 @@ test("T-AUDIT-02 loading fails closed when the audit suffix is truncated", async
   });
 });
 
+test("T-AUDIT-02 loading fails closed when a controlled launch loses its entire audit trail", async () => {
+  await withStore(async (path) => {
+    const store = new DurableStore(path);
+    const service = new LaunchService(
+      store,
+      new FakeAgentAdapter([{ statuses: ["succeeded"], result: { status: "succeeded", output: "done" } }]),
+      allowingAuthorizer(),
+    );
+    await service.accept(launchRequest());
+    const tampered = JSON.parse(await readFile(path, "utf8")) as DurableState;
+    delete tampered.securityAuditEvents;
+    tampered.securityAuditHead = { sequence: 0, eventHash: "0".repeat(64) };
+    await writeFile(path, JSON.stringify(tampered), "utf8");
+
+    await assert.rejects(new DurableStore(path).reconcile(), /requires an acceptance audit event/);
+  });
+});
+
 test("T-ENV-01 launch adapters receive only allowlisted environment and final revalidation", async () => {
   await withStore(async (path) => {
     const store = new DurableStore(path);
@@ -484,6 +544,33 @@ test("T-PATH-02 retryable workspace discovery failures remain pending", async ()
 
     await service.dispatchPending();
     assert.equal((await store.assignmentForResult(accepted.assignmentId)).status, "launched");
+    assert.equal(adapter.launches.length, 1);
+  });
+});
+
+test("T-PATH-02 one retryable workspace failure does not starve other assignments", async () => {
+  await withStore(async (path) => {
+    const store = new DurableStore(path);
+    const adapter = new FakeAgentAdapter([{ statuses: ["succeeded"], result: { status: "succeeded", output: "done" } }]);
+    const authorizer = {
+      authorize: async (workspaceId: string): Promise<WorkspaceGrant> => {
+        if (workspaceId === "workspace-blocked") {
+          throw new SecurityError("WORKSPACE_UNAVAILABLE", "Inventory is temporarily unavailable", true);
+        }
+        return { workspaceId, projectId: "project-1", canonicalPath: "/base/project/worktrees/per-345", revalidate: async () => undefined };
+      },
+    };
+    const service = new LaunchService(store, adapter, authorizer);
+    const blocked = await service.accept(launchRequest({ idempotencyKey: "blocked", workspaceId: "workspace-1" }));
+    const ready = await service.accept(launchRequest({ idempotencyKey: "ready", workspaceId: "workspace-ready" }));
+    const originalAuthorize = authorizer.authorize;
+    authorizer.authorize = async (workspaceId: string) => workspaceId === "workspace-1"
+      ? originalAuthorize("workspace-blocked")
+      : originalAuthorize(workspaceId);
+
+    await assert.rejects(service.dispatchPending(), /temporarily unavailable/);
+    assert.equal((await store.assignmentForResult(blocked.assignmentId)).status, "accepted");
+    assert.equal((await store.assignmentForResult(ready.assignmentId)).status, "launched");
     assert.equal(adapter.launches.length, 1);
   });
 });

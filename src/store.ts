@@ -324,6 +324,12 @@ const stateSchema = z.object({
     deliveries.add(result.deliveryId);
     attempts.add(result.attemptId);
   }
+  for (const assignment of state.assignments.filter(({ workspaceId }) => workspaceId !== undefined)) {
+    if (!state.securityAuditEvents.some((event) => event.assignmentId === assignment.id
+      && event.reasonCode === "launch_accepted" && event.decision === "allowed")) {
+      context.addIssue({ code: "custom", message: `Security-controlled assignment ${assignment.id} requires an acceptance audit event` });
+    }
+  }
 });
 
 const EMPTY_STATE: DurableState = {
@@ -399,8 +405,10 @@ export class DurableStore {
         this.rebuildIndexes();
         await this.persist();
       } catch (error) {
-        this.state = previousState;
-        this.rebuildIndexes();
+        await this.load().catch(() => {
+          this.state = previousState;
+          this.rebuildIndexes();
+        });
         throw error;
       }
       return { batch: structuredClone(batch), sessions: structuredClone(workers), duplicate: false };
@@ -571,6 +579,7 @@ export class DurableStore {
     session: Session;
     batch: Batch;
     event: LaunchAuditEvent;
+    securityAudit: SecurityAuditInput;
   }): Promise<{ assignment: Assignment; created: boolean }> {
     return this.withLock(async () => {
       await this.load();
@@ -585,11 +594,21 @@ export class DurableStore {
         }
         return { assignment: structuredClone(existing), created: false };
       }
-      this.state.sessions.push(input.session);
-      this.state.batches.push(input.batch);
-      this.state.assignments.push(input.assignment);
-      this.state.auditEvents.push(input.event);
-      await this.persist();
+      const previousState = structuredClone(this.state);
+      try {
+        this.state.sessions.push(input.session);
+        this.state.batches.push(input.batch);
+        this.state.assignments.push(input.assignment);
+        this.state.auditEvents.push(input.event);
+        this.appendSecurityAuditToState(input.securityAudit, new Date(input.event.occurredAt));
+        await this.persist();
+      } catch (error) {
+        await this.load().catch(() => {
+          this.state = previousState;
+          this.rebuildIndexes();
+        });
+        throw error;
+      }
       return { assignment: structuredClone(input.assignment), created: true };
     });
   }
@@ -604,28 +623,7 @@ export class DurableStore {
   async appendSecurityAudit(input: SecurityAuditInput, now = new Date()): Promise<SecurityAuditEvent> {
     return this.withLock(async () => {
       await this.load();
-      const audit = this.state.securityAuditEvents ??= [];
-      this.assertSecurityAuditChain();
-      const previous = audit.at(-1);
-      const body = {
-        id: randomUUID(),
-        sequence: (previous?.sequence ?? 0) + 1,
-        occurredAt: now.toISOString(),
-        requesterId: auditField(input.requesterId),
-        operation: auditField(input.operation),
-        decision: input.decision,
-        reasonCode: auditField(input.reasonCode),
-        correlationId: auditField(input.correlationId),
-        policyVersion: SECURITY_POLICY_VERSION,
-        ...(input.workspaceId === undefined ? {} : { workspaceId: auditField(input.workspaceId) }),
-        ...(input.projectId === undefined ? {} : { projectId: auditField(input.projectId) }),
-        ...(input.assignmentId === undefined ? {} : { assignmentId: auditField(input.assignmentId) }),
-        previousEventHash: previous?.eventHash ?? GENESIS_AUDIT_HASH,
-      };
-      const event: SecurityAuditEvent = { ...body, eventHash: securityAuditEventHash(body) };
-      securityAuditEventSchema.parse(event);
-      audit.push(event);
-      this.state.securityAuditHead = { sequence: event.sequence, eventHash: event.eventHash };
+      const event = this.appendSecurityAuditToState(input, now);
       await this.persist();
       return structuredClone(event);
     });
@@ -672,20 +670,55 @@ export class DurableStore {
     assignmentId: string,
     status: Extract<AssignmentLaunchStatus, "launching" | "launched" | "failed">,
     event: LaunchAuditEvent,
+    securityAudit?: SecurityAuditInput,
   ): Promise<Assignment> {
     return this.withLock(async () => {
       await this.load();
       const assignment = this.state.assignments.find(({ id }) => id === assignmentId);
       if (assignment === undefined) throw new Error(`Unknown assignment: ${assignmentId}`);
       if (assignment.status === "launched" || assignment.status === "failed") return structuredClone(assignment);
-      assignment.status = status;
-      assignment.updatedAt = event.occurredAt;
-      if (event.runId !== undefined) assignment.runId = event.runId;
-      if (event.error !== undefined) assignment.error = event.error;
-      if (!this.state.auditEvents.some(({ id }) => id === event.id)) this.state.auditEvents.push(event);
-      await this.persist();
+      const previousState = structuredClone(this.state);
+      try {
+        assignment.status = status;
+        assignment.updatedAt = event.occurredAt;
+        if (event.runId !== undefined) assignment.runId = event.runId;
+        if (event.error !== undefined) assignment.error = event.error;
+        if (!this.state.auditEvents.some(({ id }) => id === event.id)) this.state.auditEvents.push(event);
+        if (securityAudit !== undefined) this.appendSecurityAuditToState(securityAudit, new Date(event.occurredAt));
+        await this.persist();
+      } catch (error) {
+        this.state = previousState;
+        this.rebuildIndexes();
+        throw error;
+      }
       return structuredClone(assignment);
     });
+  }
+
+  private appendSecurityAuditToState(input: SecurityAuditInput, now: Date): SecurityAuditEvent {
+    const audit = this.state.securityAuditEvents ??= [];
+    this.assertSecurityAuditChain();
+    const previous = audit.at(-1);
+    const body = {
+      id: randomUUID(),
+      sequence: (previous?.sequence ?? 0) + 1,
+      occurredAt: now.toISOString(),
+      requesterId: auditField(input.requesterId),
+      operation: auditField(input.operation),
+      decision: input.decision,
+      reasonCode: auditField(input.reasonCode),
+      correlationId: auditField(input.correlationId),
+      policyVersion: SECURITY_POLICY_VERSION,
+      ...(input.workspaceId === undefined ? {} : { workspaceId: auditField(input.workspaceId) }),
+      ...(input.projectId === undefined ? {} : { projectId: auditField(input.projectId) }),
+      ...(input.assignmentId === undefined ? {} : { assignmentId: auditField(input.assignmentId) }),
+      previousEventHash: previous?.eventHash ?? GENESIS_AUDIT_HASH,
+    };
+    const event: SecurityAuditEvent = { ...body, eventHash: securityAuditEventHash(body) };
+    securityAuditEventSchema.parse(event);
+    audit.push(event);
+    this.state.securityAuditHead = { sequence: event.sequence, eventHash: event.eventHash };
+    return event;
   }
 
   async assignmentForResult(assignmentId: string): Promise<Assignment> {

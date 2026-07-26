@@ -178,8 +178,26 @@ test("retries transient background dispatch failure without another launch reque
     for (let attempt = 0; attempt < 100 && adapter.launches.length === 0; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
+    await service.close();
     assert.equal(adapter.launches.length, 1);
     assert.ok(attempts >= 2);
+  });
+});
+
+test("closing during a failed background dispatch cancels its retry", async () => {
+  await withStore(async (path) => {
+    const store = new DurableStore(path);
+    let attempts = 0;
+    store.pendingAssignments = async () => {
+      attempts += 1;
+      throw new Error("persistent storage error");
+    };
+    const service = new LaunchService(store, new FakeAgentAdapter([script]), authorizer, () => new Date(), () => undefined, 5);
+    await service.launch({ ...request, idempotencyKey: "close-failed-dispatch" });
+    while (attempts === 0) await new Promise((resolve) => setTimeout(resolve, 1));
+    await service.close();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(attempts, 1);
   });
 });
 
