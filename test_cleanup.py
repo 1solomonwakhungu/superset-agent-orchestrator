@@ -41,6 +41,21 @@ class CleanupTests(unittest.TestCase):
 
             self.assertEqual(list(cleanup.children_older_than(root, cleanup.DAY, now)), [root / "stale"])
 
+    def test_children_older_than_preserves_tree_with_fresh_descendant(self) -> None:
+        with self.temporary_directory() as directory:
+            root = Path(directory)
+            old_tree = root / "old-tree"
+            old_tree.mkdir()
+            fresh = old_tree / "fresh"
+            fresh.write_text("keep")
+            now = time.time()
+            os.utime(old_tree, (now - 2 * cleanup.DAY, now - 2 * cleanup.DAY))
+
+            self.assertEqual(list(cleanup.children_older_than(root, cleanup.DAY, now)), [])
+            report = cleanup.Report(dry_run=False)
+            cleanup.clean_children(root, cleanup.DAY, now, report)
+            self.assertTrue(fresh.exists())
+
     def test_remove_path_refuses_root_and_outside_paths(self) -> None:
         with self.temporary_directory() as directory:
             root = Path(directory) / "root"
@@ -141,7 +156,7 @@ class CleanupTests(unittest.TestCase):
             source.write_text("new")
             now = time.time()
             os.utime(source, (now - 31 * cleanup.DAY, now - 31 * cleanup.DAY))
-            stamp = dt.datetime.fromtimestamp(now, dt.timezone.utc).strftime("%Y%m%d-%H%M%S")
+            stamp = dt.datetime.fromtimestamp(now, dt.UTC).strftime("%Y%m%d-%H%M%S")
             (trash / "old.txt").write_text("existing")
             (trash / f"old-{stamp}-1.txt").write_text("existing")
             report = cleanup.Report(dry_run=False)
@@ -201,6 +216,24 @@ class CleanupTests(unittest.TestCase):
 
             self.assertIn("manual review", status)
             self.assertEqual(queue.read_text(), "not json")
+
+    def test_queue_status_handles_non_utf8_queue(self) -> None:
+        with self.temporary_directory() as directory:
+            queue = Path(directory) / "queue.json"
+            queue.write_bytes(b"\xff")
+
+            status = cleanup.queue_status(queue, time.time())
+
+            self.assertIn("manual review", status)
+            self.assertEqual(queue.read_bytes(), b"\xff")
+
+    def test_trusted_tmpdir_rejects_untrusted_location(self) -> None:
+        self.assertIsNone(cleanup.trusted_tmpdir(str(Path.home())))
+        self.assertIsNone(cleanup.trusted_tmpdir("/"))
+
+    def test_trusted_tmpdir_accepts_macos_per_user_temp_shape(self) -> None:
+        path = "/private/var/folders/zz/example/T"
+        self.assertEqual(cleanup.trusted_tmpdir(path), Path(path))
 
 
 if __name__ == "__main__":
