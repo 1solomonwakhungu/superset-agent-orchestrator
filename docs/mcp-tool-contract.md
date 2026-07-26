@@ -48,13 +48,13 @@ List pages default to 50 and allow at most 100 items. Cursors are opaque, bind t
 Cancellation is ordered so state is never optimistic. The orchestrator checks provider capability, then persists cancellation intent, then issues the stop command, then records the provider's own terminal observation.
 
 - A backend that does not advertise supported cancellation returns `CANCEL_UNSUPPORTED` and changes no durable state. A backend that advertises support and then rejects the command is rolled back to its pre-cancel state, so a session is never parked in `canceling` on a promise the provider will not keep.
-- A session with no bound execution identity is canceled locally; there is no run to stop and no provider call is made.
-- Repeated and concurrent cancellation is idempotent, preserves the first reason, and issues exactly one stop command. Only the caller that claims the intent transition contacts the provider.
+- A session with no bound execution identity is canceled locally only when launch has not started. If launch is in flight, cancellation remains durable until the exact run identity is bound or launch fails.
+- Repeated and concurrent cancellation preserves one durable intent and the first reason. One active claimant performs each delivery attempt; an unknown delivery may be retried after restart and therefore requires an idempotent provider stop operation.
 - A transport failure during the stop command returns `PROVIDER_UNAVAILABLE` and retains `canceling`, because delivery is genuinely unknown.
 - Terminal state is monotonic. A completion that beat cancellation stays `completed` with stop reason `succeeded_before_cancellation`; a cancellation confirmation that arrives after another terminal outcome is recorded as a late observation and cannot regress state. A late result is retained only when no result was captured with the winning outcome.
 - A canceled or failed session keeps whatever output the run produced, marked `partial`, `empty`, or `missing`. Output presence never changes the terminal state.
 
-Deadlines are orchestrator-owned facts. Expiry is a `failed` outcome with stop reason `deadline_exceeded`; there is no separate timed-out state. The expiry transition is claimed under the durable single-writer lock before the provider is asked to stop, so concurrent sweeps expire and report each session exactly once and a provider failure never blocks expiry. A terminal session is never expired.
+Deadlines are orchestrator-owned facts. Expiry is a `failed` outcome with stop reason `deadline_exceeded`; there is no separate timed-out state. The expiry transition is claimed under the durable single-writer lock before the provider is asked to stop, so concurrent sweeps expire and report each session exactly once and a provider failure never blocks expiry. If expiry wins while launch is in flight, the exact late-bound run identity and stop/reconciliation intent are persisted and resumed after restart without regressing the deadline outcome. A terminal session is never expired and refuses a new deadline.
 
 ## Examples
 

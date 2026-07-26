@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { z } from "zod";
 import type { AgentAdapter } from "./agent-adapter.js";
 import {
   DurableStore,
@@ -137,11 +138,11 @@ export class LaunchService {
     this.injectCrash("before_adapter_launch");
     let handle;
     try {
-      handle = await this.adapter.launch({
+      handle = z.object({ runId: z.string().min(1) }).strict().parse(await this.adapter.launch({
         idempotencyKey: assignment.idempotencyKey,
         prompt: assignment.prompt,
         workspacePath: assignment.workspacePath,
-      });
+      }));
     } catch (error) {
       if (error instanceof InjectedCrash) throw error;
       const message = error instanceof Error ? error.message : String(error);
