@@ -144,7 +144,8 @@ async function main(): Promise<void> {
           }
           const canonicalPath = assertDataOperand(await realpath(resolve(canonicalIntegrationWorkspaceRoot!, workspaceId)), "workspace path");
           const rootRelativePath = relative(canonicalIntegrationWorkspaceRoot!, canonicalPath);
-          if (rootRelativePath === "" || rootRelativePath === ".." || rootRelativePath.startsWith(`..${sep}`) || isAbsolute(rootRelativePath) || !(await stat(canonicalPath)).isDirectory()) {
+          const identity = await stat(canonicalPath);
+          if (rootRelativePath === "" || rootRelativePath === ".." || rootRelativePath.startsWith(`..${sep}`) || isAbsolute(rootRelativePath) || !identity.isDirectory()) {
             throw new SecurityError("POLICY_DENIED", "Integration workspace must be a child of the configured test root");
           }
           return {
@@ -152,7 +153,9 @@ async function main(): Promise<void> {
             revalidate: async () => {
               const revalidatedPath = await realpath(join(canonicalIntegrationWorkspaceRoot!, workspaceId));
               const revalidatedRelativePath = relative(canonicalIntegrationWorkspaceRoot!, revalidatedPath);
-              if (revalidatedPath !== canonicalPath || revalidatedRelativePath === "" || revalidatedRelativePath === ".." || revalidatedRelativePath.startsWith(`..${sep}`) || isAbsolute(revalidatedRelativePath)) {
+              const revalidatedIdentity = await stat(revalidatedPath);
+              if (revalidatedPath !== canonicalPath || revalidatedIdentity.dev !== identity.dev || revalidatedIdentity.ino !== identity.ino
+                || revalidatedRelativePath === "" || revalidatedRelativePath === ".." || revalidatedRelativePath.startsWith(`..${sep}`) || isAbsolute(revalidatedRelativePath)) {
                 throw new Error("Integration workspace identity changed before launch");
               }
             },
