@@ -150,6 +150,28 @@ npx tsx --test test/fake-superset.integration.test.ts
 
 Run `npm run verify` to type-check the complete implementation and execute all
 tests.
+Run `npm run verify` to build, type-check, run the full suite with enforced
+coverage thresholds, and repeat the concurrency-sensitive suites.
+
+## Tests
+
+The required suite is offline and controls timing and randomness where outcomes
+depend on them; the live Superset smoke is explicit opt-in. See
+[`docs/testing-strategy.md`](docs/testing-strategy.md) for the layer map and
+[`docs/flaky-test-policy.md`](docs/flaky-test-policy.md) for how a flake is
+triaged and when quarantine is permitted.
+
+| Command                 | Purpose                                                                                            |
+| ----------------------- | -------------------------------------------------------------------------------------------------- |
+| `npm test`              | Full suite                                                                                         |
+| `npm run test:coverage` | Full suite; critical domain/security set requires aggregate 95% lines, 88% branches, 92% functions |
+| `npm run test:race`     | Repeats the concurrency-sensitive suites (`RACE_REPEATS`, default 10)                              |
+| `npm run check`         | Formatting, lint, typecheck, build, JS/Python tests, coverage, and schema diff                     |
+
+Synthetic provider and durable-state compatibility cases live in
+`test/fixtures/compat/`, with provenance and sanitization metadata in that
+directory's manifest. Changing an expectation there is a contract change.
+
 The real Superset discovery smoke test is intentionally opt-in through
 `npm run test:real-superset`; the default suite is hermetic.
 

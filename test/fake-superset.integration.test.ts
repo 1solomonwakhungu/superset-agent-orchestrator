@@ -72,9 +72,9 @@ test("fake Superset proves completion, failure, cancellation, restart recovery, 
 });
 
 test("fake Superset timeout and malformed output fail deterministically without retries", async () => {
-  for (const [scenario, expectedCode] of [
-    [{ hangCommands: ["status"], defaultScript: successScript() }, "PROVIDER_UNAVAILABLE"],
-    [{ malformedCommands: ["status"], defaultScript: successScript() }, "PROVIDER_PROTOCOL_ERROR"],
+  for (const [scenario, expectedCode, timeoutMs] of [
+    [{ hangCommands: ["status"], defaultScript: successScript() }, "PROVIDER_UNAVAILABLE", 1_000],
+    [{ malformedCommands: ["status"], defaultScript: successScript() }, "PROVIDER_PROTOCOL_ERROR", 10_000],
   ] as const) {
     await withHarness(scenario, async ({ adapter, calls }) => {
       const handle = await adapter.launch(adapterRequest("one", "one", "/tmp/one"));
@@ -83,7 +83,7 @@ test("fake Superset timeout and malformed output fail deterministically without 
         return true;
       });
       assert.equal((await calls()).filter(({ command }) => command === "status").length, 1);
-    }, 1_000);
+    }, timeoutMs);
   }
 });
 
