@@ -1164,7 +1164,8 @@ export class DurableStore {
         || existingEvent.type !== event.type
         || existingEvent.occurredAt !== event.occurredAt
         || existingEvent.runId !== event.runId
-        || existingEvent.error !== event.error)) {
+        || existingEvent.error !== event.error
+        || existingEvent.errorCode !== event.errorCode)) {
         throw new Error(`Launch audit event ID ${JSON.stringify(event.id)} conflicts with existing evidence`);
       }
       const allowed = assignment.status === "accepted" && (status === "launching" || status === "failed")
@@ -1182,6 +1183,7 @@ export class DurableStore {
           worker.runId = event.runId;
         }
         if (event.error !== undefined) assignment.error = this.redaction.text(event.error);
+        if (event.errorCode !== undefined) assignment.errorCode = event.errorCode;
         if (existingEvent === undefined) this.state.auditEvents.push({
           ...event,
           ...(event.error === undefined ? {} : { error: this.redaction.text(event.error) }),
@@ -1193,7 +1195,6 @@ export class DurableStore {
         this.rebuildIndexes();
         throw error;
       }
-      if (event.errorCode !== undefined) assignment.errorCode = event.errorCode;
       if (status === "failed") {
         const worker = this.state.workers.find(({ id }) => id === assignment.sessionId);
         if (worker === undefined) throw new Error(`Missing lifecycle worker for assignment: ${assignmentId}`);

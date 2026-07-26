@@ -834,3 +834,11 @@ PER-336 security hotfix is complete locally after insecure PR 26 merged as `8989
 - Follow-up PR 38 was opened at `2ae84ac`, then verifier review required committed no-overwrite concurrency coverage. New deterministic worker-barrier tests prove two simultaneous exports produce exactly one valid `0600` output and one refusal, while preexisting backup/export files and hard-link sources retain exact bytes and modes. The storage-focused 20/20 suite passed five consecutive runs.
 - Exact-head review then found missing ownership checks. Preexisting directories, registries, and sidecars now fail closed unless their UID matches the effective process UID where the platform exposes ownership; generated artifacts are explicitly ownership-tested.
 - Next: push the coverage follow-up to PR 38 and leave it unmerged for independent verification.
+
+## PER-347 final integration
+
+- Reconciled PR 33 and its merged provider-error companion with current main's workspace authorization, path security, redaction, audit-chain, and tool-surface controls.
+- Batch acceptance now authorizes canonical workspaces, writes one security audit per assignment atomically, preserves client-scoped idempotency, and persists complete typed provider errors before the durable write.
+- The gated production MCP fixture uses explicit canonical test workspaces; both fake-provider suites cover deterministic 100-session batches without weakening normal registered-workspace authorization.
+- Verification: `npm run check` passed with 0 failures, including formatting, ESLint, typecheck, build, TypeScript tests and coverage, Python tests (one optional skip), schema no-diff, provenance manifests, and the 28-work research contract. `git diff --check` passed.
+- Next: push the verified merge to PR 33, wait for exact-head checks, merge to main, and synchronize PER-347.
