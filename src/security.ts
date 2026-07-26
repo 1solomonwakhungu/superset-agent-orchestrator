@@ -25,13 +25,20 @@ export class SecurityError extends Error {
   }
 }
 
-const SENSITIVE_KEY = /(?:authorization|cookie|token|secret|password|api[_-]?key|credential|private[_-]?key)/i;
+const SENSITIVE_KEY = /(?:authorization|cookie|token|secret|password|passwd|pwd|api[_-]?key|access[_-]?key|credential|private[_-]?key|client[_-]?secret)/i;
 const SECRET_PATTERNS: readonly [RegExp, string][] = [
   [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [REDACTED:authorization]"],
-  [/\b(?:gh[opurs]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16})\b/g, "[REDACTED:token]"],
+  [/\b(?:gh[opurs]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|(?:AKIA|ASIA)[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|npm_[A-Za-z0-9]{20,})\b/g,
+    "[REDACTED:token]"],
+  [/\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b/g, "[REDACTED:token]"],
+  [/(\b(?:password|passwd|pwd|token|secret|api[_-]?key|access[_-]?key|aws[_-]?secret[_-]?access[_-]?key|client[_-]?secret)\b\s*[=:]\s*)(["']?)[^\s,"']{4,}\2/gi,
+    "$1[REDACTED:secret]"],
   [/-----BEGIN(?: [A-Z]+)* PRIVATE KEY-----[\s\S]*?-----END(?: [A-Z]+)* PRIVATE KEY-----/g,
     "[REDACTED:private-key]"],
 ];
+
+export const MAX_REDACTION_DEPTH = 20;
+export const MAX_REDACTION_ENTRIES = 1_000;
 
 export function redactText(value: string, canaries: readonly string[] = []): string {
   let redacted = value;
@@ -72,20 +79,32 @@ export class RedactionPolicy {
 
 export function redactValue(value: unknown, canaries: readonly string[] = []): unknown {
   const seen = new WeakSet<object>();
+  let remainingEntries = MAX_REDACTION_ENTRIES;
   const visit = (current: unknown, depth: number): unknown => {
     if (typeof current === "string") return redactText(current, canaries);
     if (current === null || typeof current !== "object") return current;
-    if (depth > 20) return "[REDACTED:depth]";
+    if (depth >= MAX_REDACTION_DEPTH) return "[REDACTED:depth]";
     if (seen.has(current)) return "[REDACTED:cycle]";
     seen.add(current);
     if (current instanceof Error) {
       return { name: current.name, message: redactText(current.message, canaries), cause: visit(current.cause, depth + 1) };
     }
-    if (Array.isArray(current)) return current.map((item) => visit(item, depth + 1));
-    return Object.fromEntries(Object.entries(current).map(([key, item]) => [
-      key,
-      SENSITIVE_KEY.test(key) ? `[REDACTED:${key.toLowerCase()}]` : visit(item, depth + 1),
-    ]));
+    const output: unknown[] | Record<string, unknown> = Array.isArray(current) ? [] : {};
+    for (const key of Object.keys(current)) {
+      if (remainingEntries-- <= 0) {
+        if (Array.isArray(output)) output.push("[REDACTED:entries]");
+        else output["[TRUNCATED]"] = "[REDACTED:entries]";
+        break;
+      }
+      const descriptor = Object.getOwnPropertyDescriptor(current, key);
+      const item: unknown = descriptor !== undefined && "value" in descriptor
+        ? descriptor.value as unknown
+        : "[REDACTED:accessor]";
+      const safe = SENSITIVE_KEY.test(key) ? `[REDACTED:${key.toLowerCase()}]` : visit(item, depth + 1);
+      if (Array.isArray(output)) output.push(safe);
+      else Object.defineProperty(output, key, { value: safe, enumerable: true, configurable: true, writable: true });
+    }
+    return output;
   };
   return visit(value, 0);
 }
@@ -103,6 +122,8 @@ export function safeErrorMessage(error: unknown, canaries: readonly string[] = [
 const CONTROL_CHARACTERS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/;
 // eslint-disable-next-line no-control-regex -- ANSI escape starts with ESC by definition
 const ANSI_ESCAPE = /\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b[@-Z\\-_]/g;
+// Directional and invisible formatting controls can make audit text visually lie.
+const INVISIBLE_FORMATTING = /[\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/g;
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 export const AUDIT_FIELD_MAX_CHARACTERS = 256;
 const TRUNCATION_MARKER = "[TRUNCATED]";
@@ -111,6 +132,7 @@ const TRUNCATION_MARKER = "[TRUNCATED]";
 export function auditField(value: string, canaries: readonly string[] = []): string {
   const normalized = redactText(wellFormed(value), canaries)
     .replace(ANSI_ESCAPE, "")
+    .replace(INVISIBLE_FORMATTING, "")
     // eslint-disable-next-line no-control-regex -- audit records normalize all controls
     .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
     .replace(/\s+/g, " ")
