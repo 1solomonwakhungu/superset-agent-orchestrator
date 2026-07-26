@@ -427,7 +427,7 @@ const stateSchema = z.strictObject({
     const hasSession = sessionIds.has(worker.sessionId);
     // Fully orphaned historical workers remain recoverable. Partial or
     // contradictory relationships are corruption rather than recovery state.
-    if ((batch === undefined) !== !hasSession || (batch !== undefined && batch.sessionId !== worker.sessionId)) {
+    if ((batch === undefined) !== !hasSession) {
       context.addIssue({ code: "custom", message: `Worker ${worker.id} has contradictory batch or session identity` });
     }
   }
