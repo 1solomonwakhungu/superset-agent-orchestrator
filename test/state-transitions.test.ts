@@ -101,13 +101,13 @@ test("launch intents advance forward and freeze once bound", async () => {
     for (const status of LAUNCH_STATES.filter((state) => state !== "bound")) {
       await assert.rejects(
         () => store.updateLaunch("key-1", status, {}, clock()),
-        /A bound launch cannot be rebound or regressed/,
+        new RegExp(`Invalid launch transition: bound -> ${status}`),
         `bound must not regress to ${status}`,
       );
     }
     await assert.rejects(
       () => store.updateLaunch("key-1", "bound", { runId: "run-2" }, clock()),
-      /A bound launch cannot be rebound or regressed/,
+      /A bound launch cannot be rebound/,
       "a bound run ID is immutable",
     );
 
@@ -208,7 +208,7 @@ test("result capture requires a launched assignment with matching identities", a
       ["runId", "run-other"],
     ] as const) {
       await assert.rejects(
-        () => store.captureResult({ ...valid, [field]: wrong } as CapturedResult),
+        () => store.captureResult({ ...valid, [field]: wrong }),
         new RegExp(`Result ${field} does not match its assignment`),
         `mismatched ${field}`,
       );

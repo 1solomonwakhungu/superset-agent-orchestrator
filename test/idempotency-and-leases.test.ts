@@ -61,7 +61,7 @@ test("concurrent conflicting batch creations reject every loser without corrupti
     const fulfilled = outcomes.filter((outcome) => outcome.status === "fulfilled");
     assert.equal(fulfilled.length, 1, "only the first distinct request may win the key");
     for (const outcome of outcomes.filter((candidate) => candidate.status === "rejected")) {
-      const reason: unknown = (outcome as PromiseRejectedResult).reason;
+      const reason: unknown = outcome.reason;
       assert.ok(reason instanceof BatchQueryError && reason.code === "idempotency_conflict");
     }
 
@@ -87,6 +87,7 @@ test("concurrent launch reservations bind exactly one run", async () => {
 
     const reservations = await Promise.all(stores.map((store) => store.reserveLaunch(input, new Date(AT))));
     assert.equal(reservations.filter(({ created }) => created).length, 1);
+    await stores[0]!.updateLaunch("launch-key", "dispatching", {}, new Date(AT));
 
     const binds = await Promise.allSettled(stores.map((store) =>
       store.updateLaunch("launch-key", "bound", { runId: "run-1" }, new Date(AT))));
@@ -219,7 +220,7 @@ test("concurrent acceptances of one idempotency key create one assignment", asyn
   });
 });
 
-test("exactly one writer lease per workspace survives contention", async () => {
+test("the registry constraint admits exactly one active writer lease per workspace", async () => {
   await withTemporaryDirectory("orchestrator-lease", async (directory) => {
     const path = join(directory, "registry.sqlite");
     const owner = new OrchestratorStorage(path);

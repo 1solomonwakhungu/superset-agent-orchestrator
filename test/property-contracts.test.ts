@@ -1,0 +1,98 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import fc from "fast-check";
+import type { LaunchRequest } from "../src/agent-adapter.js";
+import { FakeAgentAdapter, type FakeRunScript } from "../src/fake-agent-adapter.js";
+import { OrchestratorStorage } from "../src/storage.js";
+import { DurableStore, type LaunchStatus } from "../src/store.js";
+
+const propertyOptions = { seed: 346, numRuns: 100, endOnFailure: true } as const;
+
+const request = (idempotencyKey: string, prompt = "fixture prompt"): LaunchRequest => ({
+  idempotencyKey,
+  prompt,
+  workspacePath: "/tmp/fixture-workspace",
+});
+
+test("checked adapter fixtures replay deterministically and enforce idempotency", async () => {
+  const scripts = JSON.parse(await readFile(new URL("./fixtures/adapter-runs.json", import.meta.url), "utf8")) as FakeRunScript[];
+  await fc.assert(fc.asyncProperty(fc.string({ minLength: 1, maxLength: 40 }), async (key) => {
+    const adapter = new FakeAgentAdapter(scripts);
+    const first = await adapter.launch(request(key));
+    assert.deepEqual(await adapter.launch(request(key)), first);
+    await assert.rejects(adapter.launch(request(key, "different prompt")), /different launch request/);
+    assert.equal(adapter.launches.length, 1);
+  }), propertyOptions);
+});
+
+test("launch state transitions accept only monotonic paths and require a run ID when bound", async () => {
+  const allowed: Record<LaunchStatus, readonly LaunchStatus[]> = {
+    reserved: ["reserved", "dispatching", "unknown_outcome"],
+    dispatching: ["dispatching", "unknown_outcome", "bound"],
+    unknown_outcome: ["unknown_outcome", "bound"],
+    bound: ["bound"],
+  };
+  await fc.assert(fc.asyncProperty(
+    fc.constantFrom<LaunchStatus>("reserved", "dispatching", "unknown_outcome", "bound"),
+    fc.constantFrom<LaunchStatus>("reserved", "dispatching", "unknown_outcome", "bound"),
+    async (current, target) => {
+      const directory = await mkdtemp(join(tmpdir(), "launch-property-"));
+      try {
+        const store = new DurableStore(join(directory, "state.json"));
+        await store.reserveLaunch({
+          idempotencyKey: "property-key", requestHash: "a".repeat(64), sessionId: "session-1",
+          batchId: "batch-1", workerId: "worker-1", attribution: { agent: "codex", task: "test" },
+        });
+        if (current === "dispatching" || current === "bound") {
+          await store.updateLaunch("property-key", "dispatching");
+        }
+        if (current === "unknown_outcome" || current === "bound") {
+          await store.updateLaunch("property-key", "unknown_outcome");
+        }
+        if (current === "bound") {
+          await store.updateLaunch("property-key", "bound", { runId: "run-1" });
+        }
+        const options = target === "bound" ? { runId: "run-1" } : {};
+        if (!allowed[current].includes(target)) {
+          await assert.rejects(store.updateLaunch("property-key", target, options), /Invalid launch transition/);
+        } else {
+          assert.equal((await store.updateLaunch("property-key", target, options)).status, target);
+        }
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  ), propertyOptions);
+});
+
+test("the SQLite lease constraint permits readers but never two active writers per workspace", () => {
+  fc.assert(fc.property(fc.array(fc.uuid(), { minLength: 2, maxLength: 20 }), (leaseIds) => {
+    const storage = new OrchestratorStorage(":memory:");
+    try {
+      const db = storage.database;
+      db.prepare("INSERT INTO batches VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
+        "batch", "property", "test", "running", "{}", "2026-07-24T00:00:00.000Z", "2026-07-24T00:00:00.000Z", null,
+      );
+      const insert = db.prepare("INSERT INTO workspace_leases VALUES (?, 'workspace', ?, NULL, 'batch', ?, ?, NULL)");
+      for (const id of leaseIds) insert.run(id, "read-only", "2026-07-24T00:00:00.000Z", "2026-07-25T00:00:00.000Z");
+      insert.run("writer-1", "writer", "2026-07-24T00:00:00.000Z", "2026-07-25T00:00:00.000Z");
+      assert.throws(() => insert.run("writer-2", "writer", "2026-07-24T00:00:00.000Z", "2026-07-25T00:00:00.000Z"), /UNIQUE/);
+      assert.equal((db.prepare("SELECT COUNT(*) count FROM workspace_leases").get() as { count: number }).count, leaseIds.length + 1);
+    } finally {
+      storage.close();
+    }
+  }), propertyOptions);
+});
+
+test("compatibility fixture is sanitized and fail-closed", async () => {
+  const fixture = await readFile(new URL("./fixtures/compatibility-probe.json", import.meta.url), "utf8");
+  const report = JSON.parse(fixture) as { classification: string; mutationAllowed: boolean; probeCommand: string };
+  assert.equal(report.classification, "unknown");
+  assert.equal(report.mutationAllowed, false);
+  assert.equal(report.probeCommand, "npm run compatibility:probe");
+  assert.doesNotMatch(fixture, /(?:\/Users\/|\/home\/|[A-Za-z]:\\Users\\|token|credential)/i);
+});

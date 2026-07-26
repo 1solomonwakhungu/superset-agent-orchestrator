@@ -92,12 +92,12 @@ CLI, injected clocks, and seeded generators. See
 [`docs/flaky-test-policy.md`](docs/flaky-test-policy.md) for how a flake is
 triaged and when quarantine is permitted.
 
-| Command | Purpose |
-| --- | --- |
-| `npm test` | Full suite |
+| Command                 | Purpose                                                                        |
+| ----------------------- | ------------------------------------------------------------------------------ |
+| `npm test`              | Full suite                                                                     |
 | `npm run test:coverage` | Full suite, failing below 95% lines, 88% branches, 92% functions over `src/**` |
-| `npm run test:race` | Repeats the concurrency-sensitive suites (`RACE_REPEATS`, default 10) |
-| `npm run check` | Type checking with no emit |
+| `npm run test:race`     | Repeats the concurrency-sensitive suites (`RACE_REPEATS`, default 10)          |
+| `npm run check`         | Type checking with no emit                                                     |
 
 Frozen provider payloads and durable state files from earlier releases live in
 `test/fixtures/compat/`. Changing an expectation there is a compatibility change
