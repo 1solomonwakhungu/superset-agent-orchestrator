@@ -912,6 +912,10 @@ export class DurableStore {
       input.workers.forEach((worker) => workerSchema.parse(worker));
       batchSchema.parse(input.batch);
       input.events.forEach((auditEvent) => auditEventSchema.parse(auditEvent));
+      if (input.workers.length !== input.assignments.length
+        || input.workers.some((worker, index) => worker.sessionId !== input.assignments[index]?.sessionId)) {
+        throw new Error("Launch batch workers must match assignments in order");
+      }
       const existing = input.assignments.map((assignment) =>
         this.state.assignments.find(({ idempotencyKey }) => idempotencyKey === assignment.idempotencyKey));
       if (existing.some((assignment) => assignment !== undefined)) {
