@@ -16,13 +16,16 @@ frequently the first observable symptom of a real ordering defect.
 - Do not add a `sleep` to "settle" a race. Inject a clock or await the durable
   effect instead.
 - Do not delete a failing test to unblock a merge.
-- Do not mark a test skipped without a linked issue and an owner.
+- Do not mark an offline test skipped without a linked issue and an owner.
+  Explicitly opt-in integration tests must state their activation condition in
+  the skip message.
 
 ## Triage, in order
 
 1. **Reproduce deliberately.** Run `RACE_REPEATS=50 npm run test:race`. For a
-   suite outside the race list, run it directly with `npx tsx --test <file>` in a
-   loop. A property-style failure reports its seed; re-run that seed first.
+   suite outside the race list, run it directly with
+   `npx tsx --test <file>` in a loop. A property-style failure reports its seed;
+   re-run that seed first.
 2. **Classify the cause.**
    - *Product defect*: a genuine race, a missing lock, a non-idempotent write, or
      an unbounded wait. Fix the product. The test stays as written.

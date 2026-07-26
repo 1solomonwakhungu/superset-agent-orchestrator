@@ -2,8 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { SupersetDiscoveryAdapter } from "../src/superset-discovery.js";
 
-test("real Superset CLI responses match supported discovery schemas", async () => {
-  const executable = process.env.SUPERSET_ORCHESTRATOR_EXECUTABLE ?? "superset";
+test("real Superset CLI responses match supported discovery schemas", {
+  skip: process.env.SUPERSET_ORCHESTRATOR_EXECUTABLE
+    ? false
+    : "set SUPERSET_ORCHESTRATOR_EXECUTABLE to run the integration smoke test",
+}, async () => {
+  const executable = process.env.SUPERSET_ORCHESTRATOR_EXECUTABLE!;
   const result = await new SupersetDiscoveryAdapter({ executable, timeoutMs: 10_000 }).discover();
   assert.match(result.version, /^\d+\.\d+\.\d+/);
   assert.ok(result.host.running && result.host.healthy);
