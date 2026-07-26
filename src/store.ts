@@ -343,7 +343,26 @@ export class DurableStore {
     private readonly isProcessAlive: (pid: number, processStartedAt?: string) => boolean = DurableStore.isProcessAlive.bind(DurableStore),
     private readonly observeQuery: (measurement: QueryMeasurement) => void = () => undefined,
     private readonly now: () => number = performance.now.bind(performance),
+    private readonly dispatchLockStaleMs = 10_000,
   ) {}
+
+  get statePath(): string { return this.path; }
+
+  async withLaunchDispatchLock<T>(assignmentId: string, operation: () => Promise<T>): Promise<T> {
+    await mkdir(dirname(this.path), { recursive: true });
+    const lockPath = `${this.path}.${assignmentId}.dispatch`;
+    const release = await lockfile.lock(lockPath, {
+      realpath: false,
+      stale: this.dispatchLockStaleMs,
+      update: Math.max(1_000, Math.floor(this.dispatchLockStaleMs / 5)),
+      retries: { retries: 50, minTimeout: 50, maxTimeout: 200 },
+    });
+    try {
+      return await operation();
+    } finally {
+      await release();
+    }
+  }
 
   async createBatch(
     name: string,
@@ -803,6 +822,12 @@ export class DurableStore {
       batchSchema.parse(input.batch);
       auditEventSchema.parse(input.event);
       workerSchema.parse(input.worker);
+      if (input.event.assignmentId !== input.assignment.id) {
+        throw new Error("Launch acceptance event assignment does not match its target");
+      }
+      if (input.event.type !== "launch_accepted") {
+        throw new Error("Launch acceptance event must have type launch_accepted");
+      }
       const existing = this.state.assignments.find(({ idempotencyKey }) => idempotencyKey === input.assignment.idempotencyKey);
       if (existing !== undefined) {
         if (existing.requestFingerprint !== input.assignment.requestFingerprint) {
@@ -832,14 +857,32 @@ export class DurableStore {
     assignmentId: string,
     status: Extract<AssignmentLaunchStatus, "launching" | "launched" | "failed">,
     event: LaunchAuditEvent,
-  ): Promise<Assignment> {
+  ): Promise<{ assignment: Assignment; transitioned: boolean }> {
     return this.withLock(async () => {
       await this.load();
+      auditEventSchema.parse(event);
       const assignment = this.state.assignments.find(({ id }) => id === assignmentId);
       if (assignment === undefined) throw new Error(`Unknown assignment: ${assignmentId}`);
-      if (assignment.status === "launched" || assignment.status === "failed") return structuredClone(assignment);
+      if (event.assignmentId !== assignmentId) throw new Error("Launch event assignment does not match its target");
+      const expectedType: Record<typeof status, LaunchAuditType> = {
+        launching: "launch_reserved",
+        launched: "execution_started",
+        failed: "launch_failed",
+      };
+      if (event.type !== expectedType[status]) throw new Error("Launch event type does not match its transition");
+      const existingEvent = this.state.auditEvents.find(({ id }) => id === event.id);
+      if (existingEvent !== undefined && (existingEvent.assignmentId !== event.assignmentId
+        || existingEvent.type !== event.type
+        || existingEvent.occurredAt !== event.occurredAt
+        || existingEvent.runId !== event.runId
+        || existingEvent.error !== event.error)) {
+        throw new Error(`Launch audit event ID ${JSON.stringify(event.id)} conflicts with existing evidence`);
+      }
+      const allowed = assignment.status === "accepted" && status === "launching"
+        || assignment.status === "launching" && (status === "launched" || status === "failed");
+      if (!allowed) return { assignment: structuredClone(assignment), transitioned: false };
       assignment.status = status;
-      assignment.updatedAt = event.occurredAt;
+      assignment.updatedAt = event.occurredAt < assignment.updatedAt ? assignment.updatedAt : event.occurredAt;
       if (event.runId !== undefined) assignment.runId = event.runId;
       if (event.runId !== undefined) {
         const worker = this.state.workers.find(({ id }) => id === assignment.sessionId);
@@ -848,9 +891,9 @@ export class DurableStore {
         worker.runId = event.runId;
       }
       if (event.error !== undefined) assignment.error = event.error;
-      if (!this.state.auditEvents.some(({ id }) => id === event.id)) this.state.auditEvents.push(event);
+      if (existingEvent === undefined) this.state.auditEvents.push(event);
       await this.persist();
-      return structuredClone(assignment);
+      return { assignment: structuredClone(assignment), transitioned: true };
     });
   }
 
@@ -874,6 +917,10 @@ export class DurableStore {
       const identities = ["batchId", "sessionId", "workspaceId", "workspacePath", "attemptId", "attempt", "runId"] as const;
       for (const identity of identities) {
         if (assignment[identity] !== input[identity]) throw new Error(`Result ${identity} does not match its assignment`);
+      }
+      if (assignment.attribution.agent !== input.attribution.agent
+        || assignment.attribution.task !== input.attribution.task) {
+        throw new Error("Result attribution does not match its assignment");
       }
       if (assignment.status !== "launched") throw new Error("Results require a launched assignment");
       const results = this.state.capturedResults ??= [];
