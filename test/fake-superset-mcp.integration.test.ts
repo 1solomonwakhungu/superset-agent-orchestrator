@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -37,6 +37,7 @@ test("production MCP server persists attributed completion, failure, cancellatio
     ],
   }, async (harness) => {
     const launched = await launch(harness.client, 3);
+    assert.equal(launched.sessions.length, 3);
     assert.equal(new Set(launched.sessions.map(({ batchId }) => batchId)).size, 1);
     const [complete, failed, canceled] = launched.sessions;
     assert.ok(complete && failed && canceled);
@@ -200,12 +201,16 @@ async function withServer(
   const scenarioPath = join(directory, "scenario.json");
   const fakeStatePath = join(directory, "fake-state.json");
   const statePath = join(directory, "orchestrator-state.json");
+  const workspaceRoot = join(directory, "workspaces");
+  await mkdir(workspaceRoot);
+  await Promise.all(Array.from({ length: 100 }, (_, index) => mkdir(join(workspaceRoot, `workspace-${index}`))));
   await writeFile(scenarioPath, JSON.stringify(scenario), "utf8");
   const env: Record<string, string> = {
     ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
     SUPERSET_ORCHESTRATOR_STATE: statePath,
     SUPERSET_ORCHESTRATOR_RECONCILE_MS: "60000",
     SUPERSET_ORCHESTRATOR_ENABLE_PROVIDER_TEST_TOOLS: "1",
+    SUPERSET_ORCHESTRATOR_PROVIDER_TEST_WORKSPACE_ROOT: workspaceRoot,
     SUPERSET_ORCHESTRATOR_PROVIDER_EXECUTABLE: process.execPath,
     SUPERSET_ORCHESTRATOR_PROVIDER_ARGS: JSON.stringify([fake, scenarioPath, fakeStatePath]),
     SUPERSET_ORCHESTRATOR_PROVIDER_TIMEOUT_MS: String(timeoutMs),
