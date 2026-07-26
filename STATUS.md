@@ -493,6 +493,12 @@ locally.
   launch, resilience, and lease tests passed 42/42, and `npm run check` passed
   200 tests (199 pass, 0 fail, 1 explicit live-discovery skip), coverage, Python
   5/5 with one optional checkpoint audit skip, schema no-diff, and provenance.
+- Preserved the concurrent launch-error assertion fix at remote head `5ffe5e7`
+  and integrated current `main` at `6791ae4cc5f74a187495dfe2bb63ac8b0ce06fe7`.
+  Focused provider, launch, resilience, lease, and performance tests passed
+  52/52; `npm run check` passed 210 tests (209 pass, 0 fail, 1 explicit live
+  discovery skip), coverage, Python 5/5 with one optional checkpoint audit skip,
+  schema no-diff, and provenance.
 - Next: push the exact PR head and merge only after exact-head checks succeed.
 
 PER-348 adversarial resilience regression coverage is complete locally.
