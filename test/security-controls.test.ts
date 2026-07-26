@@ -621,7 +621,7 @@ test("T-AUDIT-01 allowed and denied launches produce a chained attributable trai
   });
 });
 
-test("T-RESULT-01 rejects oversized adapter output before persistence", async () => {
+test("T-RESULT-01 replaces oversized adapter output with a bounded malformed claim", async () => {
   await withStore(async (path) => {
     const store = new DurableStore(path);
     const adapter = new FakeAgentAdapter([{
@@ -633,11 +633,10 @@ test("T-RESULT-01 rejects oversized adapter output before persistence", async ()
     await service.dispatchPending();
     const { ResultCaptureService } = await import("../src/result-capture.js");
 
-    await assert.rejects(
-      new ResultCaptureService(store, adapter).collect(accepted.assignmentId, "delivery-oversized"),
-      /result output exceeds/,
-    );
-    assert.doesNotMatch(await readFile(path, "utf8"), /delivery-oversized/);
+    const captured = await new ResultCaptureService(store, adapter).collect(accepted.assignmentId, "delivery-oversized");
+    assert.equal(captured.result?.claim.status, "malformed");
+    assert.equal(captured.result?.claim.error, "Provider result response was oversized");
+    assert.doesNotMatch(await readFile(path, "utf8"), /x{1000}/);
   });
 });
 
@@ -787,6 +786,7 @@ test("T-PATH-02 one retryable workspace failure does not starve other assignment
 test("T-TOOLS-01 the registered surface excludes destructive and generic capabilities", () => {
   assert.deepEqual([...REGISTERED_TOOL_NAMES], [
     "batches_create", "batches_get", "batches_status", "batches_results",
+    "sessions_cancel", "batches_cancel", "batches_wait", "sessions_set_deadline", "deadlines_enforce",
     "recent_sessions", "reopen_batch", "recovery_diagnostics",
   ]);
   assertRegisteredToolNames([...REGISTERED_TOOL_NAMES]);

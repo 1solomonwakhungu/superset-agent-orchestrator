@@ -162,6 +162,7 @@ test("acceptance evidence must identify the accepted assignment and event type",
       session: { ...state.sessions[0]!, id: "forged-session" },
       batch: { ...state.batches[0]!, id: "forged-batch" },
       event: { ...state.auditEvents[0]!, id: "forged-event" },
+      worker: { ...state.workers[0]!, id: "forged-worker", sessionId: "forged-session", batchId: "forged-batch" },
       securityAudit: {
         requesterId: "test", operation: "sessions_launch", decision: "allowed" as const,
         reasonCode: "launch_accepted", correlationId: "forged-key", assignmentId: "forged-assignment",

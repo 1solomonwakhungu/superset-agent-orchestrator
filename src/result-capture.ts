@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { AgentAdapter, RunResult, TerminalRunStatus } from "./agent-adapter.js";
 import { assertBoundedOptionalText, assertIdentifier, MAX_RESULT_BYTES } from "./security.js";
+import { parseProviderResult, parseProviderStatus, ProviderProtocolError } from "./provider-protocol.js";
 import { DurableStore, type AgentResultClaim, type CapturedResult } from "./store.js";
 
 export type ResultDelivery =
@@ -21,12 +22,23 @@ export class ResultCaptureService {
       throw new Error("Result collection requires a launched assignment with a bound run ID");
     }
     requireExactIdentities(assignment);
-    const state = await this.adapter.status({ runId: assignment.runId });
-    if (state.runId !== assignment.runId) throw new Error("Adapter status returned a different run ID");
+    let state;
+    try {
+      state = parseProviderStatus(await this.adapter.status({ runId: assignment.runId }));
+    } catch (error) {
+      if (!(error instanceof ProviderProtocolError)) throw error;
+      return this.ingest(assignmentId, deliveryId, { kind: "malformed", error: error.message });
+    }
+    if (state.runId !== assignment.runId) {
+      return this.ingest(assignmentId, deliveryId, {
+        kind: "malformed",
+        error: "Provider status response used a different execution identity",
+      });
+    }
     if (state.status === "queued" || state.status === "running") return { duplicate: false };
     let result: RunResult | undefined;
     try {
-      result = await this.adapter.result({ runId: assignment.runId });
+      result = parseProviderResult(await this.adapter.result({ runId: assignment.runId }));
     } catch (error) {
       return this.ingest(assignmentId, deliveryId, {
         kind: "malformed",
@@ -115,7 +127,11 @@ function requireExactIdentities(assignment: {
   }
 }
 
-function normalize(delivery: ResultDelivery): AgentResultClaim {
+/**
+ * Projects one delivery into the exact claim persisted for a session, including completeness.
+ * Canceled and failed runs keep whatever output they produced, marked `partial`.
+ */
+export function normalize(delivery: ResultDelivery): AgentResultClaim {
   if (delivery.kind === "malformed") {
     return { status: "malformed", completeness: "malformed", error: delivery.error };
   }

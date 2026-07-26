@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import type { AgentAdapter } from "../src/agent-adapter.js";
 import { FakeAgentAdapter } from "../src/fake-agent-adapter.js";
 import { LaunchService, type AsynchronousLaunchRequest } from "../src/launch-service.js";
 import { ResultCaptureService, type ResultDelivery } from "../src/result-capture.js";
@@ -214,5 +215,30 @@ test("records malformed adapter results and terminal status mismatches without i
     });
   } finally {
     await rm(mismatch.directory, { recursive: true, force: true });
+  }
+});
+
+test("records structurally malformed and oversized provider payloads as bounded claims", async () => {
+  for (const [deliveryId, mutate, expected] of [
+    ["delivery-bad-status", (adapter: AgentAdapter) => {
+      adapter.status = async () => ({ runId: "wrong", status: "succeeded", updatedAt: "invalid" }) as never;
+    }, "Provider status response was malformed"],
+    ["delivery-large-result", (adapter: AgentAdapter) => {
+      adapter.result = async () => ({ status: "succeeded", output: "x".repeat(1_048_577) });
+    }, "Provider result response was oversized"],
+  ] as const) {
+    const context = await fixture();
+    try {
+      mutate(context.adapter);
+      const captured = await new ResultCaptureService(context.store, context.adapter)
+        .collect(context.accepted.assignmentId, deliveryId);
+      assert.deepEqual(captured.result?.claim, {
+        status: "malformed",
+        completeness: "malformed",
+        error: expected,
+      });
+    } finally {
+      await rm(context.directory, { recursive: true, force: true });
+    }
   }
 });
