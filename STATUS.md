@@ -940,3 +940,10 @@ PER-336 security hotfix is complete locally after insecure PR 26 merged as `8989
 - The gated production MCP fixture uses explicit canonical test workspaces; both fake-provider suites cover deterministic 100-session batches without weakening normal registered-workspace authorization.
 - Verification: `npm run check` passed with 0 failures, including formatting, ESLint, typecheck, build, TypeScript tests and coverage, Python tests (one optional skip), schema no-diff, provenance manifests, and the 28-work research contract. `git diff --check` passed.
 - Next: push the verified merge to PR 33, wait for exact-head checks, merge to main, and synchronize PER-347.
+## PER-342 live stop claim companion
+
+- Timed-out cancellation and deadline-stop calls now retain their durable delivery claim while an adapter ignores abort and its provider operation remains active.
+- Abort-aware failures still release claims synchronously; ignored-abort claims become retryable only after the original operation settles, while restart recovery remains unchanged.
+- Added focused cancellation and deadline reconciliation regressions proving no overlapping duplicate stop is issued and delivery resumes after settlement.
+- Verification: lifecycle service tests passed 59/59; `npm run check` passed the full format, lint, typecheck, build, TypeScript, coverage, Python, schema, provenance, and research gates; `git diff --check` passed.
+- Next: commit and push the companion, open it against PR 66's head branch, verify exact-head CI, and merge.
