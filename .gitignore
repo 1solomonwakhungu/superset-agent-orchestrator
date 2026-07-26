@@ -1,2 +1,12 @@
 __pycache__/
 *.py[cod]
+.pytest_cache/
+var/
+dist/
+node_modules/
+src/**/*.js
+src/**/*.d.ts
+test/**/*.js
+test/**/*.d.ts
+.orchestrator/
+*.tmp

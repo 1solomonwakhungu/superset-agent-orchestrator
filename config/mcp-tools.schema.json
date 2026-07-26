@@ -1,0 +1,3211 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/1solomonwakhungu/superset-agent-orchestrator/config/mcp-tools.schema.json",
+  "title": "Superset Agent Orchestrator MCP tool contract 1.0",
+  "x-error-definitions": {
+    "INVALID_ARGUMENT": {
+      "layer": "validation",
+      "retryable": false
+    },
+    "LIMIT_EXCEEDED": {
+      "layer": "validation",
+      "retryable": false
+    },
+    "DUPLICATE_ID": {
+      "layer": "validation",
+      "retryable": false
+    },
+    "UNSUPPORTED_CONTRACT_VERSION": {
+      "layer": "validation",
+      "retryable": false
+    },
+    "CONFIGURATION_INVALID": {
+      "layer": "configuration",
+      "retryable": false
+    },
+    "EXECUTABLE_NOT_FOUND": {
+      "layer": "discovery",
+      "retryable": false
+    },
+    "EXECUTABLE_CONFLICT": {
+      "layer": "discovery",
+      "retryable": false
+    },
+    "HOST_STATE_NOT_FOUND": {
+      "layer": "discovery",
+      "retryable": true
+    },
+    "AMBIGUOUS_WORKSPACE": {
+      "layer": "routing",
+      "retryable": false
+    },
+    "REMOTE_WORKSPACE": {
+      "layer": "routing",
+      "retryable": false
+    },
+    "DUPLICATE_WORKSPACE": {
+      "layer": "routing",
+      "retryable": false
+    },
+    "WORKSPACE_UNAVAILABLE": {
+      "layer": "routing",
+      "retryable": true
+    },
+    "WORKSPACE_WRITE_CONFLICT": {
+      "layer": "policy",
+      "retryable": true
+    },
+    "POLICY_DENIED": {
+      "layer": "policy",
+      "retryable": false
+    },
+    "CONCURRENCY_LIMIT": {
+      "layer": "policy",
+      "retryable": true
+    },
+    "SESSION_NOT_FOUND": {
+      "layer": "orchestration",
+      "retryable": false
+    },
+    "BATCH_NOT_FOUND": {
+      "layer": "orchestration",
+      "retryable": false
+    },
+    "PROVIDER_UNAVAILABLE": {
+      "layer": "provider",
+      "retryable": true
+    },
+    "PROVIDER_PROTOCOL_ERROR": {
+      "layer": "provider",
+      "retryable": true
+    },
+    "LAUNCH_REJECTED": {
+      "layer": "provider",
+      "retryable": false
+    },
+    "CANCEL_UNSUPPORTED": {
+      "layer": "provider",
+      "retryable": false
+    },
+    "INVALID_TRANSITION": {
+      "layer": "orchestration",
+      "retryable": false
+    },
+    "VERSION_CONFLICT": {
+      "layer": "orchestration",
+      "retryable": true
+    },
+    "EXECUTION_IDENTITY_CONFLICT": {
+      "layer": "integrity",
+      "retryable": false
+    },
+    "SESSION_LOST": {
+      "layer": "orchestration",
+      "retryable": true
+    },
+    "STATE_UNAVAILABLE": {
+      "layer": "storage",
+      "retryable": true
+    },
+    "STATE_CORRUPT": {
+      "layer": "integrity",
+      "retryable": false
+    },
+    "ARTIFACT_MISSING": {
+      "layer": "storage",
+      "retryable": true
+    },
+    "INTEGRITY_FAILURE": {
+      "layer": "integrity",
+      "retryable": false
+    }
+  },
+  "tools": {
+    "orchestrator_discover": {
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "contract_version": {
+            "type": "string",
+            "const": "1.0"
+          },
+          "include_unavailable": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "contract_version",
+          "include_unavailable"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "contract_version": {
+                "type": "string",
+                "const": "1.0"
+              },
+              "request_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "warnings": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "data": {
+                "type": "object",
+                "properties": {
+                  "hosts": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "host_id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "available": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "host_id",
+                        "name",
+                        "available"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "workspaces": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "workspace_id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "host_id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "local": {
+                          "type": "boolean",
+                          "const": true
+                        },
+                        "available": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "workspace_id",
+                        "host_id",
+                        "name",
+                        "local",
+                        "available"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "agent_presets": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "agent_preset_id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      },
+                      "required": [
+                        "agent_preset_id",
+                        "name"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "hosts",
+                  "workspaces",
+                  "agent_presets"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "contract_version",
+              "request_id",
+              "warnings",
+              "data"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "contract_version": {
+                "type": "string",
+                "const": "1.0"
+              },
+              "request_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "error": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "enum": [
+                      "INVALID_ARGUMENT",
+                      "LIMIT_EXCEEDED",
+                      "DUPLICATE_ID",
+                      "UNSUPPORTED_CONTRACT_VERSION",
+                      "CONFIGURATION_INVALID",
+                      "EXECUTABLE_NOT_FOUND",
+                      "EXECUTABLE_CONFLICT",
+                      "HOST_STATE_NOT_FOUND",
+                      "AMBIGUOUS_WORKSPACE",
+                      "REMOTE_WORKSPACE",
+                      "DUPLICATE_WORKSPACE",
+                      "WORKSPACE_UNAVAILABLE",
+                      "WORKSPACE_WRITE_CONFLICT",
+                      "POLICY_DENIED",
+                      "CONCURRENCY_LIMIT",
+                      "SESSION_NOT_FOUND",
+                      "BATCH_NOT_FOUND",
+                      "PROVIDER_UNAVAILABLE",
+                      "PROVIDER_PROTOCOL_ERROR",
+                      "LAUNCH_REJECTED",
+                      "CANCEL_UNSUPPORTED",
+                      "INVALID_TRANSITION",
+                      "VERSION_CONFLICT",
+                      "EXECUTION_IDENTITY_CONFLICT",
+                      "SESSION_LOST",
+                      "STATE_UNAVAILABLE",
+                      "STATE_CORRUPT",
+                      "ARTIFACT_MISSING",
+                      "INTEGRITY_FAILURE"
+                    ]
+                  },
+                  "layer": {
+                    "type": "string",
+                    "enum": [
+                      "validation",
+                      "configuration",
+                      "discovery",
+                      "routing",
+                      "policy",
+                      "transport",
+                      "provider",
+                      "orchestration",
+                      "storage",
+                      "integrity"
+                    ]
+                  },
+                  "message": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "retryable": {
+                    "type": "boolean"
+                  },
+                  "details": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "cause_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "code",
+                  "layer",
+                  "message",
+                  "retryable"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "contract_version",
+              "request_id",
+              "error"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "x-semantic-rules": []
+    },
+    "sessions_launch": {
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "contract_version": {
+            "type": "string",
+            "const": "1.0"
+          },
+          "assignments": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "assignment_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "prompt": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200000
+                },
+                "workspace_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "agent_preset_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "access_mode": {
+                  "type": "string",
+                  "enum": [
+                    "read_only",
+                    "writer"
+                  ]
+                },
+                "idempotency_key": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                }
+              },
+              "required": [
+                "label",
+                "prompt",
+                "workspace_id",
+                "agent_preset_id",
+                "access_mode",
+                "idempotency_key"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "contract_version",
+          "assignments"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "contract_version": {
+                "type": "string",
+                "const": "1.0"
+              },
+              "request_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "warnings": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "data": {
+                "type": "object",
+                "properties": {
+                  "sessions": {
+                    "minItems": 1,
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "assignment_id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "session_id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "requested",
+                            "launching"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "session_id",
+                        "state"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "sessions"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "contract_version",
+              "request_id",
+              "warnings",
+              "data"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "contract_version": {
+                "type": "string",
+                "const": "1.0"
+              },
+              "request_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "error": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "enum": [
+                      "INVALID_ARGUMENT",
+                      "LIMIT_EXCEEDED",
+                      "DUPLICATE_ID",
+                      "UNSUPPORTED_CONTRACT_VERSION",
+                      "CONFIGURATION_INVALID",
+                      "EXECUTABLE_NOT_FOUND",
+                      "EXECUTABLE_CONFLICT",
+                      "HOST_STATE_NOT_FOUND",
+                      "AMBIGUOUS_WORKSPACE",
+                      "REMOTE_WORKSPACE",
+                      "DUPLICATE_WORKSPACE",
+                      "WORKSPACE_UNAVAILABLE",
+                      "WORKSPACE_WRITE_CONFLICT",
+                      "POLICY_DENIED",
+                      "CONCURRENCY_LIMIT",
+                      "SESSION_NOT_FOUND",
+                      "BATCH_NOT_FOUND",
+                      "PROVIDER_UNAVAILABLE",
+                      "PROVIDER_PROTOCOL_ERROR",
+                      "LAUNCH_REJECTED",
+                      "CANCEL_UNSUPPORTED",
+                      "INVALID_TRANSITION",
+                      "VERSION_CONFLICT",
+                      "EXECUTION_IDENTITY_CONFLICT",
+                      "SESSION_LOST",
+                      "STATE_UNAVAILABLE",
+                      "STATE_CORRUPT",
+                      "ARTIFACT_MISSING",
+                      "INTEGRITY_FAILURE"
+                    ]
+                  },
+                  "layer": {
+                    "type": "string",
+                    "enum": [
+                      "validation",
+                      "configuration",
+                      "discovery",
+                      "routing",
+                      "policy",
+                      "transport",
+                      "provider",
+                      "orchestration",
+                      "storage",
+                      "integrity"
+                    ]
+                  },
+                  "message": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "retryable": {
+                    "type": "boolean"
+                  },
+                  "details": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "cause_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "code",
+                  "layer",
+                  "message",
+                  "retryable"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "contract_version",
+              "request_id",
+              "error"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "x-semantic-rules": [
+        "assignments[].idempotency_key MUST be unique"
+      ]
+    },
+    "batches_launch": {
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "contract_version": {
+            "type": "string",
+            "const": "1.0"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "assignments": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "assignment_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "prompt": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200000
+                },
+                "workspace_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "agent_preset_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "access_mode": {
+                  "type": "string",
+                  "enum": [
+                    "read_only",
+                    "writer"
+                  ]
+                },
+                "idempotency_key": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                }
+              },
+              "required": [
+                "label",
+                "prompt",
+                "workspace_id",
+                "agent_preset_id",
+                "access_mode",
+                "idempotency_key"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "contract_version",
+          "name",
+          "idempotency_key",
+          "assignments"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "contract_version": {
+                "type": "string",
+                "const": "1.0"
+              },
+              "request_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "warnings": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "data": {
+                "type": "object",
+                "properties": {
+                  "batch_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "sessions": {
+                    "minItems": 1,
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "assignment_id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "session_id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "requested",
+                            "launching"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "session_id",
+                        "state"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "batch_id",
+                  "sessions"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "contract_version",
+              "request_id",
+              "warnings",
+              "data"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "contract_version": {
+                "type": "string",
+                "const": "1.0"
+              },
+              "request_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "error": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "enum": [
+                      "INVALID_ARGUMENT",
+                      "LIMIT_EXCEEDED",
+                      "DUPLICATE_ID",
+                      "UNSUPPORTED_CONTRACT_VERSION",
+                      "CONFIGURATION_INVALID",
+                      "EXECUTABLE_NOT_FOUND",
+                      "EXECUTABLE_CONFLICT",
+                      "HOST_STATE_NOT_FOUND",
+                      "AMBIGUOUS_WORKSPACE",
+                      "REMOTE_WORKSPACE",
+                      "DUPLICATE_WORKSPACE",
+                      "WORKSPACE_UNAVAILABLE",
+                      "WORKSPACE_WRITE_CONFLICT",
+                      "POLICY_DENIED",
+                      "CONCURRENCY_LIMIT",
+                      "SESSION_NOT_FOUND",
+                      "BATCH_NOT_FOUND",
+                      "PROVIDER_UNAVAILABLE",
+                      "PROVIDER_PROTOCOL_ERROR",
+                      "LAUNCH_REJECTED",
+                      "CANCEL_UNSUPPORTED",
+                      "INVALID_TRANSITION",
+                      "VERSION_CONFLICT",
+                      "EXECUTION_IDENTITY_CONFLICT",
+                      "SESSION_LOST",
+                      "STATE_UNAVAILABLE",
+                      "STATE_CORRUPT",
+                      "ARTIFACT_MISSING",
+                      "INTEGRITY_FAILURE"
+                    ]
+                  },
+                  "layer": {
+                    "type": "string",
+                    "enum": [
+                      "validation",
+                      "configuration",
+                      "discovery",
+                      "routing",
+                      "policy",
+                      "transport",
+                      "provider",
+                      "orchestration",
+                      "storage",
+                      "integrity"
+                    ]
+                  },
+                  "message": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "retryable": {
+                    "type": "boolean"
+                  },
+                  "details": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "cause_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "code",
+                  "layer",
+                  "message",
+                  "retryable"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "contract_version",
+              "request_id",
+              "error"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "x-semantic-rules": [
+        "assignments[].idempotency_key MUST be unique"
+      ]
+    },
+    "sessions_status": {
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "contract_version": {
+            "type": "string",
+            "const": "1.0"
+          },
+          "session_ids": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        },
+        "required": [
+          "contract_version",
+          "session_ids"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "contract_version": {
+                "type": "string",
+                "const": "1.0"
+              },
+              "request_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "warnings": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "data": {
+                "type": "object",
+                "properties": {
+                  "items": {
+                    "minItems": 1,
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "session_id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "session": {
+                              "type": "object",
+                              "properties": {
+                                "session_id": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "batch_id": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "assignment_id": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "workspace_id": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "agent_preset_id": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "state": {
+                                  "type": "string",
+                                  "enum": [
+                                    "requested",
+                                    "launching",
+                                    "running",
+                                    "canceling",
+                                    "lost",
+                                    "completed",
+                                    "failed",
+                                    "canceled"
+                                  ]
+                                },
+                                "version": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "execution": {
+                                  "type": "object",
+                                  "properties": {
+                                    "adapter": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "execution_id": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "resume_token": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    }
+                                  },
+                                  "required": [
+                                    "adapter",
+                                    "execution_id"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                "stop_reason": {
+                                  "type": "string",
+                                  "enum": [
+                                    "succeeded",
+                                    "succeeded_before_cancellation",
+                                    "invalid_request",
+                                    "policy_denied",
+                                    "dependency_unavailable",
+                                    "launch_error",
+                                    "launch_timeout",
+                                    "execution_error",
+                                    "worker_crash",
+                                    "resource_exhausted",
+                                    "deadline_exceeded",
+                                    "artifact_error",
+                                    "user_requested",
+                                    "orchestrator_shutdown",
+                                    "superseded",
+                                    "policy_revoked"
+                                  ]
+                                },
+                                "artifact_manifest_id": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "created_at": {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                                },
+                                "updated_at": {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                                }
+                              },
+                              "required": [
+                                "session_id",
+                                "workspace_id",
+                                "agent_preset_id",
+                                "state",
+                                "version",
+                                "created_at",
+                                "updated_at"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "session_id",
+                            "session"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "session_id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "error": {
+                              "type": "object",
+                              "properties": {
+                                "code": {
+                                  "type": "string",
+                                  "enum": [
+                                    "INVALID_ARGUMENT",
+                                    "LIMIT_EXCEEDED",
+                                    "DUPLICATE_ID",
+                                    "UNSUPPORTED_CONTRACT_VERSION",
+                                    "CONFIGURATION_INVALID",
+                                    "EXECUTABLE_NOT_FOUND",
+                                    "EXECUTABLE_CONFLICT",
+                                    "HOST_STATE_NOT_FOUND",
+                                    "AMBIGUOUS_WORKSPACE",
+                                    "REMOTE_WORKSPACE",
+                                    "DUPLICATE_WORKSPACE",
+                                    "WORKSPACE_UNAVAILABLE",
+                                    "WORKSPACE_WRITE_CONFLICT",
+                                    "POLICY_DENIED",
+                                    "CONCURRENCY_LIMIT",
+                                    "SESSION_NOT_FOUND",
+                                    "BATCH_NOT_FOUND",
+                                    "PROVIDER_UNAVAILABLE",
+                                    "PROVIDER_PROTOCOL_ERROR",
+                                    "LAUNCH_REJECTED",
+                                    "CANCEL_UNSUPPORTED",
+                                    "INVALID_TRANSITION",
+                                    "VERSION_CONFLICT",
+                                    "EXECUTION_IDENTITY_CONFLICT",
+                                    "SESSION_LOST",
+                                    "STATE_UNAVAILABLE",
+                                    "STATE_CORRUPT",
+                                    "ARTIFACT_MISSING",
+                                    "INTEGRITY_FAILURE"
+                                  ]
+                                },
+                                "layer": {
+                                  "type": "string",
+                                  "enum": [
+                                    "validation",
+                                    "configuration",
+                                    "discovery",
+                                    "routing",
+                                    "policy",
+                                    "transport",
+                                    "provider",
+                                    "orchestration",
+                                    "storage",
+                                    "integrity"
+                                  ]
+                                },
+                                "message": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "retryable": {
+                                  "type": "boolean"
+                                },
+                                "details": {
+                                  "type": "object",
+                                  "propertyNames": {
+                                    "type": "string"
+                                  },
+                                  "additionalProperties": {}
+                                },
+                                "cause_id": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                }
+                              },
+                              "required": [
+                                "code",
+                                "layer",
+                                "message",
+                                "retryable"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "session_id",
+                            "error"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "items"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "contract_version",
+              "request_id",
+              "warnings",
+              "data"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "contract_version": {
+                "type": "string",
+                "const": "1.0"
+              },
+              "request_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "error": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "enum": [
+                      "INVALID_ARGUMENT",
+                      "LIMIT_EXCEEDED",
+                      "DUPLICATE_ID",
+                      "UNSUPPORTED_CONTRACT_VERSION",
+                      "CONFIGURATION_INVALID",
+                      "EXECUTABLE_NOT_FOUND",
+                      "EXECUTABLE_CONFLICT",
+                      "HOST_STATE_NOT_FOUND",
+                      "AMBIGUOUS_WORKSPACE",
+                      "REMOTE_WORKSPACE",
+                      "DUPLICATE_WORKSPACE",
+                      "WORKSPACE_UNAVAILABLE",
+                      "WORKSPACE_WRITE_CONFLICT",
+                      "POLICY_DENIED",
+                      "CONCURRENCY_LIMIT",
+                      "SESSION_NOT_FOUND",
+                      "BATCH_NOT_FOUND",
+                      "PROVIDER_UNAVAILABLE",
+                      "PROVIDER_PROTOCOL_ERROR",
+                      "LAUNCH_REJECTED",
+                      "CANCEL_UNSUPPORTED",
+                      "INVALID_TRANSITION",
+                      "VERSION_CONFLICT",
+                      "EXECUTION_IDENTITY_CONFLICT",
+                      "SESSION_LOST",
+                      "STATE_UNAVAILABLE",
+                      "STATE_CORRUPT",
+                      "ARTIFACT_MISSING",
+                      "INTEGRITY_FAILURE"
+                    ]
+                  },
+                  "layer": {
+                    "type": "string",
+                    "enum": [
+                      "validation",
+                      "configuration",
+                      "discovery",
+                      "routing",
+                      "policy",
+                      "transport",
+                      "provider",
+                      "orchestration",
+                      "storage",
+                      "integrity"
+                    ]
+                  },
+                  "message": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "retryable": {
+                    "type": "boolean"
+                  },
+                  "details": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "cause_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "code",
+                  "layer",
+                  "message",
+                  "retryable"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "contract_version",
+              "request_id",
+              "error"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "x-semantic-rules": [
+        "session_ids MUST be unique",
+        "data.items[].session_id MUST be unique",
+        "an item's session.session_id MUST equal its session_id"
+      ]
+    },
+    "sessions_results": {
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "contract_version": {
+            "type": "string",
+            "const": "1.0"
+          },
+          "session_ids": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        },
+        "required": [
+          "contract_version",
+          "session_ids"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "contract_version": {
+                "type": "string",
+                "const": "1.0"
+              },
+              "request_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "warnings": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "data": {
+                "type": "object",
+                "properties": {
+                  "items": {
+                    "minItems": 1,
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "session_id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "state": {
+                              "type": "string",
+                              "enum": [
+                                "requested",
+                                "launching",
+                                "running",
+                                "canceling",
+                                "lost",
+                                "completed",
+                                "failed",
+                                "canceled"
+                              ]
+                            },
+                            "complete": {
+                              "type": "boolean"
+                            },
+                            "artifacts": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "artifact_id": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  "media_type": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  "uri": {
+                                    "type": "string",
+                                    "format": "uri"
+                                  },
+                                  "bytes": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  }
+                                },
+                                "required": [
+                                  "artifact_id",
+                                  "media_type",
+                                  "uri"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": [
+                            "session_id",
+                            "state",
+                            "complete",
+                            "artifacts"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "session_id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "error": {
+                              "type": "object",
+                              "properties": {
+                                "code": {
+                                  "type": "string",
+                                  "enum": [
+                                    "INVALID_ARGUMENT",
+                                    "LIMIT_EXCEEDED",
+                                    "DUPLICATE_ID",
+                                    "UNSUPPORTED_CONTRACT_VERSION",
+                                    "CONFIGURATION_INVALID",
+                                    "EXECUTABLE_NOT_FOUND",
+                                    "EXECUTABLE_CONFLICT",
+                                    "HOST_STATE_NOT_FOUND",
+                                    "AMBIGUOUS_WORKSPACE",
+                                    "REMOTE_WORKSPACE",
+                                    "DUPLICATE_WORKSPACE",
+                                    "WORKSPACE_UNAVAILABLE",
+                                    "WORKSPACE_WRITE_CONFLICT",
+                                    "POLICY_DENIED",
+                                    "CONCURRENCY_LIMIT",
+                                    "SESSION_NOT_FOUND",
+                                    "BATCH_NOT_FOUND",
+                                    "PROVIDER_UNAVAILABLE",
+                                    "PROVIDER_PROTOCOL_ERROR",
+                                    "LAUNCH_REJECTED",
+                                    "CANCEL_UNSUPPORTED",
+                                    "INVALID_TRANSITION",
+                                    "VERSION_CONFLICT",
+                                    "EXECUTION_IDENTITY_CONFLICT",
+                                    "SESSION_LOST",
+                                    "STATE_UNAVAILABLE",
+                                    "STATE_CORRUPT",
+                                    "ARTIFACT_MISSING",
+                                    "INTEGRITY_FAILURE"
+                                  ]
+                                },
+                                "layer": {
+                                  "type": "string",
+                                  "enum": [
+                                    "validation",
+                                    "configuration",
+                                    "discovery",
+                                    "routing",
+                                    "policy",
+                                    "transport",
+                                    "provider",
+                                    "orchestration",
+                                    "storage",
+                                    "integrity"
+                                  ]
+                                },
+                                "message": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "retryable": {
+                                  "type": "boolean"
+                                },
+                                "details": {
+                                  "type": "object",
+                                  "propertyNames": {
+                                    "type": "string"
+                                  },
+                                  "additionalProperties": {}
+                                },
+                                "cause_id": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                }
+                              },
+                              "required": [
+                                "code",
+                                "layer",
+                                "message",
+                                "retryable"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "session_id",
+                            "error"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "items"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "contract_version",
+              "request_id",
+              "warnings",
+              "data"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "contract_version": {
+                "type": "string",
+                "const": "1.0"
+              },
+              "request_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "error": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "enum": [
+                      "INVALID_ARGUMENT",
+                      "LIMIT_EXCEEDED",
+                      "DUPLICATE_ID",
+                      "UNSUPPORTED_CONTRACT_VERSION",
+                      "CONFIGURATION_INVALID",
+                      "EXECUTABLE_NOT_FOUND",
+                      "EXECUTABLE_CONFLICT",
+                      "HOST_STATE_NOT_FOUND",
+                      "AMBIGUOUS_WORKSPACE",
+                      "REMOTE_WORKSPACE",
+                      "DUPLICATE_WORKSPACE",
+                      "WORKSPACE_UNAVAILABLE",
+                      "WORKSPACE_WRITE_CONFLICT",
+                      "POLICY_DENIED",
+                      "CONCURRENCY_LIMIT",
+                      "SESSION_NOT_FOUND",
+                      "BATCH_NOT_FOUND",
+                      "PROVIDER_UNAVAILABLE",
+                      "PROVIDER_PROTOCOL_ERROR",
+                      "LAUNCH_REJECTED",
+                      "CANCEL_UNSUPPORTED",
+                      "INVALID_TRANSITION",
+                      "VERSION_CONFLICT",
+                      "EXECUTION_IDENTITY_CONFLICT",
+                      "SESSION_LOST",
+                      "STATE_UNAVAILABLE",
+                      "STATE_CORRUPT",
+                      "ARTIFACT_MISSING",
+                      "INTEGRITY_FAILURE"
+                    ]
+                  },
+                  "layer": {
+                    "type": "string",
+                    "enum": [
+                      "validation",
+                      "configuration",
+                      "discovery",
+                      "routing",
+                      "policy",
+                      "transport",
+                      "provider",
+                      "orchestration",
+                      "storage",
+                      "integrity"
+                    ]
+                  },
+                  "message": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "retryable": {
+                    "type": "boolean"
+                  },
+                  "details": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "cause_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "code",
+                  "layer",
+                  "message",
+                  "retryable"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "contract_version",
+              "request_id",
+              "error"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "x-semantic-rules": [
+        "session_ids MUST be unique",
+        "data.items[].session_id MUST be unique",
+        "completed results MUST have complete=true",
+        "failed and canceled results MUST have complete=false"
+      ]
+    },
+    "sessions_cancel": {
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "contract_version": {
+            "type": "string",
+            "const": "1.0"
+          },
+          "session_ids": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "contract_version",
+          "session_ids"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "contract_version": {
+                "type": "string",
+                "const": "1.0"
+              },
+              "request_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "warnings": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "data": {
+                "type": "object",
+                "properties": {
+                  "items": {
+                    "minItems": 1,
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "session_id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "session": {
+                              "type": "object",
+                              "properties": {
+                                "session_id": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "batch_id": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "assignment_id": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "workspace_id": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "agent_preset_id": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "state": {
+                                  "type": "string",
+                                  "enum": [
+                                    "requested",
+                                    "launching",
+                                    "running",
+                                    "canceling",
+                                    "lost",
+                                    "completed",
+                                    "failed",
+                                    "canceled"
+                                  ]
+                                },
+                                "version": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "execution": {
+                                  "type": "object",
+                                  "properties": {
+                                    "adapter": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "execution_id": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "resume_token": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    }
+                                  },
+                                  "required": [
+                                    "adapter",
+                                    "execution_id"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                "stop_reason": {
+                                  "type": "string",
+                                  "enum": [
+                                    "succeeded",
+                                    "succeeded_before_cancellation",
+                                    "invalid_request",
+                                    "policy_denied",
+                                    "dependency_unavailable",
+                                    "launch_error",
+                                    "launch_timeout",
+                                    "execution_error",
+                                    "worker_crash",
+                                    "resource_exhausted",
+                                    "deadline_exceeded",
+                                    "artifact_error",
+                                    "user_requested",
+                                    "orchestrator_shutdown",
+                                    "superseded",
+                                    "policy_revoked"
+                                  ]
+                                },
+                                "artifact_manifest_id": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "created_at": {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                                },
+                                "updated_at": {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                                }
+                              },
+                              "required": [
+                                "session_id",
+                                "workspace_id",
+                                "agent_preset_id",
+                                "state",
+                                "version",
+                                "created_at",
+                                "updated_at"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "session_id",
+                            "session"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "session_id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "error": {
+                              "type": "object",
+                              "properties": {
+                                "code": {
+                                  "type": "string",
+                                  "enum": [
+                                    "INVALID_ARGUMENT",
+                                    "LIMIT_EXCEEDED",
+                                    "DUPLICATE_ID",
+                                    "UNSUPPORTED_CONTRACT_VERSION",
+                                    "CONFIGURATION_INVALID",
+                                    "EXECUTABLE_NOT_FOUND",
+                                    "EXECUTABLE_CONFLICT",
+                                    "HOST_STATE_NOT_FOUND",
+                                    "AMBIGUOUS_WORKSPACE",
+                                    "REMOTE_WORKSPACE",
+                                    "DUPLICATE_WORKSPACE",
+                                    "WORKSPACE_UNAVAILABLE",
+                                    "WORKSPACE_WRITE_CONFLICT",
+                                    "POLICY_DENIED",
+                                    "CONCURRENCY_LIMIT",
+                                    "SESSION_NOT_FOUND",
+                                    "BATCH_NOT_FOUND",
+                                    "PROVIDER_UNAVAILABLE",
+                                    "PROVIDER_PROTOCOL_ERROR",
+                                    "LAUNCH_REJECTED",
+                                    "CANCEL_UNSUPPORTED",
+                                    "INVALID_TRANSITION",
+                                    "VERSION_CONFLICT",
+                                    "EXECUTION_IDENTITY_CONFLICT",
+                                    "SESSION_LOST",
+                                    "STATE_UNAVAILABLE",
+                                    "STATE_CORRUPT",
+                                    "ARTIFACT_MISSING",
+                                    "INTEGRITY_FAILURE"
+                                  ]
+                                },
+                                "layer": {
+                                  "type": "string",
+                                  "enum": [
+                                    "validation",
+                                    "configuration",
+                                    "discovery",
+                                    "routing",
+                                    "policy",
+                                    "transport",
+                                    "provider",
+                                    "orchestration",
+                                    "storage",
+                                    "integrity"
+                                  ]
+                                },
+                                "message": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "retryable": {
+                                  "type": "boolean"
+                                },
+                                "details": {
+                                  "type": "object",
+                                  "propertyNames": {
+                                    "type": "string"
+                                  },
+                                  "additionalProperties": {}
+                                },
+                                "cause_id": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                }
+                              },
+                              "required": [
+                                "code",
+                                "layer",
+                                "message",
+                                "retryable"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "session_id",
+                            "error"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "items"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "contract_version",
+              "request_id",
+              "warnings",
+              "data"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "contract_version": {
+                "type": "string",
+                "const": "1.0"
+              },
+              "request_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "error": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "enum": [
+                      "INVALID_ARGUMENT",
+                      "LIMIT_EXCEEDED",
+                      "DUPLICATE_ID",
+                      "UNSUPPORTED_CONTRACT_VERSION",
+                      "CONFIGURATION_INVALID",
+                      "EXECUTABLE_NOT_FOUND",
+                      "EXECUTABLE_CONFLICT",
+                      "HOST_STATE_NOT_FOUND",
+                      "AMBIGUOUS_WORKSPACE",
+                      "REMOTE_WORKSPACE",
+                      "DUPLICATE_WORKSPACE",
+                      "WORKSPACE_UNAVAILABLE",
+                      "WORKSPACE_WRITE_CONFLICT",
+                      "POLICY_DENIED",
+                      "CONCURRENCY_LIMIT",
+                      "SESSION_NOT_FOUND",
+                      "BATCH_NOT_FOUND",
+                      "PROVIDER_UNAVAILABLE",
+                      "PROVIDER_PROTOCOL_ERROR",
+                      "LAUNCH_REJECTED",
+                      "CANCEL_UNSUPPORTED",
+                      "INVALID_TRANSITION",
+                      "VERSION_CONFLICT",
+                      "EXECUTION_IDENTITY_CONFLICT",
+                      "SESSION_LOST",
+                      "STATE_UNAVAILABLE",
+                      "STATE_CORRUPT",
+                      "ARTIFACT_MISSING",
+                      "INTEGRITY_FAILURE"
+                    ]
+                  },
+                  "layer": {
+                    "type": "string",
+                    "enum": [
+                      "validation",
+                      "configuration",
+                      "discovery",
+                      "routing",
+                      "policy",
+                      "transport",
+                      "provider",
+                      "orchestration",
+                      "storage",
+                      "integrity"
+                    ]
+                  },
+                  "message": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "retryable": {
+                    "type": "boolean"
+                  },
+                  "details": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "cause_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "code",
+                  "layer",
+                  "message",
+                  "retryable"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "contract_version",
+              "request_id",
+              "error"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "x-semantic-rules": [
+        "session_ids MUST be unique",
+        "data.items[].session_id MUST be unique",
+        "an item's session.session_id MUST equal its session_id"
+      ]
+    },
+    "batches_get": {
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "contract_version": {
+            "type": "string",
+            "const": "1.0"
+          },
+          "batch_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "limit": {
+            "default": 50,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "contract_version",
+          "batch_id",
+          "limit"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "contract_version": {
+                "type": "string",
+                "const": "1.0"
+              },
+              "request_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "warnings": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "data": {
+                "type": "object",
+                "properties": {
+                  "batch_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "page": {
+                    "type": "object",
+                    "properties": {
+                      "items": {
+                        "maxItems": 100,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "session_id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "batch_id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "assignment_id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "workspace_id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "agent_preset_id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "state": {
+                              "type": "string",
+                              "enum": [
+                                "requested",
+                                "launching",
+                                "running",
+                                "canceling",
+                                "lost",
+                                "completed",
+                                "failed",
+                                "canceled"
+                              ]
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "execution": {
+                              "type": "object",
+                              "properties": {
+                                "adapter": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "execution_id": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "resume_token": {
+                                  "type": "string",
+                                  "minLength": 1
+                                }
+                              },
+                              "required": [
+                                "adapter",
+                                "execution_id"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "stop_reason": {
+                              "type": "string",
+                              "enum": [
+                                "succeeded",
+                                "succeeded_before_cancellation",
+                                "invalid_request",
+                                "policy_denied",
+                                "dependency_unavailable",
+                                "launch_error",
+                                "launch_timeout",
+                                "execution_error",
+                                "worker_crash",
+                                "resource_exhausted",
+                                "deadline_exceeded",
+                                "artifact_error",
+                                "user_requested",
+                                "orchestrator_shutdown",
+                                "superseded",
+                                "policy_revoked"
+                              ]
+                            },
+                            "artifact_manifest_id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                            },
+                            "updated_at": {
+                              "type": "string",
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                            }
+                          },
+                          "required": [
+                            "session_id",
+                            "workspace_id",
+                            "agent_preset_id",
+                            "state",
+                            "version",
+                            "created_at",
+                            "updated_at"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "has_more": {
+                        "type": "boolean"
+                      },
+                      "next_cursor": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096
+                      }
+                    },
+                    "required": [
+                      "items",
+                      "has_more"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "batch_id",
+                  "name",
+                  "page"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "contract_version",
+              "request_id",
+              "warnings",
+              "data"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "contract_version": {
+                "type": "string",
+                "const": "1.0"
+              },
+              "request_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "error": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "enum": [
+                      "INVALID_ARGUMENT",
+                      "LIMIT_EXCEEDED",
+                      "DUPLICATE_ID",
+                      "UNSUPPORTED_CONTRACT_VERSION",
+                      "CONFIGURATION_INVALID",
+                      "EXECUTABLE_NOT_FOUND",
+                      "EXECUTABLE_CONFLICT",
+                      "HOST_STATE_NOT_FOUND",
+                      "AMBIGUOUS_WORKSPACE",
+                      "REMOTE_WORKSPACE",
+                      "DUPLICATE_WORKSPACE",
+                      "WORKSPACE_UNAVAILABLE",
+                      "WORKSPACE_WRITE_CONFLICT",
+                      "POLICY_DENIED",
+                      "CONCURRENCY_LIMIT",
+                      "SESSION_NOT_FOUND",
+                      "BATCH_NOT_FOUND",
+                      "PROVIDER_UNAVAILABLE",
+                      "PROVIDER_PROTOCOL_ERROR",
+                      "LAUNCH_REJECTED",
+                      "CANCEL_UNSUPPORTED",
+                      "INVALID_TRANSITION",
+                      "VERSION_CONFLICT",
+                      "EXECUTION_IDENTITY_CONFLICT",
+                      "SESSION_LOST",
+                      "STATE_UNAVAILABLE",
+                      "STATE_CORRUPT",
+                      "ARTIFACT_MISSING",
+                      "INTEGRITY_FAILURE"
+                    ]
+                  },
+                  "layer": {
+                    "type": "string",
+                    "enum": [
+                      "validation",
+                      "configuration",
+                      "discovery",
+                      "routing",
+                      "policy",
+                      "transport",
+                      "provider",
+                      "orchestration",
+                      "storage",
+                      "integrity"
+                    ]
+                  },
+                  "message": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "retryable": {
+                    "type": "boolean"
+                  },
+                  "details": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "cause_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "code",
+                  "layer",
+                  "message",
+                  "retryable"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "contract_version",
+              "request_id",
+              "error"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "x-semantic-rules": [
+        "next_cursor MUST be present exactly when has_more=true",
+        "terminal sessions MUST have a state-appropriate stop_reason",
+        "completed sessions MUST have artifact_manifest_id"
+      ]
+    },
+    "batches_wait": {
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "contract_version": {
+            "type": "string",
+            "const": "1.0"
+          },
+          "batch_ids": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "timeout_ms": {
+            "default": 30000,
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 30000
+          },
+          "until": {
+            "default": "all_terminal",
+            "type": "string",
+            "enum": [
+              "any_terminal",
+              "all_terminal"
+            ]
+          }
+        },
+        "required": [
+          "contract_version",
+          "batch_ids",
+          "timeout_ms",
+          "until"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "contract_version": {
+                "type": "string",
+                "const": "1.0"
+              },
+              "request_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "warnings": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "data": {
+                "type": "object",
+                "properties": {
+                  "items": {
+                    "minItems": 1,
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "batch_id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "timed_out": {
+                              "type": "boolean"
+                            },
+                            "counts": {
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string",
+                                "enum": [
+                                  "requested",
+                                  "launching",
+                                  "running",
+                                  "canceling",
+                                  "lost",
+                                  "completed",
+                                  "failed",
+                                  "canceled"
+                                ]
+                              },
+                              "additionalProperties": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "required": [
+                                "requested",
+                                "launching",
+                                "running",
+                                "canceling",
+                                "lost",
+                                "completed",
+                                "failed",
+                                "canceled"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "batch_id",
+                            "timed_out",
+                            "counts"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "batch_id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "error": {
+                              "type": "object",
+                              "properties": {
+                                "code": {
+                                  "type": "string",
+                                  "enum": [
+                                    "INVALID_ARGUMENT",
+                                    "LIMIT_EXCEEDED",
+                                    "DUPLICATE_ID",
+                                    "UNSUPPORTED_CONTRACT_VERSION",
+                                    "CONFIGURATION_INVALID",
+                                    "EXECUTABLE_NOT_FOUND",
+                                    "EXECUTABLE_CONFLICT",
+                                    "HOST_STATE_NOT_FOUND",
+                                    "AMBIGUOUS_WORKSPACE",
+                                    "REMOTE_WORKSPACE",
+                                    "DUPLICATE_WORKSPACE",
+                                    "WORKSPACE_UNAVAILABLE",
+                                    "WORKSPACE_WRITE_CONFLICT",
+                                    "POLICY_DENIED",
+                                    "CONCURRENCY_LIMIT",
+                                    "SESSION_NOT_FOUND",
+                                    "BATCH_NOT_FOUND",
+                                    "PROVIDER_UNAVAILABLE",
+                                    "PROVIDER_PROTOCOL_ERROR",
+                                    "LAUNCH_REJECTED",
+                                    "CANCEL_UNSUPPORTED",
+                                    "INVALID_TRANSITION",
+                                    "VERSION_CONFLICT",
+                                    "EXECUTION_IDENTITY_CONFLICT",
+                                    "SESSION_LOST",
+                                    "STATE_UNAVAILABLE",
+                                    "STATE_CORRUPT",
+                                    "ARTIFACT_MISSING",
+                                    "INTEGRITY_FAILURE"
+                                  ]
+                                },
+                                "layer": {
+                                  "type": "string",
+                                  "enum": [
+                                    "validation",
+                                    "configuration",
+                                    "discovery",
+                                    "routing",
+                                    "policy",
+                                    "transport",
+                                    "provider",
+                                    "orchestration",
+                                    "storage",
+                                    "integrity"
+                                  ]
+                                },
+                                "message": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "retryable": {
+                                  "type": "boolean"
+                                },
+                                "details": {
+                                  "type": "object",
+                                  "propertyNames": {
+                                    "type": "string"
+                                  },
+                                  "additionalProperties": {}
+                                },
+                                "cause_id": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                }
+                              },
+                              "required": [
+                                "code",
+                                "layer",
+                                "message",
+                                "retryable"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "batch_id",
+                            "error"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "items"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "contract_version",
+              "request_id",
+              "warnings",
+              "data"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "contract_version": {
+                "type": "string",
+                "const": "1.0"
+              },
+              "request_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "error": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "enum": [
+                      "INVALID_ARGUMENT",
+                      "LIMIT_EXCEEDED",
+                      "DUPLICATE_ID",
+                      "UNSUPPORTED_CONTRACT_VERSION",
+                      "CONFIGURATION_INVALID",
+                      "EXECUTABLE_NOT_FOUND",
+                      "EXECUTABLE_CONFLICT",
+                      "HOST_STATE_NOT_FOUND",
+                      "AMBIGUOUS_WORKSPACE",
+                      "REMOTE_WORKSPACE",
+                      "DUPLICATE_WORKSPACE",
+                      "WORKSPACE_UNAVAILABLE",
+                      "WORKSPACE_WRITE_CONFLICT",
+                      "POLICY_DENIED",
+                      "CONCURRENCY_LIMIT",
+                      "SESSION_NOT_FOUND",
+                      "BATCH_NOT_FOUND",
+                      "PROVIDER_UNAVAILABLE",
+                      "PROVIDER_PROTOCOL_ERROR",
+                      "LAUNCH_REJECTED",
+                      "CANCEL_UNSUPPORTED",
+                      "INVALID_TRANSITION",
+                      "VERSION_CONFLICT",
+                      "EXECUTION_IDENTITY_CONFLICT",
+                      "SESSION_LOST",
+                      "STATE_UNAVAILABLE",
+                      "STATE_CORRUPT",
+                      "ARTIFACT_MISSING",
+                      "INTEGRITY_FAILURE"
+                    ]
+                  },
+                  "layer": {
+                    "type": "string",
+                    "enum": [
+                      "validation",
+                      "configuration",
+                      "discovery",
+                      "routing",
+                      "policy",
+                      "transport",
+                      "provider",
+                      "orchestration",
+                      "storage",
+                      "integrity"
+                    ]
+                  },
+                  "message": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "retryable": {
+                    "type": "boolean"
+                  },
+                  "details": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "cause_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "code",
+                  "layer",
+                  "message",
+                  "retryable"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "contract_version",
+              "request_id",
+              "error"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "x-semantic-rules": [
+        "batch_ids MUST be unique",
+        "data.items[].batch_id MUST be unique"
+      ]
+    },
+    "batches_recover": {
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "contract_version": {
+            "type": "string",
+            "const": "1.0"
+          },
+          "batch_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "limit": {
+            "default": 50,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "contract_version",
+          "batch_id",
+          "limit"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "contract_version": {
+                "type": "string",
+                "const": "1.0"
+              },
+              "request_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "warnings": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "data": {
+                "type": "object",
+                "properties": {
+                  "batch_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "page": {
+                    "type": "object",
+                    "properties": {
+                      "items": {
+                        "maxItems": 100,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "session_id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "batch_id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "assignment_id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "workspace_id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "agent_preset_id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "state": {
+                              "type": "string",
+                              "enum": [
+                                "requested",
+                                "launching",
+                                "running",
+                                "canceling",
+                                "lost",
+                                "completed",
+                                "failed",
+                                "canceled"
+                              ]
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "execution": {
+                              "type": "object",
+                              "properties": {
+                                "adapter": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "execution_id": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "resume_token": {
+                                  "type": "string",
+                                  "minLength": 1
+                                }
+                              },
+                              "required": [
+                                "adapter",
+                                "execution_id"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "stop_reason": {
+                              "type": "string",
+                              "enum": [
+                                "succeeded",
+                                "succeeded_before_cancellation",
+                                "invalid_request",
+                                "policy_denied",
+                                "dependency_unavailable",
+                                "launch_error",
+                                "launch_timeout",
+                                "execution_error",
+                                "worker_crash",
+                                "resource_exhausted",
+                                "deadline_exceeded",
+                                "artifact_error",
+                                "user_requested",
+                                "orchestrator_shutdown",
+                                "superseded",
+                                "policy_revoked"
+                              ]
+                            },
+                            "artifact_manifest_id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                            },
+                            "updated_at": {
+                              "type": "string",
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                            }
+                          },
+                          "required": [
+                            "session_id",
+                            "workspace_id",
+                            "agent_preset_id",
+                            "state",
+                            "version",
+                            "created_at",
+                            "updated_at"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "has_more": {
+                        "type": "boolean"
+                      },
+                      "next_cursor": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096
+                      }
+                    },
+                    "required": [
+                      "items",
+                      "has_more"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "batch_id",
+                  "name",
+                  "page"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "contract_version",
+              "request_id",
+              "warnings",
+              "data"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "contract_version": {
+                "type": "string",
+                "const": "1.0"
+              },
+              "request_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "error": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "enum": [
+                      "INVALID_ARGUMENT",
+                      "LIMIT_EXCEEDED",
+                      "DUPLICATE_ID",
+                      "UNSUPPORTED_CONTRACT_VERSION",
+                      "CONFIGURATION_INVALID",
+                      "EXECUTABLE_NOT_FOUND",
+                      "EXECUTABLE_CONFLICT",
+                      "HOST_STATE_NOT_FOUND",
+                      "AMBIGUOUS_WORKSPACE",
+                      "REMOTE_WORKSPACE",
+                      "DUPLICATE_WORKSPACE",
+                      "WORKSPACE_UNAVAILABLE",
+                      "WORKSPACE_WRITE_CONFLICT",
+                      "POLICY_DENIED",
+                      "CONCURRENCY_LIMIT",
+                      "SESSION_NOT_FOUND",
+                      "BATCH_NOT_FOUND",
+                      "PROVIDER_UNAVAILABLE",
+                      "PROVIDER_PROTOCOL_ERROR",
+                      "LAUNCH_REJECTED",
+                      "CANCEL_UNSUPPORTED",
+                      "INVALID_TRANSITION",
+                      "VERSION_CONFLICT",
+                      "EXECUTION_IDENTITY_CONFLICT",
+                      "SESSION_LOST",
+                      "STATE_UNAVAILABLE",
+                      "STATE_CORRUPT",
+                      "ARTIFACT_MISSING",
+                      "INTEGRITY_FAILURE"
+                    ]
+                  },
+                  "layer": {
+                    "type": "string",
+                    "enum": [
+                      "validation",
+                      "configuration",
+                      "discovery",
+                      "routing",
+                      "policy",
+                      "transport",
+                      "provider",
+                      "orchestration",
+                      "storage",
+                      "integrity"
+                    ]
+                  },
+                  "message": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "retryable": {
+                    "type": "boolean"
+                  },
+                  "details": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "cause_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "code",
+                  "layer",
+                  "message",
+                  "retryable"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "contract_version",
+              "request_id",
+              "error"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "x-semantic-rules": [
+        "next_cursor MUST be present exactly when has_more=true",
+        "terminal sessions MUST have a state-appropriate stop_reason",
+        "completed sessions MUST have artifact_manifest_id"
+      ]
+    }
+  }
+}
