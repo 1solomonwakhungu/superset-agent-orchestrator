@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { realpathSync } from "node:fs";
 import { access, chmod, copyFile, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -37,7 +36,11 @@ import {
 const HOST = "host-local";
 const ORGANIZATION = "organization-local";
 const TOKEN_CANARY = "ghp_CANARY0000000000000000000000000000";
-const NODE_EXECUTABLE = realpathSync(process.execPath);
+const NODE_FIXTURE_DIRECTORY = await mkdtemp(join(tmpdir(), "orchestrator-secure-node-"));
+const NODE_EXECUTABLE = join(NODE_FIXTURE_DIRECTORY, "node");
+await copyFile(process.execPath, NODE_EXECUTABLE);
+await chmod(NODE_EXECUTABLE, 0o700);
+test.after(async () => rm(NODE_FIXTURE_DIRECTORY, { recursive: true, force: true }));
 
 function project(path: string | null, id = "project-1"): Project {
   return { id, name: "Orchestrator", slug: "orchestrator", repoCloneUrl: null, githubRepositoryId: null, setUp: "yes", path };
