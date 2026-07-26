@@ -2240,45 +2240,166 @@
                               "minLength": 1,
                               "maxLength": 200
                             },
-                            "timed_out": {
-                              "type": "boolean"
-                            },
-                            "counts": {
-                              "type": "object",
-                              "propertyNames": {
-                                "type": "string",
-                                "enum": [
-                                  "requested",
-                                  "launching",
-                                  "running",
-                                  "canceling",
-                                  "lost",
-                                  "completed",
-                                  "failed",
-                                  "canceled"
+                            "sessions": {
+                              "maxItems": 250,
+                              "type": "array",
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "session_id": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      "state": {
+                                        "type": "string",
+                                        "enum": [
+                                          "requested",
+                                          "launching",
+                                          "running",
+                                          "canceling",
+                                          "lost",
+                                          "completed",
+                                          "failed",
+                                          "canceled"
+                                        ]
+                                      },
+                                      "stop_reason": {
+                                        "type": "string",
+                                        "enum": [
+                                          "succeeded",
+                                          "succeeded_before_cancellation",
+                                          "invalid_request",
+                                          "policy_denied",
+                                          "dependency_unavailable",
+                                          "launch_error",
+                                          "launch_timeout",
+                                          "execution_error",
+                                          "worker_crash",
+                                          "resource_exhausted",
+                                          "deadline_exceeded",
+                                          "artifact_error",
+                                          "user_requested",
+                                          "orchestrator_shutdown",
+                                          "superseded",
+                                          "policy_revoked"
+                                        ]
+                                      },
+                                      "changed": {
+                                        "type": "boolean"
+                                      }
+                                    },
+                                    "required": [
+                                      "session_id",
+                                      "state",
+                                      "changed"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "session_id": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      "error": {
+                                        "type": "object",
+                                        "properties": {
+                                          "code": {
+                                            "type": "string",
+                                            "enum": [
+                                              "INVALID_ARGUMENT",
+                                              "LIMIT_EXCEEDED",
+                                              "DUPLICATE_ID",
+                                              "UNSUPPORTED_CONTRACT_VERSION",
+                                              "CONFIGURATION_INVALID",
+                                              "EXECUTABLE_NOT_FOUND",
+                                              "EXECUTABLE_CONFLICT",
+                                              "HOST_STATE_NOT_FOUND",
+                                              "AMBIGUOUS_WORKSPACE",
+                                              "REMOTE_WORKSPACE",
+                                              "DUPLICATE_WORKSPACE",
+                                              "WORKSPACE_UNAVAILABLE",
+                                              "WORKSPACE_WRITE_CONFLICT",
+                                              "POLICY_DENIED",
+                                              "CONCURRENCY_LIMIT",
+                                              "SESSION_NOT_FOUND",
+                                              "BATCH_NOT_FOUND",
+                                              "PROVIDER_UNAVAILABLE",
+                                              "PROVIDER_PROTOCOL_ERROR",
+                                              "LAUNCH_REJECTED",
+                                              "CANCEL_UNSUPPORTED",
+                                              "INVALID_TRANSITION",
+                                              "VERSION_CONFLICT",
+                                              "EXECUTION_IDENTITY_CONFLICT",
+                                              "SESSION_LOST",
+                                              "STATE_UNAVAILABLE",
+                                              "STATE_CORRUPT",
+                                              "ARTIFACT_MISSING",
+                                              "INTEGRITY_FAILURE"
+                                            ]
+                                          },
+                                          "layer": {
+                                            "type": "string",
+                                            "enum": [
+                                              "validation",
+                                              "configuration",
+                                              "discovery",
+                                              "routing",
+                                              "policy",
+                                              "transport",
+                                              "provider",
+                                              "orchestration",
+                                              "storage",
+                                              "integrity"
+                                            ]
+                                          },
+                                          "message": {
+                                            "type": "string",
+                                            "minLength": 1
+                                          },
+                                          "retryable": {
+                                            "type": "boolean"
+                                          },
+                                          "details": {
+                                            "type": "object",
+                                            "propertyNames": {
+                                              "type": "string"
+                                            },
+                                            "additionalProperties": {}
+                                          },
+                                          "cause_id": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 200
+                                          }
+                                        },
+                                        "required": [
+                                          "code",
+                                          "layer",
+                                          "message",
+                                          "retryable"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    },
+                                    "required": [
+                                      "session_id",
+                                      "error"
+                                    ],
+                                    "additionalProperties": false
+                                  }
                                 ]
-                              },
-                              "additionalProperties": {
-                                "type": "integer",
-                                "minimum": 0,
-                                "maximum": 9007199254740991
-                              },
-                              "required": [
-                                "requested",
-                                "launching",
-                                "running",
-                                "canceling",
-                                "lost",
-                                "completed",
-                                "failed",
-                                "canceled"
-                              ]
+                              }
                             }
                           },
                           "required": [
                             "batch_id",
-                            "timed_out",
-                            "counts"
+                            "sessions"
                           ],
                           "additionalProperties": false
                         },

@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { batchCancelResultSchema } from "../src/tool-contract.js";
 
 async function withServer(run: (client: Client) => Promise<void>): Promise<void> {
   const directory = await mkdtemp(join(tmpdir(), "orchestrator-lifecycle-mcp-"));
@@ -70,12 +71,15 @@ test("the default backend refuses cancellation honestly over MCP", async () => w
 
 test("batch cancellation reports unknown batches without failing the call", async () => withServer(async (client) => {
   const created = await createBatch(client, "cancel-batch", ["one"]);
-  const cancelled = await call<{ items: Array<Record<string, unknown>> }>(client, "batches_cancel", {
+  const cancelled = await call<unknown>(client, "batches_cancel", {
     batchIds: [created.batch.id, "missing-batch"],
   });
+  const parsed = batchCancelResultSchema.parse(cancelled);
 
-  assert.equal((cancelled.items[0]!.sessions as Array<{ error: string }>)[0]!.error, "CANCEL_UNSUPPORTED");
-  assert.equal(cancelled.items[1]!.error, "BATCH_NOT_FOUND");
+  const first = parsed.data.items[0]!;
+  const second = parsed.data.items[1]!;
+  assert.equal("sessions" in first && "error" in first.sessions[0]! ? first.sessions[0].error.code : undefined, "CANCEL_UNSUPPORTED");
+  assert.equal("error" in second ? second.error.code : undefined, "BATCH_NOT_FOUND");
 }));
 
 test("a bounded wait returns exact partial counts rather than hanging", async () => withServer(async (client) => {

@@ -467,6 +467,9 @@ export class DurableStore {
     execution: { pid: number; processStartedAt: string } | undefined = undefined,
   ): Promise<Worker> {
     return this.updateWorker(workerId, (worker) => {
+      if (DurableStore.isTerminal(worker.status)) {
+        throw new BatchQueryError("invalid_request", "Cannot bind a terminal worker to a run");
+      }
       if (worker.runId !== undefined && worker.runId !== runId) {
         throw new BatchQueryError("invalid_request", "Worker is already bound to another run");
       }
@@ -495,22 +498,37 @@ export class DurableStore {
     workerId: string,
     reason: CancellationReason = "user_requested",
     options: { detail?: string; at?: Date } = {},
-  ): Promise<{ worker: Worker; claimed: boolean }> {
+  ): Promise<{ worker: Worker; claimed: boolean; local: boolean }> {
     if (!CANCELLATION_REASONS.has(reason)) {
       throw new BatchQueryError("invalid_request", `Unsupported cancellation reason: ${reason}`);
     }
     const at = options.at ?? new Date();
     let claimed = false;
+    let local = false;
     const worker = await this.updateWorker(workerId, (candidate) => {
       if (DurableStore.isTerminal(candidate.status) || candidate.status === "canceling") return;
       claimed = true;
+      if (candidate.runId === undefined) {
+        local = true;
+        candidate.status = "canceled";
+        candidate.completedAt = at.toISOString();
+        candidate.stopReason = reason;
+        if (options.detail !== undefined) candidate.stopDetail = options.detail;
+        return;
+      }
       candidate.preCancelStatus = candidate.status;
       candidate.status = "canceling";
       candidate.cancelRequestedAt = at.toISOString();
       candidate.stopReason = reason;
       if (options.detail !== undefined) candidate.stopDetail = options.detail;
     });
-    return { worker, claimed };
+    return { worker, claimed, local };
+  }
+
+  /** Returns bound cancellations that still need a provider terminal observation. */
+  async cancelingWorkers(): Promise<Worker[]> {
+    return this.withFreshState(() => structuredClone(this.state.workers
+      .filter((worker) => worker.status === "canceling" && worker.runId !== undefined)));
   }
 
   /**
@@ -559,6 +577,31 @@ export class DurableStore {
     });
   }
 
+  /** Records a provider terminal observation only if cancellation is still pending. */
+  async settleWorkerCancellation(
+    workerId: string,
+    status: TerminalWorkerStatus,
+    options: { result?: unknown; stopReason?: string; at?: Date } = {},
+  ): Promise<{ worker: Worker; claimed: boolean }> {
+    const at = options.at ?? new Date();
+    let claimed = false;
+    const worker = await this.updateWorker(workerId, (candidate) => {
+      if (candidate.status !== "canceling") return;
+      claimed = true;
+      candidate.status = status;
+      candidate.completedAt = at.toISOString();
+      if (options.result !== undefined) candidate.result = options.result;
+      delete candidate.preCancelStatus;
+      const stopReason = options.stopReason
+        ?? (status === "succeeded" ? "succeeded_before_cancellation" : undefined)
+        ?? (status === "canceled" ? (candidate.stopReason ?? "user_requested") : undefined)
+        ?? (status === "failed" ? "execution_error" : undefined);
+      if (stopReason === undefined) delete candidate.stopReason;
+      else candidate.stopReason = stopReason;
+    });
+    return { worker, claimed };
+  }
+
   /**
    * Expires one worker whose deadline passed. Per the state machine this is `failed`/`deadline_exceeded`.
    * Only the caller that performed the transition receives `claimed: true`, so concurrent sweeps report
@@ -569,7 +612,9 @@ export class DurableStore {
     let claimed = false;
     const worker = await this.updateWorker(workerId, (candidate) => {
       if (options.deadline !== undefined) candidate.deadlineAt = options.deadline.toISOString();
-      if (DurableStore.isTerminal(candidate.status)) return;
+      if (DurableStore.isTerminal(candidate.status)
+        || candidate.deadlineAt === undefined
+        || candidate.deadlineAt > at.toISOString()) return;
       claimed = true;
       candidate.status = "failed";
       candidate.stopReason = "deadline_exceeded";

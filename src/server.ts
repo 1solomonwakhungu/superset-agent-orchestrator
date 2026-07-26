@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { BatchQueryError, DurableStore } from "./store.js";
 import type { AgentAdapter } from "./agent-adapter.js";
 import { LifecycleService, MAX_LIFECYCLE_WAIT_MS } from "./lifecycle-service.js";
+import { batchCancelResultSchema, CONTRACT_VERSION, errorDefinitions, type ErrorCode } from "./tool-contract.js";
 
 const statePath = process.env.SUPERSET_ORCHESTRATOR_STATE
   ?? join(homedir(), ".local", "share", "superset-agent-orchestrator", "state.json");
@@ -43,6 +45,10 @@ function batchError(error: unknown) {
   return { ...result(value), isError: true };
 }
 
+function contractError(code: ErrorCode, message: string) {
+  return { code, ...errorDefinitions[code], message };
+}
+
 async function main(): Promise<void> {
   const reconciliation = await store.reconcile();
   console.error(`Startup reconciliation complete: ${JSON.stringify(reconciliation)}`);
@@ -54,10 +60,10 @@ async function main(): Promise<void> {
   reconciliationTimer.unref();
 
   const deadlineTimer = setInterval(() => {
-    lifecycle.enforceDeadlines().then((expired) => {
+    Promise.all([lifecycle.enforceDeadlines(), lifecycle.reconcileCancellations()]).then(([expired]) => {
       if (expired.length > 0) console.error(`Deadlines enforced: ${JSON.stringify(expired)}`);
     }).catch((error: unknown) => {
-      console.error(`Deadline enforcement failed: ${error instanceof Error ? error.message : error}`);
+      console.error(`Lifecycle enforcement failed: ${error instanceof Error ? error.message : error}`);
     });
   }, Number(process.env.SUPERSET_ORCHESTRATOR_DEADLINE_MS ?? 5_000));
   deadlineTimer.unref();
@@ -144,16 +150,34 @@ async function main(): Promise<void> {
       const items = [];
       for (const batchId of unique) {
         try {
-          items.push({ batchId, sessions: await lifecycle.cancelBatch(batchId, reason, detail) });
+          const sessions = (await lifecycle.cancelBatch(batchId, reason, detail)).map((outcome) => {
+            if ("error" in outcome) {
+              return { session_id: outcome.sessionId, error: contractError(outcome.error, outcome.message) };
+            }
+            return {
+              session_id: outcome.sessionId,
+              state: contractState(outcome.status),
+              ...(outcome.stopReason === undefined ? {} : { stop_reason: outcome.stopReason }),
+              changed: outcome.changed,
+            };
+          });
+          items.push({ batch_id: batchId, sessions });
         } catch (error) {
           items.push({
-            batchId,
-            error: error instanceof BatchQueryError && error.code === "not_found" ? "BATCH_NOT_FOUND" : "internal_error",
-            message: error instanceof Error ? error.message : String(error),
+            batch_id: batchId,
+            error: contractError(
+              error instanceof BatchQueryError && error.code === "not_found" ? "BATCH_NOT_FOUND" : "STATE_UNAVAILABLE",
+              error instanceof Error ? error.message : String(error),
+            ),
           });
         }
       }
-      return result({ items });
+      return result(batchCancelResultSchema.parse({
+        contract_version: CONTRACT_VERSION,
+        request_id: randomUUID(),
+        warnings: [],
+        data: { items },
+      }));
     },
   );
   server.registerTool(
@@ -242,6 +266,12 @@ async function main(): Promise<void> {
   );
 
   await server.connect(new StdioServerTransport());
+}
+
+function contractState(status: import("./store.js").WorkerStatus) {
+  if (status === "succeeded") return "completed" as const;
+  if (status === "unknown_outcome") return "lost" as const;
+  return status;
 }
 
 main().catch((error: unknown) => {

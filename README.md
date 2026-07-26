@@ -31,16 +31,19 @@ Recovery tools:
 
 Lifecycle tools:
 
-* `sessions_cancel` and `batches_cancel` request cancellation. Intent is persisted before the provider is
-  called, repeated and concurrent requests issue exactly one stop command, and a backend without supported
-  cancellation returns `CANCEL_UNSUPPORTED` without changing durable state.
-* `batches_wait` waits at most 30 seconds and returns exact partial counts on timeout rather than an error.
-* `sessions_set_deadline` and `deadlines_enforce` expire overdue nonterminal sessions as `failed` with stop
-  reason `deadline_exceeded`. The server also sweeps deadlines on a background interval.
+* `sessions_cancel` and `batches_cancel` persist cancellation intent before the
+  provider call. Repeated and concurrent requests issue exactly one stop command.
+  Unsupported backends return `CANCEL_UNSUPPORTED` without changing state.
+* `batches_wait` waits at most 30 seconds and returns exact partial counts on
+  timeout rather than an error.
+* `sessions_set_deadline` and `deadlines_enforce` expire overdue nonterminal
+  sessions as `failed` with stop reason `deadline_exceeded`. The server also
+  sweeps deadlines on a background interval.
 
-Set `SUPERSET_ORCHESTRATOR_STATE` to choose the state file. By default it is stored at
-`~/.local/share/superset-agent-orchestrator/state.json`. `SUPERSET_ORCHESTRATOR_DEADLINE_MS` sets the
-background deadline sweep interval and defaults to 5000 milliseconds.
+Set `SUPERSET_ORCHESTRATOR_STATE` to choose the state file. By default it is
+stored at `~/.local/share/superset-agent-orchestrator/state.json`.
+`SUPERSET_ORCHESTRATOR_DEADLINE_MS` sets the background deadline sweep interval
+and defaults to 5000 milliseconds.
 
 ## Configuration contract
 
