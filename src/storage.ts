@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { createRepositories, type Repositories } from "./repositories.js";
 
 export const CURRENT_SCHEMA_VERSION = 2;
 
@@ -15,6 +16,14 @@ export interface CleanupSummary {
   resultsRedacted: number;
   idempotencyDeleted: number;
   leasesDeleted: number;
+}
+
+export interface IntegrityReport {
+  ok: boolean;
+  schemaVersion?: number;
+  databaseErrors: string[];
+  foreignKeyErrors: Record<string, unknown>[];
+  schemaErrors: string[];
 }
 
 interface Migration { version: number; up: string; down: string }
@@ -72,9 +81,91 @@ const migrations: Migration[] = [
 
 const sqlTimestamp = (date: Date): string => date.toISOString();
 const cutoff = (now: Date, days: number): string => new Date(now.getTime() - days * 86_400_000).toISOString();
+const durableTables = ["schema_migrations", "batches", "assignments", "sessions", "results", "events", "workspace_leases", "idempotency_records"];
+
+function applyMigrations(database: DatabaseSync, targetVersion: number): void {
+  database.exec("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL) STRICT;");
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    const current = (database.prepare("SELECT COALESCE(MAX(version), 0) version FROM schema_migrations").get() as { version: number }).version;
+    if (current > targetVersion) throw new Error("Use rollback() to move to an older schema");
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+  for (const migration of migrations.filter(({ version }) => version <= targetVersion)) {
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      const current = (database.prepare("SELECT COALESCE(MAX(version), 0) version FROM schema_migrations").get() as { version: number }).version;
+      if (current > targetVersion) throw new Error("Use rollback() to move to an older schema");
+      if (migration.version > current) {
+        database.exec(migration.up);
+        database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(migration.version, new Date().toISOString());
+      }
+      database.exec("COMMIT");
+    } catch (error) {
+      database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+}
+
+function schemaDefinitions(database: DatabaseSync): Map<string, string> {
+  const rows = database.prepare(`SELECT type, name, sql FROM sqlite_schema
+    WHERE name NOT LIKE 'sqlite_%' AND sql IS NOT NULL ORDER BY type, name`).all() as { type: string; name: string; sql: string }[];
+  return new Map(rows.map(({ type, name, sql }) => [`${type}:${name}`, sql.replaceAll(/\s+/g, " ").trim()]));
+}
+
+function expectedSchemaDefinitions(version: number): Map<string, string> {
+  const database = new DatabaseSync(":memory:");
+  try {
+    database.exec("PRAGMA foreign_keys = ON");
+    applyMigrations(database, version);
+    return schemaDefinitions(database);
+  } finally {
+    database.close();
+  }
+}
+
+function validateSchema(database: DatabaseSync, report: IntegrityReport, expectedVersion = CURRENT_SCHEMA_VERSION): void {
+  const migrations = database.prepare("SELECT version FROM schema_migrations ORDER BY version").all()
+    .map((row) => Number((row as { version: number }).version));
+  report.schemaVersion = migrations.at(-1) ?? 0;
+  const expectedVersions = Array.from({ length: report.schemaVersion }, (_, index) => index + 1);
+  if (JSON.stringify(migrations) !== JSON.stringify(expectedVersions)) report.schemaErrors.push("migration ledger is not contiguous");
+  if (report.schemaVersion !== expectedVersion) {
+    report.schemaErrors.push(`expected schema version ${expectedVersion}, found ${report.schemaVersion}`);
+    return;
+  }
+  const expected = expectedSchemaDefinitions(expectedVersion);
+  const actual = schemaDefinitions(database);
+  for (const [object, sql] of expected) {
+    if (!actual.has(object)) report.schemaErrors.push(`missing required ${object.replace(":", " ")}`);
+    else if (actual.get(object) !== sql) report.schemaErrors.push(`definition mismatch for ${object.replace(":", " ")}`);
+  }
+  for (const object of actual.keys()) {
+    if (!expected.has(object)) report.schemaErrors.push(`unexpected schema object ${object}`);
+  }
+}
+
+function inspectIntegrity(database: DatabaseSync): IntegrityReport {
+  const report: IntegrityReport = { ok: false, databaseErrors: [], foreignKeyErrors: [], schemaErrors: [] };
+  try {
+    report.databaseErrors = (database.prepare("PRAGMA integrity_check").all() as { integrity_check: string }[])
+      .map(({ integrity_check }) => integrity_check).filter((message) => message !== "ok");
+    report.foreignKeyErrors = database.prepare("PRAGMA foreign_key_check").all();
+    validateSchema(database, report);
+  } catch (error) {
+    report.databaseErrors.push((error as Error).message);
+  }
+  report.ok = report.databaseErrors.length === 0 && report.foreignKeyErrors.length === 0 && report.schemaErrors.length === 0;
+  return report;
+}
 
 export class OrchestratorStorage {
   readonly database: DatabaseSync;
+  readonly repositories!: Repositories;
   private readonly resultRetentionDays: number;
   private readonly idempotencyRetentionDays: number;
 
@@ -82,13 +173,41 @@ export class OrchestratorStorage {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.resultRetentionDays = options.resultRetentionDays ?? 30;
     this.idempotencyRetentionDays = options.idempotencyRetentionDays ?? 7;
+    if (!Number.isFinite(this.resultRetentionDays) || this.resultRetentionDays < 0) {
+      throw new Error("resultRetentionDays must be a finite non-negative number");
+    }
+    if (!Number.isFinite(this.idempotencyRetentionDays) || this.idempotencyRetentionDays < 0) {
+      throw new Error("idempotencyRetentionDays must be a finite non-negative number");
+    }
     this.database = new DatabaseSync(path);
     try {
       this.database.exec("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
       const integrity = this.database.prepare("PRAGMA quick_check").get() as { quick_check: string };
       if (integrity.quick_check !== "ok") throw new Error(`integrity check failed: ${integrity.quick_check}`);
+      const objects = Number(this.database.prepare("SELECT COUNT(*) count FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'").get()?.count);
+      if (objects > 0) {
+        const ledger = this.database.prepare("SELECT COUNT(*) count FROM sqlite_schema WHERE type = 'table' AND name = 'schema_migrations'").get();
+        if (Number(ledger?.count) !== 1) throw new Error("schema validation failed: existing registry has no migration ledger");
+        const version = this.schemaVersion();
+        if (version > CURRENT_SCHEMA_VERSION) throw new Error(`Unsupported future schema version ${version}`);
+        const preMigrationReport: IntegrityReport = { ok: false, databaseErrors: [], foreignKeyErrors: [], schemaErrors: [] };
+        validateSchema(this.database, preMigrationReport, version);
+        if (preMigrationReport.schemaErrors.length > 0) {
+          throw new Error(`schema validation failed before migration: ${preMigrationReport.schemaErrors.join("; ")}`);
+        }
+        const preMigrationForeignKeyErrors = this.database.prepare("PRAGMA foreign_key_check").all();
+        if (preMigrationForeignKeyErrors.length > 0) {
+          throw new Error(`foreign key validation failed before migration: ${preMigrationForeignKeyErrors.length} violation(s)`);
+        }
+      }
       if (path !== ":memory:") this.database.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;");
       this.migrate();
+      const schemaReport: IntegrityReport = { ok: false, databaseErrors: [], foreignKeyErrors: [], schemaErrors: [] };
+      validateSchema(this.database, schemaReport);
+      if (schemaReport.schemaErrors.length > 0) throw new Error(`schema validation failed: ${schemaReport.schemaErrors.join("; ")}`);
+      const foreignKeyErrors = this.database.prepare("PRAGMA foreign_key_check").all();
+      if (foreignKeyErrors.length > 0) throw new Error(`foreign key validation failed: ${foreignKeyErrors.length} violation(s)`);
+      this.repositories = createRepositories(this.database);
     } catch (error) {
       this.database.close();
       throw new Error(`Cannot open orchestrator registry at ${path}: ${(error as Error).message}`, { cause: error });
@@ -105,16 +224,7 @@ export class OrchestratorStorage {
     if (!Number.isInteger(targetVersion) || targetVersion < 0 || targetVersion > CURRENT_SCHEMA_VERSION) {
       throw new Error(`Unsupported schema version ${targetVersion}`);
     }
-    this.database.exec("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL) STRICT;");
-    const current = this.schemaVersion();
-    if (current > targetVersion) throw new Error("Use rollback() to move to an older schema");
-    for (const migration of migrations.filter(({ version }) => version > current && version <= targetVersion)) {
-      this.transaction(() => {
-        this.database.exec(migration.up);
-        this.database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
-          .run(migration.version, new Date().toISOString());
-      });
-    }
+    applyMigrations(this.database, targetVersion);
   }
 
   rollback(targetVersion: number, backupPath: string): void {
@@ -154,8 +264,8 @@ export class OrchestratorStorage {
         "DELETE FROM idempotency_records WHERE expires_at < ? OR created_at < ?",
       ).run(sqlTimestamp(now), expiredIdempotency).changes);
       const leasesDeleted = Number(this.database.prepare(
-        "DELETE FROM workspace_leases WHERE expires_at < ? OR released_at IS NOT NULL",
-      ).run(sqlTimestamp(now)).changes);
+        "DELETE FROM workspace_leases WHERE released_at IS NOT NULL",
+      ).run().changes);
       if (assignmentsRedacted + resultsRedacted + idempotencyDeleted + leasesDeleted > 0) {
         this.appendEvent({ aggregateType: "registry", aggregateId: "maintenance", eventType: "retention.cleanup_completed",
           actor: "system", data: { assignmentsRedacted, resultsRedacted, idempotencyDeleted, leasesDeleted }, occurredAt: now });
@@ -165,11 +275,41 @@ export class OrchestratorStorage {
   }
 
   exportJson(path: string): void {
-    const tables = ["schema_migrations", "batches", "assignments", "sessions", "results", "events", "workspace_leases", "idempotency_records"];
-    const output = { format: "superset-agent-orchestrator-export", formatVersion: 1,
+    const output = this.transaction(() => ({ format: "superset-agent-orchestrator-export", formatVersion: 1,
       schemaVersion: this.schemaVersion(), exportedAt: new Date().toISOString(),
-      tables: Object.fromEntries(tables.map((table) => [table, this.database.prepare(`SELECT * FROM ${table}`).all()])) };
+      tables: Object.fromEntries(durableTables.map((table) => [table, this.database.prepare(`SELECT * FROM ${table}`).all()])) }));
     this.writeAtomically(path, `${JSON.stringify(output, null, 2)}\n`);
+  }
+
+  static exportJson(path: string, outputPath: string): void {
+    const database = new DatabaseSync(path, { readOnly: true });
+    try {
+      database.exec("BEGIN");
+      const report = inspectIntegrity(database);
+      if (!report.ok) throw new Error(`Cannot export invalid registry: ${[...report.databaseErrors, ...report.schemaErrors].join("; ")}`);
+      const output = { format: "superset-agent-orchestrator-export", formatVersion: 1,
+        schemaVersion: report.schemaVersion, exportedAt: new Date().toISOString(),
+        tables: Object.fromEntries(durableTables.map((table) => [table, database.prepare(`SELECT * FROM ${table}`).all()])) };
+      database.exec("COMMIT");
+      this.writeFileAtomically(outputPath, `${JSON.stringify(output, null, 2)}\n`);
+    } catch (error) {
+      try { database.exec("ROLLBACK"); } catch { /* The transaction may already be closed. */ }
+      throw error;
+    } finally {
+      database.close();
+    }
+  }
+
+  static checkIntegrity(path: string): IntegrityReport {
+    let database: DatabaseSync | undefined;
+    try {
+      database = new DatabaseSync(path, { readOnly: true });
+      return inspectIntegrity(database);
+    } catch (error) {
+      return { ok: false, databaseErrors: [(error as Error).message], foreignKeyErrors: [], schemaErrors: [] };
+    } finally {
+      database?.close();
+    }
   }
 
   backup(path: string): void {
@@ -181,18 +321,24 @@ export class OrchestratorStorage {
     this.database.exec(`VACUUM INTO '${destination.replaceAll("'", "''")}'`);
     const verification = new DatabaseSync(destination, { readOnly: true });
     try {
-      const result = verification.prepare("PRAGMA integrity_check").get() as { integrity_check: string };
-      if (result.integrity_check !== "ok") throw new Error(`Backup integrity check failed: ${result.integrity_check}`);
+      const report = inspectIntegrity(verification);
+      if (!report.ok) {
+        throw new Error(`Backup integrity check failed: ${[...report.databaseErrors, ...report.schemaErrors].join("; ")}`);
+      }
     } finally { verification.close(); }
   }
 
-  private transaction<T>(operation: () => T): T {
+  transaction<T>(operation: () => T): T {
     this.database.exec("BEGIN IMMEDIATE");
     try { const result = operation(); this.database.exec("COMMIT"); return result; }
     catch (error) { this.database.exec("ROLLBACK"); throw error; }
   }
 
   private writeAtomically(path: string, contents: string): void {
+    OrchestratorStorage.writeFileAtomically(path, contents);
+  }
+
+  private static writeFileAtomically(path: string, contents: string): void {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
     try {

@@ -39,7 +39,7 @@ Cleanup is transactional and conservative:
 - Expired results lose response text and artifact payloads.
 - Assignment, session, result, batch, requester, workspace, timestamps, states, and stop reasons remain for attribution.
 - Events are never deleted or changed.
-- Expired or released workspace leases are deleted.
+- Released workspace leases are deleted. Expiry alone never releases or deletes a writer lease; reconciliation must first prove release.
 - Idempotency records are deleted after their explicit expiry or configured maximum age.
 - A `retention.cleanup_completed` event records cleanup counts.
 
@@ -48,6 +48,15 @@ Run export and backup before shortening retention. Cleanup is idempotent and nev
 ## Export and backup
 
 `exportJson(path)` writes an atomic, UTF-8, versioned logical export containing every table and the schema version. Exports can be inspected without SQLite and are intended for portability and support. Sensitive prompt and result payloads remain present until retention cleanup, so exports require the same access controls as the live registry.
+
+The operator CLI exposes both supported diagnostics without opening Superset private storage:
+
+```sh
+superset-agent-orchestrator-storage export --database registry.sqlite --output export.json
+superset-agent-orchestrator-storage integrity-check --database registry.sqlite
+```
+
+Integrity checks open the registry read-only and verify all SQLite integrity results, foreign keys, the contiguous migration ledger, and required tables, triggers, and indexes. The command exits nonzero on any failure and never migrates or repairs the live registry.
 
 `backup(path)` checkpoints WAL, uses SQLite `VACUUM INTO` for a consistent online physical backup, and opens the result read-only for `PRAGMA integrity_check`. A backup never targets the live database path. Operators should keep periodic backups outside the registry directory and test restores using the exact application version that created them.
 
