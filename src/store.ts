@@ -326,7 +326,7 @@ const assignmentSchema = z.strictObject({
   updatedAt: z.iso.datetime(), runId: z.string().min(1).optional(), error: z.string().min(1).optional(),
   errorCode: z.string().min(1).optional(),
 });
-const resultClaimSchema = z.object({
+const resultClaimSchema = z.strictObject({
   status: z.enum(["succeeded", "failed", "cancelled", "stopped_without_result", "malformed"]),
   completeness: z.enum(["complete", "empty", "partial", "missing", "malformed"]),
   output: z.string().optional(), error: z.string().min(1).optional(), retryable: z.boolean().optional(),
@@ -438,8 +438,8 @@ const stateSchema = z.strictObject({
   }
   for (const assignment of state.assignments) {
     const batch = batchById.get(assignment.batchId);
-    if (!sessionIds.has(assignment.sessionId) || batch === undefined) {
-      context.addIssue({ code: "custom", message: `Assignment ${assignment.id} has inconsistent durable identity` });
+    if (batch === undefined || !sessionIds.has(assignment.sessionId)) {
+      context.addIssue({ code: "custom", message: `Assignment ${assignment.id} has invalid batch or session identity` });
     }
   }
   for (const event of state.auditEvents) {
