@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { AgentAdapter, RunResult, TerminalRunStatus } from "./agent-adapter.js";
+import { assertBoundedOptionalText, assertIdentifier, MAX_RESULT_BYTES } from "./security.js";
 import { parseProviderResult, parseProviderStatus, ProviderProtocolError } from "./provider-protocol.js";
 import { DurableStore, type AgentResultClaim, type CapturedResult } from "./store.js";
 
@@ -57,11 +58,11 @@ export class ResultCaptureService {
   }
 
   async ingest(assignmentId: string, deliveryId: string, delivery: ResultDelivery) {
-    if (deliveryId.length === 0) throw new Error("deliveryId must not be empty");
+    assertIdentifier(deliveryId, "deliveryId");
     const assignment = await this.store.assignmentForResult(assignmentId);
     if (assignment.runId === undefined) throw new Error("Result ingestion requires a bound run ID");
     requireExactIdentities(assignment);
-    const claim = normalize(delivery);
+    const claim = boundedClaim(this.store.redactValue(normalize(delivery)) as AgentResultClaim);
     const deliveryFingerprint = createHash("sha256").update(canonical({
       assignmentId: assignment.id,
       batchId: assignment.batchId,
@@ -96,6 +97,30 @@ export class ResultCaptureService {
 function isTransientProviderError(error: unknown): boolean {
   if (error === null || typeof error !== "object" || !("code" in error)) return false;
   return error.code === "PROVIDER_UNAVAILABLE";
+}
+
+function boundedClaim(claim: AgentResultClaim): AgentResultClaim {
+  let remaining = MAX_RESULT_BYTES;
+  const bounded = (value: string | undefined, name: string): string | undefined => {
+    if (value === undefined) return undefined;
+    assertBoundedOptionalText(value, name, remaining);
+    remaining -= Buffer.byteLength(value, "utf8");
+    return value;
+  };
+  return {
+    status: claim.status,
+    completeness: claim.completeness,
+    ...(claim.retryable === undefined ? {} : { retryable: claim.retryable }),
+    ...(claim.output === undefined ? {} : { output: bounded(claim.output, "result output")! }),
+    ...(claim.error === undefined ? {} : { error: bounded(claim.error, "result error")! }),
+    ...(claim.stopReason === undefined ? {} : { stopReason: bounded(claim.stopReason, "result stop reason")! }),
+    ...(claim.resume === undefined ? {} : {
+      resume: {
+        adapter: bounded(claim.resume.adapter, "result resume adapter")!,
+        token: bounded(claim.resume.token, "result resume token")!,
+      },
+    }),
+  };
 }
 
 function requireExactIdentities(assignment: {
