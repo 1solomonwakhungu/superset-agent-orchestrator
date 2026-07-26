@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { batchCancelResultSchema } from "../src/tool-contract.js";
+import { batchCancelResultSchema, cancelResultSchema, waitResultSchema } from "../src/tool-contract.js";
 
 async function withServer(run: (client: Client) => Promise<void>): Promise<void> {
   const directory = await mkdtemp(join(tmpdir(), "orchestrator-lifecycle-mcp-"));
@@ -55,13 +55,12 @@ test("the default backend refuses cancellation honestly over MCP", async () => w
   const created = await createBatch(client, "cancel-unsupported", ["one", "two"]);
   const sessionIds = created.sessions.map(({ sessionId }) => sessionId);
 
-  const cancelled = await call<{ items: Array<{ sessionId: string; error: string; status: string }> }>(
-    client, "sessions_cancel", { sessionIds },
-  );
-  assert.equal(cancelled.items.length, 2);
-  for (const item of cancelled.items) {
-    assert.equal(item.error, "CANCEL_UNSUPPORTED");
-    assert.equal(item.status, "requested");
+  const cancelled = cancelResultSchema.parse(await call<unknown>(
+    client, "sessions_cancel", { contract_version: "1.0", session_ids: sessionIds },
+  ));
+  assert.equal(cancelled.data.items.length, 2);
+  for (const item of cancelled.data.items) {
+    assert.equal("error" in item ? item.error.code : undefined, "CANCEL_UNSUPPORTED");
   }
 
   const status = await call<{ summary: { counts: Record<string, number> } }>(client, "batches_status", { batchId: created.batch.id });
@@ -72,7 +71,7 @@ test("the default backend refuses cancellation honestly over MCP", async () => w
 test("batch cancellation reports unknown batches without failing the call", async () => withServer(async (client) => {
   const created = await createBatch(client, "cancel-batch", ["one"]);
   const cancelled = await call<unknown>(client, "batches_cancel", {
-    batchIds: [created.batch.id, "missing-batch"],
+    contract_version: "1.0", batch_ids: [created.batch.id, "missing-batch"],
   });
   const parsed = batchCancelResultSchema.parse(cancelled);
 
@@ -85,20 +84,19 @@ test("batch cancellation reports unknown batches without failing the call", asyn
 test("a bounded wait returns exact partial counts rather than hanging", async () => withServer(async (client) => {
   const created = await createBatch(client, "wait", ["one", "two"]);
   const started = Date.now();
-  const waited = await call<{ items: Array<{ batchId: string; timedOut: boolean; total: number; settled: number }> }>(
-    client, "batches_wait", { batchIds: [created.batch.id], timeoutMs: 150 },
-  );
+  const waited = waitResultSchema.parse(await call<unknown>(
+    client, "batches_wait", { contract_version: "1.0", batch_ids: [created.batch.id], timeout_ms: 150 },
+  ));
 
-  assert.equal(waited.items[0]!.timedOut, true);
-  assert.equal(waited.items[0]!.total, 2);
-  assert.equal(waited.items[0]!.settled, 0);
+  assert.equal("timed_out" in waited.data.items[0]! ? waited.data.items[0].timed_out : false, true);
+  assert.equal("counts" in waited.data.items[0]! ? waited.data.items[0].counts.requested : 0, 2);
   assert.equal(Date.now() - started < 5_000, true, "the wait respected its bound");
 }));
 
 test("a wait above the hard cap is rejected as an invalid argument", async () => withServer(async (client) => {
   const response = await client.callTool({
     name: "batches_wait",
-    arguments: { batchIds: ["batch"], timeoutMs: 30_001 },
+    arguments: { contract_version: "1.0", batch_ids: ["batch"], timeout_ms: 30_001 },
   });
   assert.equal(response.isError, true);
 }));

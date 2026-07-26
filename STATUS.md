@@ -38,6 +38,14 @@
 - Final verification: `npm run verify` passed 143 tests with 1 expected live-CLI
   skip; `npm run check`, schema generation, strict routing verification, and
   `git diff --check` passed.
+- Independent review fixed published-schema/runtime drift for cancellation and
+  wait, bounded and sanitized provider lifecycle calls, provider identity
+  validation, single-flight background sweeps, parallel batch controls, and a
+  production reconciliation path that retains results arriving after timeout.
+- Current verification: `npm run verify` passed 145 tests with 1 expected
+  live-CLI skip; focused lifecycle/MCP tests passed 42/42 across 10 runs (420
+  checks); typecheck, schema generation/diff, strict routing, and diff checks
+  passed.
 
 ## PER-258 agency availability monitoring
 

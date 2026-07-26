@@ -40,8 +40,8 @@ export interface AgentAdapter {
   /** Returns the one run previously accepted for this key, or undefined when absence is authoritative. */
   findByIdempotencyKey(idempotencyKey: string): Promise<RunHandle | undefined>;
   launch(request: LaunchRequest): Promise<RunHandle>;
-  status(handle: RunHandle): Promise<RunState>;
-  result(handle: RunHandle): Promise<RunResult | undefined>;
-  cancel(handle: RunHandle, reason?: string): Promise<CancellationOutcome | void>;
+  status(handle: RunHandle, signal?: AbortSignal): Promise<RunState>;
+  result(handle: RunHandle, signal?: AbortSignal): Promise<RunResult | undefined>;
+  cancel(handle: RunHandle, reason?: string, signal?: AbortSignal): Promise<CancellationOutcome | void>;
   resumeMetadata(handle: RunHandle): Promise<ResumeMetadata | undefined>;
 }

@@ -320,7 +320,7 @@ test("an unreachable provider reports PROVIDER_UNAVAILABLE and retains cancellat
 
   const outcome = refused(await service.cancelSession(id));
   assert.equal(outcome.error, "PROVIDER_UNAVAILABLE");
-  assert.equal(outcome.message, "socket hang up");
+  assert.equal(outcome.message, "The backend lifecycle operation is temporarily unavailable");
   assert.equal(outcome.status, "canceling");
   assert.equal((await store.worker(id))!.status, "canceling");
 }));
@@ -427,7 +427,7 @@ test("a deadline still expires the session when the provider stop fails", async 
   const expired = await service.enforceDeadlines(new Date("2026-07-25T01:00:01.000Z"));
   assert.equal(expired.length, 1);
   assert.equal(expired[0]!.status, "failed");
-  assert.equal(expired[0]!.providerStopError, "provider offline");
+  assert.equal(expired[0]!.providerStopError, "The backend lifecycle operation is temporarily unavailable");
   assert.equal((await store.worker(id))!.stopReason, "deadline_exceeded");
 }));
 
@@ -450,6 +450,46 @@ test("a result arriving after a terminal transition is retained without regressi
   assert.deepEqual(worker!.lateObservations, [
     { observedAt: "2026-07-25T01:00:05.000Z", status: "succeeded", retainedResult: true },
   ]);
+}));
+
+test("deadline reconciliation retains a later provider result without regressing timeout", async () => harness(async (store) => {
+  const created = await store.createBatch("late-provider", "client", [{ agent: "codex", task: "work" }]);
+  const id = created.sessions[0]!.id;
+  await store.bindWorkerRun(id, "run-1");
+  await store.setWorkerDeadline(id, new Date("2026-07-25T01:00:00.000Z"));
+  const service = new LifecycleService(store, stub({
+    cancellation: "supported",
+    cancel: async () => ({ status: "accepted" as const }),
+    status: async (handle) => ({ ...handle, status: "succeeded" as const, updatedAt: "2026-07-25T01:00:02.000Z" }),
+    result: async () => ({ status: "succeeded" as const, output: "arrived after timeout" }),
+  }));
+
+  await service.enforceDeadlines(new Date("2026-07-25T01:00:01.000Z"));
+  await service.reconcileTimedOutResults();
+
+  const worker = await store.worker(id);
+  assert.equal(worker!.status, "failed");
+  assert.equal(worker!.stopReason, "deadline_exceeded");
+  assert.equal((worker!.result as AgentResultClaim).output, "arrived after timeout");
+  assert.equal(worker!.lateObservations?.length, 1);
+  assert.equal(worker!.lateObservations![0]!.status, "succeeded");
+  assert.equal(worker!.lateObservations![0]!.retainedResult, true);
+  assert.equal(worker!.lifecycleReconcilePending, undefined);
+}));
+
+test("provider execution identity mismatch cannot settle a session", async () => harness(async (store) => {
+  const created = await store.createBatch("identity", "client", [{ agent: "codex", task: "work" }]);
+  const id = created.sessions[0]!.id;
+  await store.bindWorkerRun(id, "run-1");
+  const service = new LifecycleService(store, stub({
+    cancellation: "supported",
+    cancel: async () => ({ status: "accepted" as const }),
+    status: async () => ({ runId: "foreign-run", status: "cancelled" as const, updatedAt: "2026-07-25T00:00:00.000Z" }),
+  }));
+
+  const outcome = refused(await service.cancelSession(id));
+  assert.equal(outcome.error, "PROVIDER_UNAVAILABLE");
+  assert.equal((await store.worker(id))!.status, "canceling");
 }));
 
 test("a late observation never overwrites the result the winning outcome already captured", async () => harness(async (store) => {

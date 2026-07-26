@@ -277,7 +277,22 @@ export const resultsResultSchema = z.object({
 });
 
 export const cancelRequestSchema = idsRequestSchema.extend({ reason: z.string().min(1).max(1000).optional() }).strict();
-export const cancelResultSchema = statusResultSchema;
+const cancellationItemSchema = z.union([
+  z.object({
+    session_id: identifier,
+    state: sessionStateSchema,
+    stop_reason: stopReasonSchema.optional(),
+    changed: z.boolean(),
+  }).strict(),
+  itemErrorSchema,
+]);
+export const cancelResultSchema = z.object({
+  ...envelopeFields,
+  data: z.object({ items: z.array(cancellationItemSchema).min(1).max(MAX_BATCH_SIZE) }).strict(),
+}).strict().superRefine(({ data }, context) => {
+  const ids = data.items.map(({ session_id }) => session_id);
+  if (new Set(ids).size !== ids.length) context.addIssue({ code: "custom", message: "item session_ids must be unique" });
+});
 export const batchCancelRequestSchema = versionedRequest.extend({
   batch_ids: uniqueIdentifiers,
   reason: z.string().min(1).max(1000).optional(),
@@ -326,15 +341,6 @@ export const waitResultSchema = z.object({
   const ids = data.items.map(({ batch_id }) => batch_id);
   if (new Set(ids).size !== ids.length) context.addIssue({ code: "custom", message: "item batch_ids must be unique" });
 });
-const cancellationItemSchema = z.union([
-  z.object({
-    session_id: identifier,
-    state: sessionStateSchema,
-    stop_reason: stopReasonSchema.optional(),
-    changed: z.boolean(),
-  }).strict(),
-  itemErrorSchema,
-]);
 export const batchCancelResultSchema = z.object({
   ...envelopeFields,
   data: z.object({

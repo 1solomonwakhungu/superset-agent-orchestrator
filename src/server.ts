@@ -8,7 +8,17 @@ import { z } from "zod";
 import { BatchQueryError, DurableStore } from "./store.js";
 import type { AgentAdapter } from "./agent-adapter.js";
 import { LifecycleService, MAX_LIFECYCLE_WAIT_MS } from "./lifecycle-service.js";
-import { batchCancelResultSchema, CONTRACT_VERSION, errorDefinitions, type ErrorCode } from "./tool-contract.js";
+import {
+  batchCancelRequestSchema,
+  batchCancelResultSchema,
+  cancelRequestSchema,
+  cancelResultSchema,
+  CONTRACT_VERSION,
+  errorDefinitions,
+  waitRequestSchema,
+  waitResultSchema,
+  type ErrorCode,
+} from "./tool-contract.js";
 
 const statePath = process.env.SUPERSET_ORCHESTRATOR_STATE
   ?? join(homedir(), ".local", "share", "superset-agent-orchestrator", "state.json");
@@ -59,11 +69,19 @@ async function main(): Promise<void> {
   }, Number(process.env.SUPERSET_ORCHESTRATOR_RECONCILE_MS ?? 30_000));
   reconciliationTimer.unref();
 
+  let lifecycleSweep: Promise<void> | undefined;
   const deadlineTimer = setInterval(() => {
-    Promise.all([lifecycle.enforceDeadlines(), lifecycle.reconcileCancellations()]).then(([expired]) => {
+    if (lifecycleSweep !== undefined) return;
+    lifecycleSweep = Promise.all([
+      lifecycle.enforceDeadlines(),
+      lifecycle.reconcileCancellations(),
+      lifecycle.reconcileTimedOutResults(),
+    ]).then(([expired]) => {
       if (expired.length > 0) console.error(`Deadlines enforced: ${JSON.stringify(expired)}`);
     }).catch((error: unknown) => {
       console.error(`Lifecycle enforcement failed: ${error instanceof Error ? error.message : error}`);
+    }).finally(() => {
+      lifecycleSweep = undefined;
     });
   }, Number(process.env.SUPERSET_ORCHESTRATOR_DEADLINE_MS ?? 5_000));
   deadlineTimer.unref();
@@ -110,47 +128,39 @@ async function main(): Promise<void> {
       }
     });
   }
-  const cancellationReason = z.enum(["user_requested", "orchestrator_shutdown", "superseded", "policy_revoked"])
-    .default("user_requested");
   server.registerTool(
     "sessions_cancel",
     {
       description: "Request cancellation for sessions; unsupported backends return CANCEL_UNSUPPORTED without changing state",
-      inputSchema: {
-        sessionIds: z.array(z.string().min(1)).min(1).max(100),
-        reason: cancellationReason,
-        detail: z.string().min(1).max(1000).optional(),
-      },
+      inputSchema: cancelRequestSchema.shape,
     },
-    async ({ sessionIds, reason, detail }) => {
-      const unique = [...new Set(sessionIds)];
-      if (unique.length !== sessionIds.length) {
-        return batchError(new BatchQueryError("invalid_request", "sessionIds must be unique"));
-      }
+    async ({ session_ids: sessionIds, reason }) => {
       const items = [];
-      for (const id of unique) items.push(await lifecycle.cancelSession(id, reason, detail));
-      return result({ items });
+      for (const id of sessionIds) {
+        const outcome = await lifecycle.cancelSession(id, "user_requested", reason);
+        items.push("error" in outcome
+          ? { session_id: id, error: contractError(outcome.error, outcome.message) }
+          : {
+            session_id: id,
+            state: contractState(outcome.status),
+            ...(outcome.stopReason === undefined ? {} : { stop_reason: outcome.stopReason }),
+            changed: outcome.changed,
+          });
+      }
+      return result(cancelResultSchema.parse(contractEnvelope({ items })));
     },
   );
   server.registerTool(
     "batches_cancel",
     {
       description: "Request cancellation for every nonterminal session in a batch and return item-level outcomes",
-      inputSchema: {
-        batchIds: z.array(z.string().min(1)).min(1).max(100),
-        reason: cancellationReason,
-        detail: z.string().min(1).max(1000).optional(),
-      },
+      inputSchema: batchCancelRequestSchema.shape,
     },
-    async ({ batchIds, reason, detail }) => {
-      const unique = [...new Set(batchIds)];
-      if (unique.length !== batchIds.length) {
-        return batchError(new BatchQueryError("invalid_request", "batchIds must be unique"));
-      }
+    async ({ batch_ids: batchIds, reason }) => {
       const items = [];
-      for (const batchId of unique) {
+      for (const batchId of batchIds) {
         try {
-          const sessions = (await lifecycle.cancelBatch(batchId, reason, detail)).map((outcome) => {
+          const sessions = (await lifecycle.cancelBatch(batchId, "user_requested", reason)).map((outcome) => {
             if ("error" in outcome) {
               return { session_id: outcome.sessionId, error: contractError(outcome.error, outcome.message) };
             }
@@ -172,30 +182,21 @@ async function main(): Promise<void> {
           });
         }
       }
-      return result(batchCancelResultSchema.parse({
-        contract_version: CONTRACT_VERSION,
-        request_id: randomUUID(),
-        warnings: [],
-        data: { items },
-      }));
+      return result(batchCancelResultSchema.parse(contractEnvelope({ items })));
     },
   );
   server.registerTool(
     "batches_wait",
     {
       description: "Wait at most 30 seconds for aggregate batch progress and return exact partial counts on timeout",
-      inputSchema: {
-        batchIds: z.array(z.string().min(1)).min(1).max(100),
-        timeoutMs: z.number().int().min(0).max(MAX_LIFECYCLE_WAIT_MS).default(MAX_LIFECYCLE_WAIT_MS),
-        until: z.enum(["any_terminal", "all_terminal"]).default("all_terminal"),
-      },
+      inputSchema: waitRequestSchema.shape,
     },
-    async ({ batchIds, timeoutMs, until }) => {
-      const unique = [...new Set(batchIds)];
-      if (unique.length !== batchIds.length) {
-        return batchError(new BatchQueryError("invalid_request", "batchIds must be unique"));
-      }
-      return result({ items: await lifecycle.waitForBatches(unique, { timeoutMs, until }) });
+    async ({ batch_ids: batchIds, timeout_ms: timeoutMs, until }) => {
+      const waited = await lifecycle.waitForBatches(batchIds, { timeoutMs, until });
+      const items = waited.map((item) => "error" in item
+        ? { batch_id: item.batchId, error: contractError(item.error, item.message) }
+        : { batch_id: item.batchId, timed_out: item.timedOut, counts: contractCounts(item.counts) });
+      return result(waitResultSchema.parse(contractEnvelope({ items })));
     },
   );
   server.registerTool(
@@ -272,6 +273,23 @@ function contractState(status: import("./store.js").WorkerStatus) {
   if (status === "succeeded") return "completed" as const;
   if (status === "unknown_outcome") return "lost" as const;
   return status;
+}
+
+function contractEnvelope(data: unknown) {
+  return { contract_version: CONTRACT_VERSION, request_id: randomUUID(), warnings: [], data };
+}
+
+function contractCounts(counts: Record<import("./store.js").WorkerStatus, number>) {
+  return {
+    requested: counts.requested,
+    launching: 0,
+    running: counts.running,
+    canceling: counts.canceling,
+    lost: counts.unknown_outcome,
+    completed: counts.succeeded,
+    failed: counts.failed,
+    canceled: counts.canceled,
+  };
 }
 
 main().catch((error: unknown) => {
