@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { AgentAdapter } from "./agent-adapter.js";
+import type { AgentAdapter, RunHandle } from "./agent-adapter.js";
 import {
   DurableStore,
   type Assignment,
@@ -147,18 +147,26 @@ export class LaunchService {
       }
       this.injectCrash("after_launch_started");
       this.injectCrash("before_adapter_launch");
-      let handle = assignment.status === "launching"
-        ? await this.adapter.findByIdempotencyKey(assignment.idempotencyKey)
-        : undefined;
+      let handle: RunHandle | undefined;
       try {
+        handle = assignment.status === "launching"
+          ? validRunHandle(await this.adapter.findByIdempotencyKey(assignment.idempotencyKey))
+          : undefined;
         handle ??= await this.adapter.launch({
           idempotencyKey: assignment.idempotencyKey,
           prompt: assignment.prompt,
           workspacePath: assignment.workspacePath,
         });
+        handle = validRunHandle(handle);
       } catch (error) {
         if (error instanceof InjectedCrash) throw error;
-        const recovered = await this.adapter.findByIdempotencyKey(assignment.idempotencyKey);
+        let recovered: RunHandle | undefined;
+        try {
+          recovered = validRunHandle(await this.adapter.findByIdempotencyKey(assignment.idempotencyKey));
+        } catch {
+          await this.recordLaunchFailure(assignment, "Provider returned a malformed run handle");
+          return;
+        }
         if (recovered !== undefined) {
           const launchedAt = this.now().toISOString();
           await this.store.recordLaunchEvent(
@@ -169,12 +177,11 @@ export class LaunchService {
           return;
         }
         const message = error instanceof Error ? error.message : String(error);
-        const failedAt = this.now().toISOString();
-        await this.store.recordLaunchEvent(
-          assignment.id,
-          "failed",
-          event(assignment.id, "launch_failed", failedAt, { error: message }),
-        );
+        await this.recordLaunchFailure(assignment, message);
+        return;
+      }
+      if (handle === undefined) {
+        await this.recordLaunchFailure(assignment, "Provider returned a malformed run handle");
         return;
       }
       this.injectCrash("after_adapter_launch");
@@ -186,6 +193,14 @@ export class LaunchService {
       );
       this.injectCrash("after_launch_recorded");
     });
+  }
+
+  private async recordLaunchFailure(assignment: Assignment, error: string): Promise<void> {
+    await this.store.recordLaunchEvent(
+      assignment.id,
+      "failed",
+      event(assignment.id, "launch_failed", this.now().toISOString(), { error }),
+    );
   }
 }
 
@@ -225,4 +240,13 @@ function acceptance(assignment: Assignment): LaunchAcceptance {
     status: assignment.status,
     acceptedAt: assignment.acceptedAt,
   };
+}
+
+function validRunHandle(value: unknown): RunHandle | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "object" || value === null || typeof (value as { runId?: unknown }).runId !== "string"
+    || (value as { runId: string }).runId.length === 0) {
+    throw new Error("Provider returned a malformed run handle");
+  }
+  return { runId: (value as { runId: string }).runId };
 }
