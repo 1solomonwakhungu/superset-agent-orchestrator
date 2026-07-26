@@ -299,7 +299,9 @@ test("T-ENV-01 the child environment is an allowlist and carries no seeded secre
       assert.ok(!childKeys.includes(forbidden), `child inherited ${forbidden}`);
     }
     // macOS adds __CF_USER_TEXT_ENCODING to every spawned process; nothing else may appear.
-    const unexpected = childKeys.filter((key) => !allowlistedEnvironmentNames().includes(key) && !key.startsWith("__CF"));
+    const harnessVariables = process.env.NODE_V8_COVERAGE === undefined ? [] : ["NODE_V8_COVERAGE"];
+    const unexpected = childKeys.filter((key) => !allowlistedEnvironmentNames().includes(key)
+      && !key.startsWith("__CF") && !harnessVariables.includes(key));
     assert.deepEqual(unexpected, []);
   } finally {
     for (const [name, value] of saved) {

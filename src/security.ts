@@ -70,7 +70,9 @@ export function safeErrorMessage(error: unknown, canaries: readonly string[] = [
   return redactText(error instanceof Error ? error.message : String(error), canaries);
 }
 
+// eslint-disable-next-line no-control-regex -- these controls are the rejected input set
 const CONTROL_CHARACTERS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/;
+// eslint-disable-next-line no-control-regex -- ANSI escape starts with ESC by definition
 const ANSI_ESCAPE = /\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b[@-Z\\-_]/g;
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 const AUDIT_FIELD_MAX_CHARACTERS = 256;
@@ -79,6 +81,7 @@ const AUDIT_FIELD_MAX_CHARACTERS = 256;
 export function auditField(value: string, canaries: readonly string[] = []): string {
   const normalized = redactText(value, canaries)
     .replace(ANSI_ESCAPE, "")
+    // eslint-disable-next-line no-control-regex -- audit records normalize all controls
     .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
     .replace(/\s+/g, " ")
     .trim();

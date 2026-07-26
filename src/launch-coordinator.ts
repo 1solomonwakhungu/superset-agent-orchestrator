@@ -85,7 +85,7 @@ export class LaunchCoordinator {
         prompt,
         workspacePath: assertDataOperand(grant.canonicalPath, "workspace path"),
         environment: childEnvironment(),
-        revalidateWorkspace: grant.revalidate,
+        revalidateWorkspace: () => grant.revalidate(),
         ...(request.resume === undefined ? {} : { resume: request.resume }),
       });
       this.failpoints.afterExternalAcceptance?.(handle);
