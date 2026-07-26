@@ -12,10 +12,13 @@
 - Verification: `npm run verify` passed 106 runnable tests with one explicit
   Superset Desktop skip; `npm run compatibility:probe` returned the expected
   actionable unknown; focused Markdown lint and `git diff --check` passed.
-- GitHub Actions run `30173122494` passed all four macOS 14/Ubuntu 24.04 and
+- Fixed exact-head checkout attribution, fail-closed detected lane validation,
+  and stale machine-readable Linux/Node 24 evidence at `3fd2ce6`.
+- GitHub Actions run `30188879288` passed all four macOS 14/Ubuntu 24.04 and
   Node.js 22/24 lanes plus the generated compatibility report job.
 - Pull request: https://github.com/1solomonwakhungu/superset-agent-orchestrator/pull/32
-- Next: review and merge PR 32, then verify fetched `main` before closing PER-352.
+- Next: independently verify and merge PR 32, then verify fetched `main` before
+  closing PER-352.
 
 ## PER-258 agency availability monitoring
 
