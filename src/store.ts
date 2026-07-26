@@ -321,6 +321,30 @@ const stateSchema = z.object({
     deliveries.add(result.deliveryId);
     attempts.add(result.attemptId);
   }
+  const sessions = new Set(state.sessions.map(({ id }) => id));
+  const batches = new Map(state.batches.map((batch) => [batch.id, batch]));
+  const assignments = new Map(state.assignments.map((assignment) => [assignment.id, assignment]));
+  for (const batch of state.batches) {
+    if (!sessions.has(batch.sessionId)) context.addIssue({ code: "custom", message: `Batch ${batch.id} references a missing session` });
+  }
+  for (const assignment of state.assignments) {
+    const batch = batches.get(assignment.batchId);
+    if (!sessions.has(assignment.sessionId) || batch === undefined) {
+      context.addIssue({ code: "custom", message: `Assignment ${assignment.id} has inconsistent durable identity` });
+    }
+  }
+  for (const event of state.auditEvents) {
+    if (!assignments.has(event.assignmentId)) context.addIssue({ code: "custom", message: `Audit event ${event.id} references a missing assignment` });
+  }
+  for (const result of state.capturedResults ?? []) {
+    const assignment = assignments.get(result.assignmentId);
+    if (assignment === undefined || result.batchId !== assignment.batchId || result.sessionId !== assignment.sessionId
+      || result.workspaceId !== assignment.workspaceId || result.workspacePath !== assignment.workspacePath
+      || result.attemptId !== assignment.attemptId || result.attempt !== assignment.attempt
+      || result.runId !== assignment.runId) {
+      context.addIssue({ code: "custom", message: `Captured result ${result.deliveryId} has inconsistent durable identity` });
+    }
+  }
 });
 
 const EMPTY_STATE: DurableState = {
@@ -733,7 +757,7 @@ export class DurableStore {
 
       for (const worker of this.state.workers) {
         const batch = batches.get(worker.batchId);
-        if (!sessionIds.has(worker.sessionId) || batch === undefined || batch.sessionId !== worker.sessionId) {
+        if (!sessionIds.has(worker.sessionId) || batch === undefined) {
           diagnose("orphan", worker, "Worker references a missing or inconsistent durable session or batch");
         }
 
@@ -888,6 +912,10 @@ export class DurableStore {
       input.workers.forEach((worker) => workerSchema.parse(worker));
       batchSchema.parse(input.batch);
       input.events.forEach((auditEvent) => auditEventSchema.parse(auditEvent));
+      if (input.workers.length !== input.assignments.length
+        || input.workers.some((worker, index) => worker.sessionId !== input.assignments[index]?.sessionId)) {
+        throw new Error("Launch batch workers must match assignments in order");
+      }
       const existing = input.assignments.map((assignment) =>
         this.state.assignments.find(({ idempotencyKey }) => idempotencyKey === assignment.idempotencyKey));
       if (existing.some((assignment) => assignment !== undefined)) {
