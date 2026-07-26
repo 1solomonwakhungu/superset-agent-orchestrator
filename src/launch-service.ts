@@ -99,8 +99,17 @@ export class LaunchService {
         acceptedAt, updatedAt: acceptedAt,
       };
     });
+    const workers = assignments.map((assignment, index) => ({
+      id: assignment.sessionId,
+      batchId,
+      sessionId: assignment.sessionId,
+      status: "requested" as const,
+      attribution: assignment.attribution,
+      startedAt: acceptedAt,
+      position: index,
+    }));
     const stored = await this.store.acceptLaunchBatch({
-      assignments, sessions, batch,
+      assignments, sessions, batch, workers,
       events: assignments.map(({ id }) => event(id, "launch_accepted", acceptedAt)),
     });
     this.injectCrash("after_acceptance");
