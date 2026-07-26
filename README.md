@@ -39,6 +39,27 @@ it runs. Existing worker processes remain tracked by PID and process start token
 are marked `unknown_outcome` and are never relaunched merely because a server or client restarted.
 State writes are locked, synced, and atomically renamed. A corrupt state file is left untouched.
 
+Writer admission uses two independent layers: an exclusive cross-process
+operating-system lock on a key derived from the workspace, and a transactional
+SQLite lease with a monotonically increasing generation. Generations are never
+reused. The bearer fencing token is random per generation and only its digest is
+stored, so it never reaches the prompt, audit log, or an MCP response. Heartbeat,
+release, and every controlled action compare-and-set on lease ID, generation,
+token digest, owner identity, state, and row version, so a stale owner is fenced.
+
+Expiry alone never releases a lease. `WorkspaceSafetyTool` reconciles a workspace
+only with evidence: it preserves the lease while another process may hold the
+lock, quarantines a lease whose owner is alive or whose identity is unverifiable,
+and retires a generation only when the exact owner PID and process start token
+are proven absent after expiry. Quarantine is cleared by one fixed repair flow
+that retires the old generation and never assigns an active lease. Admissions,
+denials, quarantines, repairs, and recoveries are append-only audit events.
+
+Writer launch remains disabled: canonical workspace identity resolution and
+read-only sandbox enforcement are still outstanding. See
+[the lease policy](docs/workspace-lease-and-writer-safety.md) and
+[the enforcement evidence](evidence/per-343/lease-enforcement.json).
+
 Recovery tools:
 
 - `recent_sessions` lists durable sessions independently of the connected client.
