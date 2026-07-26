@@ -90,8 +90,17 @@ export class LaunchService {
       acceptedAt,
       updatedAt: acceptedAt,
     };
+    const worker = {
+      id: session.id,
+      batchId: batch.id,
+      sessionId: session.id,
+      status: "requested" as const,
+      attribution: request.attribution,
+      startedAt: acceptedAt,
+      position: 0,
+    };
     const accepted = await this.store.acceptLaunch({
-      assignment, session, batch,
+      assignment, session, batch, worker,
       event: event(assignmentId, "launch_accepted", acceptedAt),
     });
     this.injectCrash("after_acceptance");

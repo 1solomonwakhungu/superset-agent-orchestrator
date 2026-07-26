@@ -164,6 +164,30 @@ execution identity. It does not invoke launch. The query result appends one of:
 An observation for a different execution identity appends
 `foreign_execution_observed` and is never attached to the session automatically.
 
+## Durable Implementation Mapping
+
+`DurableStore.WorkerStatus` is the persisted projection of the states above. The
+names differ because the store predates this specification; the mapping is exact
+and there is no additional terminal state.
+
+| Durable status | Specification state | Notes |
+| --- | --- | --- |
+| `requested` | `requested` | Accepted, not yet bound to an execution identity |
+| `running` | `launching` or `running` | Requires a PID and process start token |
+| `canceling` | `canceling` | Set before the provider stop command is issued |
+| `succeeded` | `completed` | Stop reason `succeeded` or `succeeded_before_cancellation` |
+| `failed` | `failed` | Includes deadline expiry via `deadline_exceeded` |
+| `canceled` | `canceled` | Stop reason is one of the cancellation reasons |
+| `unknown_outcome` | `lost` | Counted as settled by aggregate queries |
+
+A deadline is not a distinct state. `LifecycleService.enforceDeadlines` expires an
+overdue nonterminal session as `failed` with stop reason `deadline_exceeded`,
+claiming the transition under the single-writer lock before contacting the
+provider so concurrent sweeps expire each session exactly once. Cancellation
+intent that a provider rejects as unsupported is withdrawn and the pre-cancel
+status restored, so `canceling` always reflects a command the provider accepted or
+one whose delivery is genuinely unknown.
+
 ## Audit Projection
 
 For deterministic replay, events are ordered by the orchestrator-assigned session
