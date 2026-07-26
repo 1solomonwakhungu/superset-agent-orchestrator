@@ -48,13 +48,13 @@ npm run load:real -- \
 ```
 
 The runner first verifies all IDs against one `workspaces list --local` snapshot,
-then ramps 5, 10, and 15 concurrent launches. Every agent gets a unique workspace,
+then ramps 5, 10, and 15 launches with a configurable in-flight ceiling. Every agent gets a unique workspace,
 so no two writers share a worktree. Before and after each ramp it enforces RSS,
 cumulative runner CPU, and descriptor ceilings; launch failures and ceiling
 breaches abort all further ramps. Defaults are 2 GiB RSS, 300 CPU seconds, 4,096
 descriptors, and 30 seconds per launch acceptance. Override them with
 `--max-rss-bytes`, `--max-cpu-ms`, `--max-descriptors`, and
-`--launch-timeout-ms`.
+`--launch-timeout-ms`, and `--max-in-flight`.
 
 An abort cannot stop sessions already accepted by Superset. Supported Superset
 APIs return launch metadata only and cannot retrieve ordinary agent completion,
@@ -67,8 +67,10 @@ fixed 30-session maximum and staged admissions bound new work, but cannot enforc
 CPU or memory ceilings on sessions that Superset has already accepted.
 An explicitly executed command exits unsuccessfully after writing its report if
 any launch fails, a ceiling aborts a later ramp, or fewer than 30 launches are
-accepted. Report verification accepts executed evidence only when all three ramps
-complete with 5, 10, and 15 uniquely attributed acceptances.
+accepted. Reports include per-stage offered, admitted, failed, withheld, and
+maximum-in-flight evidence. Verification recomputes that arithmetic and accepts
+either a complete 30-session run or an honestly failed run that proves later work
+was withheld after overload.
 
 Real execution must not reuse the repository's assigned writer workspace or borrow
 unrelated workspaces merely to satisfy the count. If 30 authorized, isolated
@@ -76,6 +78,13 @@ workspaces are unavailable, retain the dry-run report and record the controlled
 load test as blocked.
 
 ## Verification
+
+CI runs `npm run load:ci` in a five-minute offline job. It uses only scripted
+fakes and injected deterministic duration, query-clock, and resource measurements;
+it never invokes Superset or a paid agent. The job generates and verifies JSON and
+Markdown success and overload reports under `artifacts/per-351-ci/`, then uploads
+them as commit-attributed artifacts. Operator CLI commands retain real host and
+wall-clock measurements.
 
 Validate generated report schemas and Markdown companions:
 

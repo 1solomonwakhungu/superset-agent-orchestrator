@@ -21,8 +21,19 @@
   tests with one explicit live-Superset skip plus 3 Python tests and coverage;
   the benchmark, safe dry-run, report verification, Markdown lint, and diff check
   passed.
-- Next: integrate all load-validation companion work, run bounded validation and
-  exact-head CI, then merge PR #35 and reconcile Linear.
+- Integrated current `main` and all load-validation companion work, including
+  deterministic bounded-load CI, injected measurements, admission/backpressure
+  evidence, timeout enforcement, and success/overload report verification.
+- Final isolated validation: the focused performance suite passed 10/10; bounded
+  CI generated and verified fake, admitted, and overload reports with 0 paid
+  agents; `npm run check` passed 196/197 tests with one explicit live-Superset
+  skip, 6 Python tests with one model-dependent skip, coverage, schemas, and
+  provenance verification.
+- The measured 100-session run completed and attributed 100/100 at 106.46
+  sessions/second with 75.77 ms launch p95 and 0.114 ms query p95. The safe
+  30-session dry-run launched 0 agents and withheld all 30 admissions.
+- Next: push the integrated head, verify exact-head GitHub CI, merge PR #35, and
+  reconcile Linear.
 
 ## PER-343 workspace lease enforcement
 

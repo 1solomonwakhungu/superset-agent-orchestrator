@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
-import { numericArgument, parseArguments, percentile, rejectUnknownArguments, sampleResources, writeReports } from "./performance-report.js";
+import { numericArgument, parseArguments, percentile, realMeasurements, rejectUnknownArguments, writeReports, type PerformanceMeasurements, type ResourceSample } from "./performance-report.js";
 
 const executeFile = promisify(execFile);
 export const REAL_LOAD_SCHEMA = "per-351.real-agent-load.v1";
@@ -13,20 +13,27 @@ type LocalWorkspace = { id: string };
 
 export async function runRealLoad(options: {
   execute: boolean; workspaceIds: string[]; agent: string; prompt: string; output: string;
-  launchTimeoutMs: number; maxRssBytes: number; maxCpuMs: number; maxDescriptors: number;
+  launchTimeoutMs: number; maxRssBytes: number; maxCpuMs: number; maxDescriptors: number; maxInFlight?: number;
   launch?: (workspaceId: string) => Promise<{ sessionId: string; kind: string }>;
   listLocalWorkspaces?: () => Promise<LocalWorkspace[]>;
+  measurements?: PerformanceMeasurements;
 }): Promise<Record<string, unknown>> {
   if (options.workspaceIds.length !== SESSION_COUNT || new Set(options.workspaceIds).size !== SESSION_COUNT) {
     throw new Error("Exactly 30 unique workspace IDs are required; shared writers are forbidden");
   }
   const stages = [5, 10, 15];
-  const started = process.hrtime.bigint();
-  const cpuStart = process.cpuUsage();
+  const maxInFlight = options.maxInFlight ?? 15;
+  if (!Number.isInteger(maxInFlight) || maxInFlight <= 0 || maxInFlight > SESSION_COUNT) {
+    throw new Error("maxInFlight must be an integer from 1 to 30");
+  }
+  const measurements = options.measurements ?? realMeasurements();
   const accepted: Array<{ workspaceId: string; task: string; stage: number; sessionId: string; kind: string; latencyMs: number }> = [];
   const failures: Array<{ workspaceId: string; error: string }> = [];
-  const samples = [];
+  const samples: ResourceSample[] = [];
+  const stageEvidence: Array<{ stage: number; planned: number; offered: number; admitted: number; failed: number; withheld: number }> = [];
   let aborted: string | null = null;
+  let active = 0;
+  let maxObservedInFlight = 0;
   const launch = options.launch ?? ((workspaceId: string) => launchSuperset(workspaceId, options));
 
   if (options.execute) {
@@ -42,40 +49,70 @@ export async function runRealLoad(options: {
     for (let stage = 0; stage < stages.length; stage += 1) {
       const stageSize = stages[stage]!;
       const stageIds = options.workspaceIds.slice(offset, offset + stageSize);
-      const before = await sampleResources(started, cpuStart);
-      aborted = ceilingViolation(before, options);
-      if (aborted !== null) { samples.push(before); break; }
-      const outcomes = await Promise.allSettled(stageIds.map(async (workspaceId, stageIndex) => {
-        const launchStarted = process.hrtime.bigint();
-        const result = await launch(workspaceId);
-        return { ...result, workspaceId, task: `load-task-${offset + stageIndex + 1}`, stage: stage + 1,
-          latencyMs: Number(process.hrtime.bigint() - launchStarted) / 1e6 };
-      }));
-      outcomes.forEach((outcome, index) => {
-        if (outcome.status === "fulfilled") accepted.push(outcome.value);
-        else failures.push({ workspaceId: stageIds[index]!, error: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason) });
-      });
-      if (failures.length > 0) aborted = "launch failure";
-      const after = await sampleResources(started, cpuStart);
-      samples.push(after);
-      aborted ??= ceilingViolation(after, options);
-      if (aborted !== null) break;
+      let offered = 0;
+      let admitted = 0;
+      let failed = 0;
+      while (offered < stageSize && aborted === null) {
+        const before = await measurements.resources();
+        samples.push(before);
+        aborted = ceilingViolation(before, options);
+        if (aborted !== null) break;
+        const chunk = stageIds.slice(offered, offered + maxInFlight);
+        const chunkOffset = offered;
+        offered += chunk.length;
+        const outcomes = await Promise.allSettled(chunk.map(async (workspaceId, chunkIndex) => {
+          active += 1;
+          maxObservedInFlight = Math.max(maxObservedInFlight, active);
+          try {
+            const measured = await measurements.durationMs("launch", () => withTimeout(launch(workspaceId), options.launchTimeoutMs));
+            return { ...measured.value, workspaceId, task: `load-task-${offset + chunkOffset + chunkIndex + 1}`,
+              stage: stage + 1, latencyMs: measured.durationMs };
+          } finally {
+            active -= 1;
+          }
+        }));
+        outcomes.forEach((outcome, index) => {
+          if (outcome.status === "fulfilled") { accepted.push(outcome.value); admitted += 1; }
+          else {
+            failed += 1;
+            failures.push({ workspaceId: chunk[index]!, error: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason) });
+          }
+        });
+        if (failed > 0) aborted = "launch failure";
+        const after = await measurements.resources();
+        samples.push(after);
+        aborted ??= ceilingViolation(after, options);
+      }
+      stageEvidence.push({ stage: stage + 1, planned: stageSize, offered, admitted, failed, withheld: stageSize - offered });
+      if (aborted !== null) {
+        for (let remaining = stage + 1; remaining < stages.length; remaining += 1) {
+          stageEvidence.push({ stage: remaining + 1, planned: stages[remaining]!, offered: 0, admitted: 0, failed: 0, withheld: stages[remaining]! });
+        }
+        break;
+      }
       offset += stageSize;
     }
-  } else samples.push(await sampleResources(started, cpuStart));
+  } else {
+    samples.push(await measurements.resources());
+    stages.forEach((planned, index) => stageEvidence.push({ stage: index + 1, planned, offered: 0, admitted: 0, failed: 0, withheld: planned }));
+  }
+
+  const offered = stageEvidence.reduce((sum, stage) => sum + stage.offered, 0);
+  const withheld = stageEvidence.reduce((sum, stage) => sum + stage.withheld, 0);
 
   const report: Record<string, unknown> = {
     schema: REAL_LOAD_SCHEMA,
     generatedAt: new Date().toISOString(),
     mode: options.execute ? "execute" : "dry-run",
-    configuration: { sessions: SESSION_COUNT, stages, uniqueWorkspaces: true, agent: options.agent, launchTimeoutMs: options.launchTimeoutMs,
+    configuration: { sessions: SESSION_COUNT, stages, uniqueWorkspaces: true, agent: options.agent, launchTimeoutMs: options.launchTimeoutMs, maxInFlight,
       ceilings: { maxRssBytes: options.maxRssBytes, maxCpuMs: options.maxCpuMs, maxDescriptors: options.maxDescriptors } },
-    launch: { attempted: options.execute ? accepted.length + failures.length : 0, accepted: accepted.length, failures, acceptedSessions: accepted,
+    admission: { planned: SESSION_COUNT, offered, admitted: accepted.length, failed: failures.length, withheld, maxObservedInFlight, stages: stageEvidence },
+    launch: { attempted: offered, accepted: accepted.length, failures, acceptedSessions: accepted,
       latencyMs: { p50: percentile(accepted.map(({ latencyMs }) => latencyMs), 0.5), p95: percentile(accepted.map(({ latencyMs }) => latencyMs), 0.95), max: Math.max(0, ...accepted.map(({ latencyMs }) => latencyMs)) } },
     resources: { samples },
     abort: { aborted: aborted !== null, reason: aborted },
     validation: {
-      passed: options.execute ? accepted.length === SESSION_COUNT && failures.length === 0 && aborted === null : true,
+      passed: options.execute ? accepted.length === SESSION_COUNT && failures.length === 0 && aborted === null && withheld === 0 : true,
       blocked: !options.execute,
       reason: options.execute ? null : "Paid execution requires 30 explicitly authorized isolated workspaces and operator opt-in.",
     },
@@ -88,6 +125,20 @@ export async function runRealLoad(options: {
   };
   await writeReports(options.output, report, realMarkdown(report));
   return report;
+}
+
+async function withTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`Launch timed out after ${timeoutMs}ms`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 async function listSupersetLocalWorkspaces(): Promise<LocalWorkspace[]> {
@@ -107,7 +158,7 @@ async function listSupersetLocalWorkspaces(): Promise<LocalWorkspace[]> {
   return workspaces.map((workspace) => ({ id: (workspace as { id: string }).id }));
 }
 
-function ceilingViolation(sample: Awaited<ReturnType<typeof sampleResources>>, options: { maxRssBytes: number; maxCpuMs: number; maxDescriptors: number }): string | null {
+function ceilingViolation(sample: ResourceSample, options: { maxRssBytes: number; maxCpuMs: number; maxDescriptors: number }): string | null {
   if (sample.rssBytes > options.maxRssBytes) return `RSS ceiling exceeded: ${sample.rssBytes}`;
   if (sample.cpuUserMs + sample.cpuSystemMs > options.maxCpuMs) return `CPU ceiling exceeded: ${sample.cpuUserMs + sample.cpuSystemMs}`;
   if (sample.descriptors !== null && sample.descriptors > options.maxDescriptors) return `descriptor ceiling exceeded: ${sample.descriptors}`;
@@ -131,7 +182,8 @@ function realMarkdown(report: Record<string, unknown>): string {
   const mode = String(report.mode);
   const launch = report.launch as { accepted: number };
   const abort = report.abort as { aborted: boolean; reason: string | null };
-  return `# PER-351 Real Agent Load\n\n- Schema: \`${schema}\`\n- Mode: ${mode}\n- Planned sessions: 30\n- Ramp: 5, 10, 15\n- Accepted launches: ${launch.accepted}\n- Aborted: ${abort.aborted}\n- Abort reason: ${abort.reason ?? "none"}\n\nEach assignment uses a unique workspace. Supported Superset APIs expose launch acceptance but cannot retrieve completion or exact results. Dry-run is the default and starts no paid agents.\n`;
+  const admission = report.admission as { offered: number; admitted: number; failed: number; withheld: number; maxObservedInFlight: number };
+  return `# PER-351 Real Agent Load\n\n- Schema: \`${schema}\`\n- Mode: ${mode}\n- Planned sessions: 30\n- Ramp: 5, 10, 15\n- Offered/admitted/failed/withheld: ${admission.offered}/${admission.admitted}/${admission.failed}/${admission.withheld}\n- Maximum observed in flight: ${admission.maxObservedInFlight}\n- Accepted launches: ${launch.accepted}\n- Aborted: ${abort.aborted}\n- Abort reason: ${abort.reason ?? "none"}\n\nThe JSON companion contains per-stage admission and resource evidence. Each assignment uses a unique workspace. Supported Superset APIs expose launch acceptance but cannot retrieve completion or exact results. Dry-run is the default and starts no paid agents.\n`;
 }
 
 async function main(): Promise<void> {
@@ -139,6 +191,7 @@ async function main(): Promise<void> {
   rejectUnknownArguments(args, [
     "--execute-paid-agents", "--workspace-file", "--agent", "--prompt", "--output",
     "--launch-timeout-ms", "--max-rss-bytes", "--max-cpu-ms", "--max-descriptors",
+    "--max-in-flight",
   ]);
   const execute = args.has("--execute-paid-agents");
   if (args.get("--execute-paid-agents") !== undefined && args.get("--execute-paid-agents") !== true) {
@@ -158,6 +211,7 @@ async function main(): Promise<void> {
     maxRssBytes: numericArgument(args, "--max-rss-bytes", 2 * 1024 * 1024 * 1024),
     maxCpuMs: numericArgument(args, "--max-cpu-ms", 300_000),
     maxDescriptors: numericArgument(args, "--max-descriptors", 4_096),
+    maxInFlight: numericArgument(args, "--max-in-flight", 15),
   });
   process.stdout.write(`${JSON.stringify({ report: output, schema: report.schema, mode: report.mode })}\n`);
   if (!(report.validation as { passed: boolean }).passed) process.exitCode = 1;

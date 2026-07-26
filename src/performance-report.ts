@@ -9,6 +9,11 @@ export interface ResourceSample {
   descriptors: number | null;
 }
 
+export interface PerformanceMeasurements {
+  durationMs<T>(label: string, operation: () => Promise<T>): Promise<{ value: T; durationMs: number }>;
+  resources(): Promise<ResourceSample>;
+}
+
 export function percentile(values: readonly number[], fraction: number): number {
   if (values.length === 0) return 0;
   const sorted = [...values].sort((left, right) => left - right);
@@ -32,6 +37,17 @@ export async function sampleResources(started: bigint, cpuStart: NodeJS.CpuUsage
     cpuSystemMs: cpu.system / 1_000,
     rssBytes: process.memoryUsage.rss(),
     descriptors: await descriptorCount(),
+  };
+}
+
+export function realMeasurements(started = process.hrtime.bigint(), cpuStart = process.cpuUsage()): PerformanceMeasurements {
+  return {
+    async durationMs<T>(_label: string, operation: () => Promise<T>) {
+      const operationStarted = process.hrtime.bigint();
+      const value = await operation();
+      return { value, durationMs: Number(process.hrtime.bigint() - operationStarted) / 1e6 };
+    },
+    resources: () => sampleResources(started, cpuStart),
   };
 }
 
