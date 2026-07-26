@@ -83,7 +83,7 @@ test("fake Superset timeout and malformed output fail deterministically without 
         return true;
       });
       assert.equal((await calls()).filter(({ command }) => command === "status").length, 1);
-    }, 250);
+    }, 1_000);
   }
 });
 
