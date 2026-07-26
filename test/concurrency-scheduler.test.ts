@@ -281,7 +281,7 @@ test("agent adapter holds capacity until terminal status, including after cancel
     { statuses: ["queued", "succeeded"], result: { status: "succeeded", output: "first" } },
     { statuses: ["queued", "cancelled"], result: { status: "cancelled" } },
   ]);
-  delegate.cancel = async () => undefined;
+  delegate.cancel = async () => ({ status: "accepted" });
   const adapter = new ConcurrencyLimitedAgentAdapter(delegate, scheduler, () => ({
     hostId: "local", projectId: "project", agentId: "codex", workspaceId: "workspace",
   }), () => ({
