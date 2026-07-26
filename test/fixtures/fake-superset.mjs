@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { Buffer } from "node:buffer";
-import { readFile, rename, writeFile } from "node:fs/promises";
+import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import lockfile from "proper-lockfile";
 
 const [scenarioPath, statePath, command] = process.argv.slice(2);
@@ -15,15 +15,17 @@ const release = await lockfile.lock(statePath, {
 });
 let response;
 let failure;
+let fault;
 try {
   const state = await loadState();
-  state.calls.push({
+  const call = {
     sequence: state.calls.length + 1,
     command,
     payload,
     argv: process.argv.slice(2),
     environment: Object.fromEntries((scenario.captureEnvironment ?? []).map((name) => [name, process.env[name]])),
-  });
+  };
+  state.calls.push(call);
   if (command === "launch" && scenario.launchError) {
     failure = [70, { code: "LAUNCH_REJECTED", message: scenario.launchError }];
   } else if (command === "cancel" && scenario.cancelUnsupported) {
@@ -36,13 +38,19 @@ try {
       failure = [error.exitCode, error.detail];
     }
   }
+  fault = selectFault(state.calls);
+  if (failure) call.failure = failure[1];
+  else call.response = response;
+  if (fault) call.fault = { id: fault.id, action: fault.action };
   await saveState(state);
 } finally {
   await release();
 }
 
-if (scenario.hangCommands?.includes(command)) await new Promise(() => undefined);
-if (scenario.malformedCommands?.includes(command)) {
+if (fault?.action === "hang" || scenario.hangCommands?.includes(command)) {
+  await new Promise(() => globalThis.setInterval(() => undefined, 60_000));
+}
+if (fault?.action === "malformed" || scenario.malformedCommands?.includes(command)) {
   if (scenario.malformedStderr) process.stderr.write(`${scenario.malformedStderr}\n`);
   process.stdout.write("not-json\n");
   process.exit(0);
@@ -104,8 +112,24 @@ async function loadState() {
 
 async function saveState(state) {
   const temporaryPath = `${statePath}.${process.pid}.tmp`;
-  await writeFile(temporaryPath, `${JSON.stringify(state)}\n`, { encoding: "utf8", mode: 0o600 });
-  await rename(temporaryPath, statePath);
+  try {
+    await writeFile(temporaryPath, `${JSON.stringify(state)}\n`, { encoding: "utf8", mode: 0o600 });
+    await rename(temporaryPath, statePath);
+  } finally {
+    await rm(temporaryPath, { force: true });
+  }
+}
+
+function selectFault(calls) {
+  const commandOccurrence = calls.filter((call) => call.command === command).length;
+  const fault = scenario.faults?.find((candidate) =>
+    candidate.command === command && candidate.occurrence === commandOccurrence);
+  if (fault === undefined) return undefined;
+  if (typeof fault.id !== "string" || fault.id.length === 0
+    || (fault.action !== "hang" && fault.action !== "malformed")) {
+    throw new Error("Invalid fake fault specification");
+  }
+  return fault;
 }
 
 async function readStdin() {
