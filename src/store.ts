@@ -326,6 +326,30 @@ const stateSchema = z.object({
     deliveries.add(result.deliveryId);
     attempts.add(result.attemptId);
   }
+  const sessions = new Set(state.sessions.map(({ id }) => id));
+  const batches = new Map(state.batches.map((batch) => [batch.id, batch]));
+  const assignments = new Map(state.assignments.map((assignment) => [assignment.id, assignment]));
+  for (const batch of state.batches) {
+    if (!sessions.has(batch.sessionId)) context.addIssue({ code: "custom", message: `Batch ${batch.id} references a missing session` });
+  }
+  for (const assignment of state.assignments) {
+    const batch = batches.get(assignment.batchId);
+    if (!sessions.has(assignment.sessionId) || batch === undefined || batch.sessionId !== assignment.sessionId) {
+      context.addIssue({ code: "custom", message: `Assignment ${assignment.id} has inconsistent durable identity` });
+    }
+  }
+  for (const event of state.auditEvents) {
+    if (!assignments.has(event.assignmentId)) context.addIssue({ code: "custom", message: `Audit event ${event.id} references a missing assignment` });
+  }
+  for (const result of state.capturedResults ?? []) {
+    const assignment = assignments.get(result.assignmentId);
+    if (assignment === undefined || result.batchId !== assignment.batchId || result.sessionId !== assignment.sessionId
+      || result.workspaceId !== assignment.workspaceId || result.workspacePath !== assignment.workspacePath
+      || result.attemptId !== assignment.attemptId || result.attempt !== assignment.attempt
+      || result.runId !== assignment.runId) {
+      context.addIssue({ code: "custom", message: `Captured result ${result.deliveryId} has inconsistent durable identity` });
+    }
+  }
 });
 
 const EMPTY_STATE: DurableState = {

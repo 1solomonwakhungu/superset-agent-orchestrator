@@ -153,6 +153,33 @@ test("running state without a process identity fails safely", async () => {
   });
 });
 
+test("valid JSON with stale cross-record identities fails without rewriting state", async () => {
+  await withState(async (path) => {
+    const state = fixture();
+    state.batches[0]!.sessionId = "stale-session-generation";
+    const corrupt = JSON.stringify(state);
+    await writeFile(path, corrupt, "utf8");
+
+    await assert.rejects(new DurableStore(path).reconcile(), /inconsistent durable identity|missing session/);
+    assert.equal(await readFile(path, "utf8"), corrupt);
+  });
+});
+
+test("PID reuse is fenced by the persisted process start token", async () => {
+  await withState(async (path) => {
+    const observed: Array<[number, string | undefined]> = [];
+    const store = new DurableStore(path, (pid, processStartedAt) => {
+      observed.push([pid, processStartedAt]);
+      return pid === 101 && processStartedAt === "new-generation";
+    });
+
+    await store.reconcile(new Date("2026-07-24T11:00:00.000Z"));
+
+    assert.deepEqual(observed, [[101, "live-token"], [202, "dead-token"]]);
+    assert.equal(store.snapshot().workers.find(({ id }) => id === "worker-live")?.status, "unknown_outcome");
+  });
+});
+
 test("startup recovers a durable state lock left by a killed server", async () => {
   await withState(async (path) => {
     await mkdir(`${path}.lock`);
