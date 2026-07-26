@@ -88,11 +88,15 @@ test("production MCP server exposes every provider error once without retries", 
   for (const [scenario, operation, code] of cases) {
     await withServer(scenario, async (harness) => {
       const launched = await launch(harness.client, 1);
-      const sessionId = launched.sessions[0]!.sessionId;
-      const response = operation === "cancel"
-        ? await call(harness.client, "provider_sessions_cancel", { request_id: "cancel", session_ids: [sessionId] })
-        : await results(harness.client, [sessionId]);
-      assert.equal(response.items[0]?.error?.code, code);
+      if (operation === "launch") {
+        assert.equal((await results(harness.client, [launched.sessions[0]!.sessionId])).items[0]?.error?.code, code);
+      } else {
+        const sessionId = launched.sessions[0]!.sessionId;
+        const response = operation === "cancel"
+          ? await call(harness.client, "provider_sessions_cancel", { request_id: "cancel", session_ids: [sessionId] })
+          : await results(harness.client, [sessionId]);
+        assert.equal(response.items[0]?.error?.code, code);
+      }
       const command = operation === "launch" ? "launch" : operation === "cancel" ? "cancel" : "status";
       assert.equal((await harness.calls()).filter((call) => call.command === command).length, 1);
     }, 200);
