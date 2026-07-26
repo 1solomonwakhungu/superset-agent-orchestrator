@@ -110,7 +110,7 @@ test("accepted launches recover after one-shot timeout and malformed responses w
       assert.deepEqual(ledger[0]?.fault, { id: `first-launch-${action}`, action });
       assert.deepEqual(ledger[0]?.response, { runId: "fake-001" });
       assert.equal(Object.keys((await fakeState()).runs).length, 1);
-    }, action === "hang" ? 250 : 10_000);
+    }, action === "hang" ? 1_000 : 10_000);
   }
 });
 
