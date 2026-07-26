@@ -245,3 +245,12 @@ locally.
   `git diff --check` passed.
 - Next: commit and push the hardening follow-up, open the PER-345 pull request, and
   reconcile Linear from the parent factory.
+- PR 28 follow-up integrated `origin/main`, kept transient workspace discovery
+  failures retryable, and prevented pre-adapter audit failures from becoming
+  unknown external outcomes. Discovery tests now use an explicitly pinned
+  executable, and the external CLI smoke test is opt-in.
+- Verification: `npm run verify` passed 123 tests with 1 explicit external smoke
+  skip; `npm run check`, `npm run schema`, `./scripts/verify-per-323.sh`, security
+  Markdown lint, Python bytecode compilation, and `git diff --check` passed. The
+  merged PER-258 Python suite passed 2/3 under Apple system Python; its TLS
+  recovery fixture fails because LibreSSL ignores the subprocess `SSL_CERT_FILE`.

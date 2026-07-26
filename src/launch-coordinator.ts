@@ -75,6 +75,11 @@ export class LaunchCoordinator {
     }
     try {
       await this.audit(request, "allowed", "launch_intent", grant.projectId);
+    } catch (error) {
+      await this.store.updateLaunch(request.idempotencyKey, "reserved", { diagnostic: safeErrorMessage(error) });
+      throw error;
+    }
+    try {
       const handle = await this.adapter.launch({
         idempotencyKey: request.idempotencyKey,
         prompt,
