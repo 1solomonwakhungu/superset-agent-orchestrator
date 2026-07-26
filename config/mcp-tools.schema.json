@@ -3667,10 +3667,14 @@
                       ],
                       "additionalProperties": false
                     }
+                  },
+                  "has_more": {
+                    "type": "boolean"
                   }
                 },
                 "required": [
-                  "expired"
+                  "expired",
+                  "has_more"
                 ],
                 "additionalProperties": false
               }
