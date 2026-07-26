@@ -724,8 +724,10 @@ export class OrchestratorStorage {
         "DELETE FROM idempotency_records WHERE expires_at < ? OR created_at < ?",
       ).run(sqlTimestamp(now), expiredIdempotency).changes);
       const leasesDeleted = Number(this.database.prepare(
-        "DELETE FROM workspace_leases WHERE state = 'released' AND released_at < ?",
-      ).run(expiredPayload).changes);
+        `DELETE FROM workspace_leases
+          WHERE (state = 'released' AND released_at < ?)
+          OR (mode = 'read-only' AND expires_at < ?)`,
+      ).run(expiredPayload, sqlTimestamp(now)).changes);
       if (assignmentsRedacted + resultsRedacted + idempotencyDeleted + leasesDeleted > 0) {
         this.appendEvent({ aggregateType: "registry", aggregateId: "maintenance", eventType: "retention.cleanup_completed",
           actor: "system", data: { assignmentsRedacted, resultsRedacted, idempotencyDeleted, leasesDeleted }, occurredAt: now });
