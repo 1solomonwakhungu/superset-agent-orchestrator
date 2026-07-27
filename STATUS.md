@@ -1,5 +1,22 @@
 # Status
 
+## PER-394 safe executor final hardening, 2026-07-27
+
+- Merged current `origin/main` into PR #96 without rebasing and retained the
+  existing feature branch lineage.
+- Hardened whole-graph validation and default-deny capability preflight so no
+  earlier node executes when any graph capability is refused; snapshotted graph,
+  tool, replay, and policy inputs across audit callbacks and asynchronous work.
+- Added bounded input, output, memory, timeout, and graph limits; explicit
+  filesystem-write denial atop Node permissions; byte-bounded subprocess streams;
+  and bounded failed-output audit evidence.
+- Expanded live macOS red-team coverage for filesystem reads/writes, network,
+  signals, subprocesses, hangs, audit mutation, strict replay, and policy ceilings.
+- Verification passed: focused validator/executor suite 20/20; full `npm run verify`
+  with 457 passing Node tests and one explicit live-Superset skip, 96.35% statement
+  coverage, 17 passing Python tests and one model-dependent skip, all schema,
+  provenance, research gates, and 10/10 race runs.
+
 ## PER-347 PR #82 final hardening integration, 2026-07-26
 
 - Integrated current `origin/main` `764f0a7e227e5e8bae863a5846e4ec063efd3d33`

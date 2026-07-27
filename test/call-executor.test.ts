@@ -78,6 +78,54 @@ test("validation and capabilities deny before an attempt", async () => {
       return true;
     },
   );
+  await assert.rejects(
+    executeCallGraph(
+      { nodes: [{ id: "a", tool: "lookup", arguments: { id: 1 } }] },
+      tools,
+      {
+        timeoutMs: policy.timeoutMs,
+        maxOutputBytes: policy.maxOutputBytes,
+        replayMode: policy.replayMode,
+        replayKey: policy.replayKey,
+      },
+    ),
+    /denied capability/,
+  );
+});
+
+test("capabilities are preflighted for the entire graph", async () => {
+  const attempted: string[] = [];
+  await assert.rejects(
+    executeCallGraph(
+      {
+        nodes: [
+          { id: "allowed", tool: "lookup", arguments: { id: 1 } },
+          { id: "denied", tool: "destroy", arguments: {} },
+        ],
+      },
+      {
+        ...tools,
+        destroy: {
+          capability: "system:destroy",
+          source: `() => "destroyed"`,
+          input: {
+            type: "object",
+            properties: {},
+            additionalProperties: false,
+          },
+          output: { type: "string" },
+        },
+      },
+      {
+        ...policy,
+        audit: ({ decision, nodeId }) => {
+          if (decision === "attempted") attempted.push(nodeId!);
+        },
+      },
+    ),
+    /denied capability system:destroy/,
+  );
+  assert.deepEqual(attempted, []);
 });
 
 test("strict replay rejects incomplete, reordered, forged, and invalid outputs", async () => {
@@ -99,6 +147,41 @@ test("strict replay rejects incomplete, reordered, forged, and invalid outputs",
     executeCallGraph(graph, tools, { ...policy, replayMode: "replay" }, [
       record,
     ]),
+    /trajectory/,
+  );
+});
+
+test("replay reproduces canonical trajectories bit-for-bit", async (context) => {
+  if (process.platform !== "darwin")
+    return context.skip("recording requires live sandbox");
+  const graph = {
+    nodes: [
+      { id: "a", tool: "lookup", arguments: { id: 7 } },
+      { id: "b", tool: "lookup", arguments: { id: 8 } },
+    ],
+  };
+  const recorded = await executeCallGraph(graph, tools, policy);
+  const first = await executeCallGraph(
+    graph,
+    tools,
+    { ...policy, replayMode: "replay" },
+    recorded.replay,
+  );
+  const second = await executeCallGraph(
+    graph,
+    tools,
+    { ...policy, replayMode: "replay" },
+    recorded.replay,
+  );
+  assert.equal(JSON.stringify(first.outputs), JSON.stringify(recorded.outputs));
+  assert.equal(JSON.stringify(second), JSON.stringify(first));
+  await assert.rejects(
+    executeCallGraph(
+      graph,
+      tools,
+      { ...policy, replayMode: "replay" },
+      [...recorded.replay].reverse(),
+    ),
     /trajectory/,
   );
 });
@@ -147,6 +230,63 @@ test("filesystem, network, and non-cooperative hangs are contained", async (cont
       { ...policy, timeoutMs: 25 },
     ),
     /timed out/,
+  );
+});
+
+test("sandbox blocks write and subprocess escape attempts", async (context) => {
+  if (process.platform !== "darwin")
+    return context.skip("live sandbox is macOS-only");
+  const escapeTools = {
+    escape: {
+      ...tools.lookup!,
+      source: `(input) => {
+        if (input.action === "write") return import("node:fs/promises").then(({ writeFile }) => writeFile("/tmp/per394-escape", "escaped"));
+        return import("node:child_process").then(({ execFile }) => new Promise((resolve, reject) => execFile("/usr/bin/touch", ["/tmp/per394-child-escape"], (error) => error ? reject(error) : resolve("escaped"))));
+      }`,
+    },
+  };
+  for (const action of ["write", "child"])
+    await assert.rejects(
+      executeCallGraph(
+        { nodes: [{ id: "a", tool: "escape", arguments: { id: 1, action } }] },
+        escapeTools,
+        policy,
+      ),
+      /sandbox exited/,
+    );
+});
+
+test("audit callbacks cannot mutate validated inputs", async (context) => {
+  if (process.platform !== "darwin")
+    return context.skip("live sandbox is macOS-only");
+  const result = await executeCallGraph(
+    { nodes: [{ id: "a", tool: "lookup", arguments: { id: 7 } }] },
+    tools,
+    {
+      ...policy,
+      audit: (entry) => {
+        assert.throws(() => {
+          (entry.input as { id: number }).id = 999;
+        }, TypeError);
+      },
+    },
+  );
+  assert.equal(result.outputs.a, "user-7");
+});
+
+test("resource policy limits are bounded", async () => {
+  const graph = { nodes: [{ id: "a", tool: "lookup", arguments: { id: 7 } }] };
+  await assert.rejects(
+    executeCallGraph(graph, tools, { ...policy, timeoutMs: 300_001 }),
+    /timeoutMs must be a bounded/,
+  );
+  await assert.rejects(
+    executeCallGraph(graph, tools, { ...policy, maxMemoryMb: 1_025 }),
+    /maxMemoryMb must be a bounded/,
+  );
+  await assert.rejects(
+    executeCallGraph(graph, tools, { ...policy, maxInputBytes: 16_777_217 }),
+    /maxInputBytes must be a bounded/,
   );
 });
 

@@ -17,7 +17,9 @@ export type ExecutableTool = ToolSchema & {
 export type ExecutionPolicy = {
   allowedCapabilities?: readonly string[];
   timeoutMs: number;
+  maxInputBytes?: number;
   maxOutputBytes: number;
+  maxMemoryMb?: number;
   maxNodes?: number;
   replayMode?: "disabled" | "record" | "replay";
   replayKey?: string;
@@ -68,26 +70,42 @@ export async function executeCallGraph(
   replayRecords: readonly ReplayRecord[] = [],
 ): Promise<ExecutionResult> {
   assertPolicy(policy);
+  const graphSnapshot = cloneJson(graph);
+  const toolSnapshot = cloneJson(tools);
+  const replaySnapshot = cloneJson(replayRecords);
+  const policySnapshot: ExecutionPolicy = {
+    allowedCapabilities: [...(policy.allowedCapabilities ?? [])],
+    timeoutMs: policy.timeoutMs,
+    maxInputBytes: policy.maxInputBytes ?? 1_048_576,
+    maxOutputBytes: policy.maxOutputBytes,
+    maxMemoryMb: policy.maxMemoryMb ?? 128,
+    maxNodes: policy.maxNodes ?? 100,
+    replayMode: policy.replayMode ?? "disabled",
+    ...(policy.replayKey === undefined ? {} : { replayKey: policy.replayKey }),
+  };
   const audit: AuditEntry[] = [];
   const appendAudit = async (entry: Omit<AuditEntry, "sequence">) => {
-    const complete = { sequence: audit.length, ...entry };
+    const complete = cloneJson({ sequence: audit.length, ...entry });
     audit.push(complete);
-    await policy.audit?.(complete);
+    await policy.audit?.(deepFreeze(cloneJson(complete)));
   };
   const schemas: Record<string, ToolSchema> = Object.fromEntries(
-    Object.entries(tools).map(([name, { input, output }]) => [
+    Object.entries(toolSnapshot).map(([name, { input, output }]) => [
       name,
       output ? { input, output } : { input },
     ]),
   );
-  const validation = validateCallGraph(graph, schemas);
-  if (!validation.valid || graph.nodes.length > (policy.maxNodes ?? 100)) {
+  const validation = validateCallGraph(graphSnapshot, schemas);
+  if (
+    !validation.valid ||
+    graphSnapshot.nodes.length > policySnapshot.maxNodes!
+  ) {
     await appendAudit({
       nodeId: null,
       tool: null,
       capability: null,
       decision: "validation_denied",
-      input: graph,
+      input: graphSnapshot,
       output: null,
       error: validation.valid
         ? "graph exceeds maximum node count"
@@ -99,31 +117,25 @@ export async function executeCallGraph(
     );
   }
 
-  const mode = policy.replayMode ?? "disabled";
-  if (mode !== "replay" && replayRecords.length > 0)
+  const mode = policySnapshot.replayMode!;
+  if (mode !== "replay" && replaySnapshot.length > 0)
     throw new ExecutionRefusedError("replay records require replay mode");
-  const ordered = topologicalOrder(graph.nodes);
-  if (mode === "replay" && replayRecords.length !== ordered.length)
+  const ordered = topologicalOrder(graphSnapshot.nodes);
+  if (mode === "replay" && replaySnapshot.length !== ordered.length)
     throw new ExecutionRefusedError(
       "replay must contain exactly one record per node",
     );
 
-  const allowed = new Set(policy.allowedCapabilities ?? []);
-  const outputs = new Map<string, unknown>();
-  const generated: ReplayRecord[] = [];
-  for (const [sequence, node] of ordered.entries()) {
-    const tool = tools[node.tool]!;
-    const arguments_ = resolveReferences(node.arguments, outputs);
-    const base = {
-      nodeId: node.id,
-      tool: node.tool,
-      capability: tool.capability,
-      input: arguments_,
-    };
+  const allowed = new Set(policySnapshot.allowedCapabilities);
+  for (const node of ordered) {
+    const tool = toolSnapshot[node.tool]!;
     if (!allowed.has(tool.capability)) {
       await appendAudit({
-        ...base,
+        nodeId: node.id,
+        tool: node.tool,
+        capability: tool.capability,
         decision: "capability_denied",
+        input: node.arguments,
         output: null,
         error: `capability ${tool.capability} is not allowed`,
       });
@@ -132,20 +144,33 @@ export async function executeCallGraph(
         audit,
       );
     }
-
+  }
+  const outputs = new Map<string, unknown>();
+  const generated: ReplayRecord[] = [];
+  for (const [sequence, node] of ordered.entries()) {
+    const tool = toolSnapshot[node.tool]!;
+    const arguments_ = cloneJson(resolveReferences(node.arguments, outputs));
+    const base = {
+      nodeId: node.id,
+      tool: node.tool,
+      capability: tool.capability,
+      input: arguments_,
+    };
+    let observedOutput: unknown = null;
     try {
       let output: unknown;
       if (mode === "replay") {
         output = verifyReplay(
-          replayRecords[sequence]!,
+          replaySnapshot[sequence]!,
           sequence,
           node,
           arguments_,
           tool,
-          policy.replayKey!,
+          policySnapshot.replayKey!,
         );
+        observedOutput = output;
         validateOutput(node, tool, output);
-        assertOutputSize(output, policy.maxOutputBytes);
+        assertOutputSize(output, policySnapshot.maxOutputBytes);
         await appendAudit({
           ...base,
           decision: "replayed",
@@ -159,9 +184,11 @@ export async function executeCallGraph(
           output: null,
           error: null,
         });
-        output = await runSandboxed(tool.source, arguments_, policy);
+        output = await runSandboxed(tool.source, arguments_, policySnapshot);
+        observedOutput = output;
         validateOutput(node, tool, output);
-        assertOutputSize(output, policy.maxOutputBytes);
+        assertOutputSize(output, policySnapshot.maxOutputBytes);
+        output = cloneJson(output);
         await appendAudit({
           ...base,
           decision: "executed",
@@ -179,14 +206,17 @@ export async function executeCallGraph(
             arguments_,
             safeOutput,
             tool,
-            policy.replayKey!,
+            policySnapshot.replayKey!,
           ),
         );
     } catch (error) {
       await appendAudit({
         ...base,
         decision: "failed",
-        output: null,
+        output: boundedAuditValue(
+          observedOutput,
+          policySnapshot.maxOutputBytes,
+        ),
         error: errorMessage(error),
       });
       throw withAudit(
@@ -217,11 +247,27 @@ async function runSandboxed(
     `process.stdout.write(JSON.stringify(await execute(JSON.parse(data))));`;
   // Node's permission model restricts filesystem/process/native capabilities;
   // Seatbelt supplies the network isolation that Node permissions do not cover.
-  const profile = `(version 1) (allow default) (deny network*) (deny signal)`;
+  const profile =
+    `(version 1) (allow default)` +
+    ` (deny network*) (deny signal) (deny file-write*)`;
+  const serializedInput = canonicalJson(input);
+  const maxInputBytes = policy.maxInputBytes ?? 1_048_576;
+  if (Buffer.byteLength(serializedInput) > maxInputBytes)
+    throw new ExecutionRefusedError(
+      `tool input exceeds ${maxInputBytes} bytes`,
+    );
   const output = await spawnBounded(
     sandboxExec,
-    ["-p", profile, process.execPath, "--permission", "--eval", runner],
-    canonicalJson(input),
+    [
+      "-p",
+      profile,
+      process.execPath,
+      "--permission",
+      `--max-old-space-size=${policy.maxMemoryMb ?? 128}`,
+      "--eval",
+      runner,
+    ],
+    serializedInput,
     policy.timeoutMs,
     policy.maxOutputBytes,
   );
@@ -240,16 +286,23 @@ function spawnBounded(
       env: {},
       stdio: ["pipe", "pipe", "pipe"],
     });
-    let errors = "";
-    let output = "";
-    child.stderr.setEncoding("utf8");
-    child.stdout.setEncoding("utf8");
-    child.stderr.on("data", (chunk: string) => {
-      errors = (errors + chunk).slice(-maxBytes);
+    const errors: Buffer[] = [];
+    const output: Buffer[] = [];
+    let errorBytes = 0;
+    let outputBytes = 0;
+    let outputExceeded = false;
+    child.stderr.on("data", (chunk: Buffer) => {
+      errorBytes += chunk.length;
+      errors.push(chunk);
+      while (errorBytes > maxBytes && errors.length > 0)
+        errorBytes -= errors.shift()!.length;
     });
-    child.stdout.on("data", (chunk: string) => {
-      output += chunk;
-      if (Buffer.byteLength(output) > maxBytes) child.kill("SIGKILL");
+    child.stdout.on("data", (chunk: Buffer) => {
+      outputBytes += chunk.length;
+      if (outputBytes > maxBytes) {
+        outputExceeded = true;
+        child.kill("SIGKILL");
+      } else output.push(chunk);
     });
     let timedOut = false;
     const timer = setTimeout(() => {
@@ -262,8 +315,19 @@ function spawnBounded(
       clearTimeout(timer);
       if (timedOut)
         reject(new Error(`tool execution timed out after ${timeoutMs}ms`));
-      else if (code === 0) resolvePromise(output);
-      else reject(new Error(`sandbox exited ${code ?? signal}: ${errors}`));
+      else if (outputExceeded)
+        reject(new Error(`tool output exceeds ${maxBytes} bytes`));
+      else if (code === 0)
+        resolvePromise(Buffer.concat(output).toString("utf8"));
+      else
+        reject(
+          new Error(
+            `sandbox exited ${code ?? signal}: ${Buffer.concat(errors).toString("utf8")}`,
+          ),
+        );
+    });
+    child.stdin.on("error", (error) => {
+      if ((error as NodeJS.ErrnoException).code !== "EPIPE") reject(error);
     });
     child.stdin.end(input);
   });
@@ -397,13 +461,19 @@ function resolveReferences(
 function assertPolicy(policy: ExecutionPolicy): void {
   for (const [name, value] of [
     ["timeoutMs", policy.timeoutMs],
+    ["maxInputBytes", policy.maxInputBytes ?? 1_048_576],
     ["maxOutputBytes", policy.maxOutputBytes],
+    ["maxMemoryMb", policy.maxMemoryMb ?? 128],
     ["maxNodes", policy.maxNodes ?? 100],
   ] as const)
     if (
       !Number.isSafeInteger(value) ||
       value <= 0 ||
-      (name === "timeoutMs" && value > 2 ** 31 - 1)
+      (name === "timeoutMs" && value > 300_000) ||
+      ((name === "maxInputBytes" || name === "maxOutputBytes") &&
+        value > 16 * 1_048_576) ||
+      (name === "maxMemoryMb" && (value < 16 || value > 1_024)) ||
+      (name === "maxNodes" && value > 10_000)
     )
       throw new TypeError(`${name} must be a bounded positive safe integer`);
   const mode = policy.replayMode ?? "disabled";
@@ -414,6 +484,24 @@ function assertPolicy(policy: ExecutionPolicy): void {
     throw new TypeError(
       "record and replay modes require a 32-character replayKey",
     );
+}
+
+function boundedAuditValue(value: unknown, maximum: number): unknown {
+  try {
+    return Buffer.byteLength(canonicalJson(value)) <= maximum
+      ? cloneJson(value)
+      : { truncated: true, reason: `output exceeds ${maximum} bytes` };
+  } catch {
+    return { truncated: true, reason: "output is not JSON serializable" };
+  }
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === "object") {
+    Object.freeze(value);
+    for (const child of Object.values(value)) deepFreeze(child);
+  }
+  return value;
 }
 
 function authenticate(value: unknown, key: string): string {
