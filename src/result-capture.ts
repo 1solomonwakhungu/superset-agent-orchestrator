@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { AgentAdapter, RunResult, TerminalRunStatus } from "./agent-adapter.js";
+import type { AgentAdapter, RunResult, RunStatus, TerminalRunStatus } from "./agent-adapter.js";
 import { parseProviderResult, parseProviderStatus, ProviderProtocolError } from "./provider-protocol.js";
 import { assertBoundedOptionalText, assertIdentifier, MAX_RESULT_BYTES } from "./security.js";
 import { DurableStore, type AgentResultClaim, type CapturedResult } from "./store.js";
@@ -16,7 +16,10 @@ export class ResultCaptureService {
     private readonly now: () => Date = () => new Date(),
   ) {}
 
-  async collect(assignmentId: string, deliveryId: string): Promise<{ result?: CapturedResult; duplicate: boolean }> {
+  async collect(
+    assignmentId: string,
+    deliveryId: string,
+  ): Promise<{ result?: CapturedResult; duplicate: boolean; observedStatus?: RunStatus }> {
     const assignment = await this.store.assignmentForResult(assignmentId);
     if (assignment.status !== "launched" || assignment.runId === undefined) {
       throw new Error("Result collection requires a launched assignment with a bound run ID");
@@ -35,7 +38,9 @@ export class ResultCaptureService {
         error: "Provider status response used a different execution identity",
       });
     }
-    if (state.status === "queued" || state.status === "running") return { duplicate: false };
+    if (state.status === "queued" || state.status === "running") {
+      return { duplicate: false, observedStatus: state.status };
+    }
     let result: RunResult | undefined;
     try {
       const providerResult = await this.adapter.result({ runId: assignment.runId });
@@ -46,22 +51,25 @@ export class ResultCaptureService {
       result = parseProviderResult(providerResult);
     } catch (error) {
       if (isTransientProviderError(error)) throw error;
-      return this.ingest(assignmentId, deliveryId, {
+      const captured = await this.ingest(assignmentId, deliveryId, {
         kind: "malformed",
         error: error instanceof Error && error.message.includes("exceeds the 4194304 byte limit")
           ? "Provider result response was oversized"
           : error instanceof Error ? error.message : String(error),
       });
+      return { ...captured, observedStatus: state.status };
     }
     if (result !== undefined && result.status !== state.status) {
-      return this.ingest(assignmentId, deliveryId, {
+      const captured = await this.ingest(assignmentId, deliveryId, {
         kind: "malformed",
         error: `Adapter result status ${JSON.stringify(result.status)} did not match observed status ${JSON.stringify(state.status)}`,
       });
+      return { ...captured, observedStatus: state.status };
     }
-    return this.ingest(assignmentId, deliveryId, result === undefined
+    const captured = await this.ingest(assignmentId, deliveryId, result === undefined
       ? { kind: "stopped_without_result", status: state.status }
       : { kind: "adapter_result", result });
+    return { ...captured, observedStatus: state.status };
   }
 
   async ingest(assignmentId: string, deliveryId: string, delivery: ResultDelivery) {

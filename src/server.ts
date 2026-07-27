@@ -11,6 +11,7 @@ import { BatchQueryError, DurableStore } from "./store.js";
 import { LaunchService } from "./launch-service.js";
 import { ResultCaptureService } from "./result-capture.js";
 import { SupersetProcessAdapter, SupersetProcessError } from "./superset-process-adapter.js";
+import { SupersetLocalMcpAdapter } from "./superset-local-mcp-adapter.js";
 import { assertRegisteredToolNames, assertSafeToolNames } from "./tool-security.js";
 import { SupersetDiscoveryAdapter } from "./superset-discovery.js";
 import type { AgentAdapter } from "./agent-adapter.js";
@@ -99,11 +100,22 @@ async function main(): Promise<void> {
   const providerExecutable = process.env.SUPERSET_ORCHESTRATOR_PROVIDER_EXECUTABLE;
   const providerArgs = JSON.parse(process.env.SUPERSET_ORCHESTRATOR_PROVIDER_ARGS ?? "[]") as string[];
   const providerTimeoutMs = Number(process.env.SUPERSET_ORCHESTRATOR_PROVIDER_TIMEOUT_MS ?? 30_000);
-  const provider = providerExecutable === undefined ? undefined : new SupersetProcessAdapter({
-    executable: providerExecutable,
-    args: providerArgs,
-    timeoutMs: providerTimeoutMs,
-  });
+  const liveSupersetEnabled = process.env.SUPERSET_ORCHESTRATOR_ENABLE_LIVE_SUPERSET === "1";
+  const provider: AgentAdapter | undefined = liveSupersetEnabled
+    ? new SupersetLocalMcpAdapter({
+        serverPath: process.env.SUPERSET_ORCHESTRATOR_LIVE_MCP_SERVER
+          ?? join(homedir(), ".superset", "mcp", "local-server.mjs"),
+        statePath: process.env.SUPERSET_ORCHESTRATOR_LIVE_RUN_STATE
+          ?? `${statePath}.superset-runs.json`,
+        timeoutMs: providerTimeoutMs,
+      })
+    : providerExecutable === undefined
+      ? undefined
+      : new SupersetProcessAdapter({
+          executable: providerExecutable,
+          args: providerArgs,
+          timeoutMs: providerTimeoutMs,
+        });
   const lifecycle = new LifecycleService(
     store,
     provider ?? unsupportedBackend,
@@ -128,10 +140,16 @@ async function main(): Promise<void> {
   deadlineTimer.unref();
 
   const server = new McpServer({ name: "superset-agent-orchestrator", version: "0.1.0" });
-  const discovery = providerExecutable === undefined
+  const discoveryExecutable = process.env.SUPERSET_ORCHESTRATOR_DISCOVERY_EXECUTABLE
+    ?? (liveSupersetEnabled ? join(homedir(), ".superset", "bin", "superset") : providerExecutable);
+  const discoveryArgs = JSON.parse(
+    process.env.SUPERSET_ORCHESTRATOR_DISCOVERY_ARGS ?? (liveSupersetEnabled ? "[]" : JSON.stringify(providerArgs)),
+  ) as string[];
+  const discovery = discoveryExecutable === undefined
     ? undefined
-    : new SupersetDiscoveryAdapter({ executable: providerExecutable, args: providerArgs });
+    : new SupersetDiscoveryAdapter({ executable: discoveryExecutable, args: discoveryArgs });
   const integrationToolsEnabled = process.env.SUPERSET_ORCHESTRATOR_ENABLE_PROVIDER_TEST_TOOLS === "1";
+  const providerToolsEnabled = integrationToolsEnabled || liveSupersetEnabled;
   const integrationWorkspaceRoot = process.env.SUPERSET_ORCHESTRATOR_PROVIDER_TEST_WORKSPACE_ROOT;
   const canonicalIntegrationWorkspaceRoot = !integrationToolsEnabled || integrationWorkspaceRoot === undefined
     ? undefined
@@ -164,7 +182,7 @@ async function main(): Promise<void> {
       }
     : discovery === undefined
     ? undefined
-    : new RegisteredWorkspaceAuthorizer(() => discovery.inventory());
+    : new RegisteredWorkspaceAuthorizer(() => discovery.inventory(), [], liveSupersetEnabled);
   const launches = provider === undefined || workspaceAuthorizer === undefined
     ? undefined
     : new LaunchService(store, provider, workspaceAuthorizer);
@@ -186,7 +204,7 @@ async function main(): Promise<void> {
       },
     },
     async ({ request_id, client_id, name, idempotency_key, assignments }) => {
-      if (!integrationToolsEnabled) return providerError(request_id, "PROVIDER_UNAVAILABLE", "Provider test tools are disabled");
+      if (!providerToolsEnabled) return providerError(request_id, "PROVIDER_UNAVAILABLE", "Provider launch tools are disabled");
       if (launches === undefined) return providerError(request_id, "PROVIDER_UNAVAILABLE", "No Superset provider is configured");
       try {
         const accepted = await launches.acceptBatch({
@@ -211,19 +229,21 @@ async function main(): Promise<void> {
       inputSchema: { request_id: z.string().min(1), session_ids: z.array(z.string().min(1)).min(1).max(100) },
     },
     async ({ request_id, session_ids }) => {
-      if (!integrationToolsEnabled) return providerError(request_id, "PROVIDER_UNAVAILABLE", "Provider test tools are disabled");
+      if (!providerToolsEnabled) return providerError(request_id, "PROVIDER_UNAVAILABLE", "Provider result tools are disabled");
       if (capture === undefined) return providerError(request_id, "PROVIDER_UNAVAILABLE", "No Superset provider is configured");
       const assignments = await store.assignmentsForSessions(session_ids);
       const items = [];
       for (const [index, assignment] of assignments.entries()) {
         const sessionId = session_ids[index]!;
+        let observedStatus: "queued" | "running" | "succeeded" | "failed" | "cancelled" | undefined;
         if (assignment === undefined) {
           items.push({ session_id: sessionId, error: contractError("SESSION_NOT_FOUND", "Unknown session") });
           continue;
         }
         if (assignment.status === "launched") {
           try {
-            await capture.collect(assignment.id, `provider:${assignment.attemptId}`);
+            const collected = await capture.collect(assignment.id, `provider:${assignment.attemptId}`);
+            observedStatus = collected.observedStatus;
           } catch (error) {
             if (error instanceof SupersetProcessError) {
               items.push({ session_id: sessionId, error: contractError(error.code, error.message) });
@@ -234,9 +254,12 @@ async function main(): Promise<void> {
         }
         const captured = (await store.resultsForSessions([sessionId]))[0];
         const worker = await store.worker(sessionId);
+        const status = worker?.status === "requested" && observedStatus !== undefined
+          ? observedStatus === "queued" ? "requested" : observedStatus
+          : worker?.status ?? assignment.status;
         items.push({
           session_id: sessionId, assignment_id: assignment.id, batch_id: assignment.batchId,
-          status: worker?.status ?? assignment.status, attribution: assignment.attribution,
+          status, attribution: assignment.attribution,
           workspace_id: assignment.workspaceId, run_id: assignment.runId,
           ...(captured === undefined ? {} : { result: captured }),
           ...(assignment.error === undefined ? {} : {
@@ -257,7 +280,7 @@ async function main(): Promise<void> {
       },
     },
     async ({ request_id, session_ids, reason }) => {
-      if (!integrationToolsEnabled) return providerError(request_id, "PROVIDER_UNAVAILABLE", "Provider test tools are disabled");
+      if (!providerToolsEnabled) return providerError(request_id, "PROVIDER_UNAVAILABLE", "Provider cancellation tools are disabled");
       if (provider === undefined) return providerError(request_id, "PROVIDER_UNAVAILABLE", "No Superset provider is configured");
       const assignments = await store.assignmentsForSessions(session_ids);
       const captured = await store.resultsForSessions(session_ids);

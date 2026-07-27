@@ -1,5 +1,16 @@
 import { spawn } from "node:child_process";
-import { accessSync, constants, realpathSync } from "node:fs";
+import {
+  accessSync,
+  closeSync,
+  constants,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import {
   agentPresetListSchema,
@@ -94,18 +105,24 @@ export const runProcess: ProcessRunner = async (executable, args, timeoutMs, sig
   }
   const program = pin.path;
   const argv = assertFixedArguments(args);
+  const captureDirectory = mkdtempSync(join(tmpdir(), "superset-discovery-"));
+  const stdoutPath = join(captureDirectory, "stdout");
+  const stdoutFd = openSync(stdoutPath, "wx", 0o600);
   return new Promise<ProcessResult>((resolve, reject) => {
       const useProcessGroup = process.platform !== "win32";
       const child = spawn(program, argv, {
         shell: false,
-        stdio: ["ignore", "pipe", "pipe"],
+        // Superset 1.17 can truncate large JSON responses at exactly 64 KiB
+        // when its stdout is a pipe. A private file preserves the complete
+        // response while the size monitor retains the same hard bound.
+        stdio: ["ignore", stdoutFd, "pipe"],
         windowsHide: true,
         detached: useProcessGroup,
         env: childEnvironment(),
       });
-      const stdout: Buffer[] = [];
+      closeSync(stdoutFd);
       const stderr: Buffer[] = [];
-      let outputBytes = 0;
+      let stderrBytes = 0;
       let settled = false;
       let terminationError: SupersetDiscoveryError | undefined;
 
@@ -113,20 +130,35 @@ export const runProcess: ProcessRunner = async (executable, args, timeoutMs, sig
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        clearInterval(outputMonitor);
         signal?.removeEventListener("abort", abort);
-        action();
+        try {
+          action();
+        } finally {
+          rmSync(captureDirectory, { recursive: true, force: true });
+        }
       };
       const terminate = () => {
         if (child.pid === undefined) return;
         try {
           process.kill(useProcessGroup ? -child.pid : child.pid, "SIGKILL");
         } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code === "ESRCH") return;
+          if (code !== "EPERM" || !useProcessGroup) throw error;
+          // A very short-lived child can exit between the group lookup and
+          // signal delivery on macOS. Fall back to the child handle so an
+          // output-limit race cannot surface as an uncaught timer exception.
+          try {
+            child.kill("SIGKILL");
+          } catch (fallbackError) {
+            if ((fallbackError as NodeJS.ErrnoException).code !== "ESRCH") throw fallbackError;
+          }
         }
       };
-      const append = (current: Buffer[], chunk: Buffer) => {
-        outputBytes += chunk.byteLength;
-        if (outputBytes > MAX_OUTPUT_BYTES) {
+      const appendStderr = (chunk: Buffer) => {
+        stderrBytes += chunk.byteLength;
+        if (stderrBytes + stdoutSize() > MAX_OUTPUT_BYTES) {
           terminationError ??= new SupersetDiscoveryError(
             "MALFORMED_RESPONSE",
             "Superset discovery output exceeded the supported limit",
@@ -134,7 +166,7 @@ export const runProcess: ProcessRunner = async (executable, args, timeoutMs, sig
           terminate();
           return;
         }
-        current.push(chunk);
+        stderr.push(chunk);
       };
       const abort = () => {
         terminationError ??= new SupersetDiscoveryError(
@@ -144,16 +176,46 @@ export const runProcess: ProcessRunner = async (executable, args, timeoutMs, sig
         terminate();
       };
 
-      child.stdout?.on("data", (chunk: Buffer) => { append(stdout, chunk); });
-      child.stderr?.on("data", (chunk: Buffer) => { append(stderr, chunk); });
+      const stdoutSize = () => {
+        try {
+          return statSync(stdoutPath).size;
+        } catch {
+          return 0;
+        }
+      };
+      const outputMonitor = setInterval(() => {
+        if (stdoutSize() + stderrBytes <= MAX_OUTPUT_BYTES) return;
+        terminationError ??= new SupersetDiscoveryError(
+          "MALFORMED_RESPONSE",
+          "Superset discovery output exceeded the supported limit",
+        );
+        terminate();
+      }, 10);
+      outputMonitor.unref();
+      child.stderr?.on("data", appendStderr);
       child.once("error", (error) => finish(() => reject(new SupersetDiscoveryError(
         "UNAVAILABLE",
         "Superset executable is unavailable",
         { cause: error },
       ))));
-      child.once("close", (exitCode) => finish(() => terminationError === undefined
-        ? resolve({ stdout: Buffer.concat(stdout).toString("utf8"), stderr: Buffer.concat(stderr).toString("utf8"), exitCode: exitCode ?? -1 })
-        : reject(terminationError)));
+      child.once("close", (exitCode) => finish(() => {
+        if (terminationError === undefined && stdoutSize() + stderrBytes > MAX_OUTPUT_BYTES) {
+          reject(new SupersetDiscoveryError(
+            "MALFORMED_RESPONSE",
+            "Superset discovery output exceeded the supported limit",
+          ));
+          return;
+        }
+        if (terminationError !== undefined) {
+          reject(terminationError);
+          return;
+        }
+        resolve({
+          stdout: readFileSync(stdoutPath, "utf8"),
+          stderr: Buffer.concat(stderr).toString("utf8"),
+          exitCode: exitCode ?? -1,
+        });
+      }));
 
       const timer = setTimeout(() => {
         terminationError ??= new SupersetDiscoveryError(
