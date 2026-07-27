@@ -33,6 +33,14 @@ publish the full CPU evaluation wall-clock budget; this package only bounds the
 item count and per-item timeout metadata. A configured 131,072-token probe is
 not evidence that any runtime completed it.
 
+Use `python3 scripts/verify_corpus_output.py ITEM_ID` with `--response`,
+`--response-file`, or `--candidate` to score one result. The verifier applies
+exact and semantic JSON comparison, ordered or commuting typed-call comparison,
+generated-sentinel scoring, executable Python/JavaScript cases, and each code
+item's timeout. Candidate code is untrusted and must be run inside the evaluation
+harness's operating-system sandbox; the script provides timeout enforcement, not
+a security boundary.
+
 The committed held-out split detects repository regressions but cannot be secret
 from a model trained on the repository. A future private evaluation subset must
 remain outside Git; only its content hash, item count, license audit, and access
@@ -42,7 +50,10 @@ policy should be published.
 
 Items are immutable after release. Corrections require a corpus version bump,
 new stable IDs where semantics change, regenerated file hashes in
-`manifest.json`, and a new `manifest.sha256`. The validator rejects unknown
+`manifest.json`, and a new `manifest.sha256`. Stable IDs use lowercase,
+domain-prefixed names with a three-digit suffix. The manifest also hashes this
+datasheet and all normative generator, validator, and scoring scripts so changes
+to evaluation semantics are detectable. The validator rejects unknown
 fields, duplicate IDs, missing gold/verifiers, unapproved licenses, count drift,
 byte drift, and an invalid manifest pin.
 
