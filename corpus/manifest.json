@@ -1,4 +1,22 @@
 {
+  "assets": {
+    "corpus/DATASHEET.md": {
+      "bytes": 3250,
+      "sha256": "783c18fd590ddd7071771c050e3c932088dfd11f37ce4864b2ea2f8dcb816276"
+    },
+    "scripts/materialize_long_context.py": {
+      "bytes": 1493,
+      "sha256": "76085cb36720120f4912a9ba75c199fc264c05bf88b2c52ee559c62020ff13e4"
+    },
+    "scripts/validate_corpus.py": {
+      "bytes": 15901,
+      "sha256": "0fae5df0163e5817a21b141d7a3e87f79144a64ee4417c051d88638543aa07d0"
+    },
+    "scripts/verify_corpus_output.py": {
+      "bytes": 5933,
+      "sha256": "67d5289454343343b1dff10de7a6769d797f1979822526a3e9ea05837151e98e"
+    }
+  },
   "corpus_version": "per-365-v1",
   "files": {
     "code.jsonl": {

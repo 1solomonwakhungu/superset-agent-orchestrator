@@ -2,6 +2,16 @@
 
 ## PER-365 regression corpus, 2026-07-26
 
+- Integrated current `origin/main` `d3229e00f097f926fa6fa59e36fac9c3c6fc5a8e`
+  without rebasing and re-audited every acceptance criterion.
+- Added executable result scoring for exact, semantic JSON, generated-sentinel,
+  ordered/commuting tool-call, and timeout-bounded Python/JavaScript code cases.
+- Extended content addressing to the datasheet and all normative generator,
+  validator, and scoring scripts; stable IDs now enforce canonical domain prefixes.
+- Focused verification passes 17/17. Full `npm run check` passes 445/446 Node
+  tests and 34/35 Python tests with one intentional skip in each suite, plus all
+  coverage, corpus, schema, provenance, and research gates; race checks pass 10/10.
+- Next: push the exact head and confirm fresh GitHub checks.
 - Added 15 original, license-recorded held-out items across reasoning, code,
   typed tool use, generated long-context probes, and determinism slices.
 - Added a standard-library validator enforcing closed item and typed evidence

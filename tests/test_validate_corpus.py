@@ -23,12 +23,27 @@ assert MATERIALIZER_SPEC and MATERIALIZER_SPEC.loader
 MATERIALIZER = importlib.util.module_from_spec(MATERIALIZER_SPEC)
 MATERIALIZER_SPEC.loader.exec_module(MATERIALIZER)
 
+VERIFIER_SPEC = importlib.util.spec_from_file_location(
+    "verify_corpus_output", ROOT / "scripts" / "verify_corpus_output.py"
+)
+assert VERIFIER_SPEC and VERIFIER_SPEC.loader
+VERIFIER = importlib.util.module_from_spec(VERIFIER_SPEC)
+VERIFIER_SPEC.loader.exec_module(VERIFIER)
+
 
 class ValidateCorpusTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.corpus = Path(self.temporary.name) / "corpus"
         shutil.copytree(ROOT / "corpus", self.corpus)
+        scripts = Path(self.temporary.name) / "scripts"
+        scripts.mkdir()
+        for filename in (
+            "materialize_long_context.py",
+            "validate_corpus.py",
+            "verify_corpus_output.py",
+        ):
+            shutil.copy2(ROOT / "scripts" / filename, scripts / filename)
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -41,6 +56,9 @@ class ValidateCorpusTest(unittest.TestCase):
             entry.update(
                 sha256=MODULE._sha256(raw), bytes=len(raw), items=len(raw.splitlines())
             )
+        for relative_path, entry in manifest["assets"].items():
+            raw = (ROOT / relative_path).read_bytes()
+            entry.update(sha256=MODULE._sha256(raw), bytes=len(raw))
         encoded = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode()
         manifest_path.write_bytes(encoded)
         (self.corpus / "manifest.sha256").write_text(
@@ -72,10 +90,15 @@ class ValidateCorpusTest(unittest.TestCase):
 
     def test_rejects_duplicate_ids(self) -> None:
         first_id = json.loads(
-            (self.corpus / "reasoning.jsonl").read_text(encoding="utf-8").splitlines()[0]
+            (self.corpus / "code.jsonl").read_text(encoding="utf-8").splitlines()[0]
         )["id"]
-        self.mutate_first("code.jsonl", lambda item: item.update(id=first_id))
+        self.mutate_record("code.jsonl", 1, lambda item: item.update(id=first_id))
         with self.assertRaisesRegex(MODULE.CorpusValidationError, "duplicate id"):
+            MODULE.validate_corpus(self.corpus)
+
+    def test_rejects_noncanonical_or_wrong_domain_id(self) -> None:
+        self.mutate_first("reasoning.jsonl", lambda item: item.update(id="code_bad"))
+        with self.assertRaisesRegex(MODULE.CorpusValidationError, "domain-prefixed stable id"):
             MODULE.validate_corpus(self.corpus)
 
     def test_rejects_missing_gold_or_verifier(self) -> None:
@@ -122,6 +145,49 @@ class ValidateCorpusTest(unittest.TestCase):
         self.assertEqual(len(tokens), 4096)
         self.assertEqual(tokens[2048:2050], ["LC4096", "value-4096"])
         self.assertGreater(len(tokens[2050:]), 0)
+
+    def test_scores_exact_json_and_generated_outputs(self) -> None:
+        self.assertTrue(
+            VERIFIER.score_item(VERIFIER.load_item(ROOT / "corpus", "reasoning-arithmetic-001"), "63\n")
+        )
+        self.assertTrue(
+            VERIFIER.score_item(VERIFIER.load_item(ROOT / "corpus", "determinism-json-001"), '{"b":[2,3],"a":1}')
+        )
+        self.assertTrue(
+            VERIFIER.score_item(VERIFIER.load_item(ROOT / "corpus", "long-context-4096-001"), "value-4096")
+        )
+
+    def test_scores_commuting_tool_calls(self) -> None:
+        item = VERIFIER.load_item(ROOT / "corpus", "tool-inventory-parallel-001")
+        reversed_calls = list(reversed(item["gold"]["calls"]))
+        self.assertTrue(VERIFIER.score_item(item, json.dumps({"calls": reversed_calls})))
+
+    def test_executes_python_candidate_cases(self) -> None:
+        candidate = Path(self.temporary.name) / "candidate.py"
+        candidate.write_text(
+            "def clamp(value, lower, upper):\n"
+            "    if lower > upper: raise ValueError()\n"
+            "    return min(upper, max(lower, value))\n",
+            encoding="utf-8",
+        )
+        item = VERIFIER.load_item(ROOT / "corpus", "code-python-clamp-001")
+        self.assertTrue(VERIFIER.score_item(item, candidate=candidate))
+
+    def test_executes_javascript_candidate_cases(self) -> None:
+        candidate = Path(self.temporary.name) / "candidate.mjs"
+        candidate.write_text(
+            "export function groupBy(items, keyFn) {\n"
+            "  const result = new Map();\n"
+            "  for (const item of items) {\n"
+            "    const key = keyFn(item);\n"
+            "    result.set(key, [...(result.get(key) ?? []), item]);\n"
+            "  }\n"
+            "  return result;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        item = VERIFIER.load_item(ROOT / "corpus", "code-javascript-group-001")
+        self.assertTrue(VERIFIER.score_item(item, candidate=candidate))
 
     def test_rejects_gold_arguments_that_violate_tool_schema(self) -> None:
         def remove_required_argument(item):

@@ -19,6 +19,12 @@ CORPUS_FILES = (
     "long-context.jsonl",
     "determinism.jsonl",
 )
+NORMATIVE_ASSETS = (
+    "corpus/DATASHEET.md",
+    "scripts/materialize_long_context.py",
+    "scripts/validate_corpus.py",
+    "scripts/verify_corpus_output.py",
+)
 DOMAINS = {name.removesuffix(".jsonl") for name in CORPUS_FILES}
 DIFFICULTIES = {"easy", "medium", "hard"}
 LICENSES = {"CC0-1.0", "MIT"}
@@ -231,6 +237,11 @@ def _validate_item(item: dict[str, Any], expected_domain: str, context: str) -> 
     for field in ("id", "prompt", "license"):
         if not isinstance(item[field], str) or not item[field].strip():
             raise CorpusValidationError(f"{context}: {field} must be a non-empty string")
+    id_prefix = "tool" if expected_domain == "tool-use" else expected_domain
+    if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*-[0-9]{3}", item["id"]) is None or not item[
+        "id"
+    ].startswith(f"{id_prefix}-"):
+        raise CorpusValidationError(f"{context}: id must be a domain-prefixed stable id")
     if item["license"] not in LICENSES:
         raise CorpusValidationError(f"{context}: unapproved license {item['license']!r}")
     if not isinstance(item["tags"], list) or not item["tags"] or not all(
@@ -250,6 +261,7 @@ def _validate_item(item: dict[str, Any], expected_domain: str, context: str) -> 
 
 
 def validate_corpus(corpus_dir: Path) -> dict[str, int]:
+    repository_root = corpus_dir.resolve().parent
     manifest_path = corpus_dir / "manifest.json"
     pin_path = corpus_dir / "manifest.sha256"
     manifest_bytes = manifest_path.read_bytes()
@@ -258,13 +270,20 @@ def validate_corpus(corpus_dir: Path) -> dict[str, int]:
         raise CorpusValidationError("manifest.sha256 does not pin manifest.json")
 
     manifest = _object(json.loads(manifest_bytes), "manifest")
-    if set(manifest) != {"corpus_version", "schema_version", "files"}:
+    if set(manifest) != {"corpus_version", "schema_version", "files", "assets"}:
         raise CorpusValidationError("manifest: invalid fields")
     if manifest["corpus_version"] != "per-365-v1" or manifest["schema_version"] != 1:
         raise CorpusValidationError("manifest: unsupported version")
     files = _object(manifest["files"], "manifest.files")
     if set(files) != set(CORPUS_FILES):
         raise CorpusValidationError("manifest: file set does not match corpus contract")
+    assets = _object(manifest["assets"], "manifest.assets")
+    if set(assets) != set(NORMATIVE_ASSETS):
+        raise CorpusValidationError("manifest: normative asset set does not match corpus contract")
+    for relative_path in NORMATIVE_ASSETS:
+        raw = (repository_root / relative_path).read_bytes()
+        if assets[relative_path] != {"bytes": len(raw), "sha256": _sha256(raw)}:
+            raise CorpusValidationError(f"{relative_path}: normative asset manifest mismatch")
 
     seen: set[str] = set()
     counts: dict[str, int] = {}
