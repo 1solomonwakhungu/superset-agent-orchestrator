@@ -171,7 +171,7 @@ test("does not capture a nonterminal adapter result", async () => {
     const accepted = await launch.accept(request);
     await launch.dispatchPending();
     const collected = await new ResultCaptureService(store, adapter).collect(accepted.assignmentId, "delivery-1");
-    assert.deepEqual(collected, { duplicate: false });
+    assert.deepEqual(collected, { duplicate: false, observedStatus: "running" });
     assert.equal((JSON.parse(await readFile(path, "utf8")) as DurableState).capturedResults?.length, 0);
   } finally {
     await rm(directory, { recursive: true, force: true });

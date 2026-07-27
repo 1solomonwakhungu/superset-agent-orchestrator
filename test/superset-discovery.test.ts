@@ -40,6 +40,36 @@ test("discovers valid local projects, workspaces, host, and presets", async () =
   assert.deepEqual(fake.calls, [["--version"], ["status", "--json"], ["projects", "list", "--local", "--json"], ["workspaces", "list", "--local", "--json"], ["agents", "list", "--local", "--json"]]);
 });
 
+test("normalizes the current local CLI project and workspace shapes", async () => {
+  const fake = fakeRunner({
+    "projects list --local --json": [{
+      id: "project-1",
+      name: "orchestrator",
+      repo: "https://github.com/example/orchestrator.git",
+      path: "/tmp/orchestrator",
+    }],
+    "workspaces list --local --json": [{
+      ...workspaces[0],
+      hostName: undefined,
+    }],
+  });
+  const result = await new SupersetDiscoveryAdapter({
+    executable: process.execPath,
+    runner: fake.runner,
+  }).discover();
+
+  assert.deepEqual(result.projects[0], {
+    id: "project-1",
+    name: "orchestrator",
+    slug: "orchestrator",
+    repoCloneUrl: "https://github.com/example/orchestrator.git",
+    githubRepositoryId: null,
+    setUp: "yes",
+    path: "/tmp/orchestrator",
+  });
+  assert.equal(result.workspaces[0]?.hostName, "local");
+});
+
 test("normalizes malformed JSON and schema mismatches", async () => {
   await expectCode(new SupersetDiscoveryAdapter({ executable: process.execPath, runner: fakeRunner({ "projects list --local --json": "not-json" }).runner }), "MALFORMED_RESPONSE");
   await expectCode(new SupersetDiscoveryAdapter({ executable: process.execPath, runner: fakeRunner({ "status --json": { ...host, hostId: null } }).runner }), "MALFORMED_RESPONSE");

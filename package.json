@@ -34,6 +34,7 @@
     "load:ci": "npm run build && node dist/src/bounded-load-ci.js artifacts/per-351-ci",
     "discovery:record": "npm run build && node scripts/record-discovery-fixture.mjs",
     "compatibility:report": "node scripts/generate-compatibility-report.mjs",
+    "tool:call": "node scripts/call-orchestrator-tool.mjs",
     "research:verify": "node scripts/verify-disklm-research.mjs",
     "start": "node dist/src/server.js",
     "pretest": "npm run build",
