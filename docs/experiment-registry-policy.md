@@ -5,6 +5,7 @@
 ## Rules
 
 - Every line is a finalized, terminal experiment record. Failed and aborted work is retained.
+- Every line validates against `registry/experiment.schema.json` before append.
 - Records are immutable. Corrections and reruns receive a new `exp_<uuid>` identifier; never edit, delete, or reuse an existing identifier.
 - `parentBaselineFingerprint` is the exact BL-08 result fingerprint. Registration does not itself verify or endorse a research claim.
 - DiskLM and CallForge checkpoint lineages remain separate. Artifacts must be content-addressed where possible and large artifacts stay outside Git.

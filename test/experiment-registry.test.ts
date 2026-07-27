@@ -145,6 +145,34 @@ test("rejects unknown baselines and path aliases share one lock", async () => {
   assert.equal((await new ExperimentRegistry(path, catalog).query()).length, 1);
 });
 
+test("validates the complete schema before appending", async () => {
+  const { path, catalog } = await paths();
+  const registry = new ExperimentRegistry(path, catalog);
+  await assert.rejects(
+    registry.add(
+      input({ experimentId: "exp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }),
+    ),
+  );
+  await assert.rejects(
+    registry.add({ ...input(), env: {} }),
+    /Must not be empty/,
+  );
+  await assert.rejects(
+    registry.add({ ...input(), unexpected: true } as ExperimentInput),
+  );
+  assert.equal(await readFile(path, "utf8"), "");
+});
+
+test("fails closed when a registered baseline link disappears", async () => {
+  const { path, catalog } = await paths();
+  const registry = new ExperimentRegistry(path, catalog);
+  await registry.add(
+    input({ experimentId: "exp_00000000-0000-4000-8000-000000000013" }),
+  );
+  await writeFile(catalog, "[]", "utf8");
+  await assert.rejects(registry.query(), /references unknown baseline fingerprint/);
+});
+
 test("fails closed on mixed checkpoint lineages and duplicate baseline fingerprints", async () => {
   const { path, catalog } = await paths();
   const registry = new ExperimentRegistry(path, catalog);
