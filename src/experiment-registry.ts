@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile } from "node:fs/promises";
+import { mkdir, open, readFile, type FileHandle } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { realpath } from "node:fs/promises";
 import lockfile from "proper-lockfile";
@@ -133,6 +133,20 @@ function diffValues(
   });
 }
 
+async function writeFully(file: FileHandle, contents: string): Promise<void> {
+  const bytes = Buffer.from(contents);
+  let offset = 0;
+  while (offset < bytes.length) {
+    const { bytesWritten } = await file.write(
+      bytes,
+      offset,
+      bytes.length - offset,
+    );
+    if (bytesWritten === 0) throw new Error("Registry append made no progress");
+    offset += bytesWritten;
+  }
+}
+
 export class ExperimentRegistry {
   readonly path: string;
 
@@ -157,6 +171,7 @@ export class ExperimentRegistry {
         timestamp: input.timestamp ?? this.now().toISOString(),
       });
       const baselines = await this.readBaselines();
+      this.validateBaselineLinks(records, baselines);
       if (
         !baselines.some(
           (baseline) =>
@@ -188,7 +203,7 @@ export class ExperimentRegistry {
         throw new Error("Experiment record exceeds 1 MiB");
       const file = await open(this.path, "a", 0o600);
       try {
-        await file.write(serialized);
+        await writeFully(file, serialized);
         await file.sync();
       } finally {
         await file.close();
@@ -199,8 +214,8 @@ export class ExperimentRegistry {
 
   async query(query: ExperimentQuery = {}): Promise<ExperimentRecord[]> {
     return this.withLock(async () => {
-      await this.readBaselines();
       const records = await this.readUnlocked();
+      this.validateBaselineLinks(records, await this.readBaselines());
       return records
         .filter((record) =>
           Object.entries(query).every(
@@ -221,7 +236,9 @@ export class ExperimentRegistry {
   ): Promise<ExperimentDiff> {
     return this.withLock(async () => {
       const records = await this.readUnlocked();
-      const baseline = (await this.readBaselines()).find(
+      const baselines = await this.readBaselines();
+      this.validateBaselineLinks(records, baselines);
+      const baseline = baselines.find(
         (record) => record.fingerprint === baselineFingerprint,
       );
       const experiment = records.find(
@@ -271,6 +288,22 @@ export class ExperimentRegistry {
         cause: error,
       });
     }
+  }
+
+  private validateBaselineLinks(
+    records: ExperimentRecord[],
+    baselines: BaselineRecord[],
+  ): void {
+    const fingerprints = new Set(
+      baselines.map((baseline) => baseline.fingerprint),
+    );
+    const orphan = records.find(
+      (record) => !fingerprints.has(record.parentBaselineFingerprint),
+    );
+    if (orphan)
+      throw new Error(
+        `Experiment ${orphan.experimentId} references unknown baseline fingerprint ${orphan.parentBaselineFingerprint}`,
+      );
   }
 
   private async readUnlocked(): Promise<ExperimentRecord[]> {

@@ -31,13 +31,17 @@
 - Implemented a strict append-only JSONL experiment registry with generated IDs,
   terminal immutable records, deterministic hypothesis/checkpoint queries, and
   structured baseline diffs.
+- Integrated `origin/main` `d3229e0` without rebasing, added the explicit registry
+  JSON Schema, made appends retry partial writes, and made reads fail closed if an
+  existing experiment's baseline catalog linkage disappears.
 - Added filesystem locking and reload-under-lock writes; a real 12-process test
   proves concurrent writers preserve every unique entry.
 - Added the `experiment-registry` CLI and policy for baseline linkage, lineage
   separation, sensitive environment data, artifact handling, and Git conflicts.
-- Verification: focused tests passed 4/4; full `npm run check` passed 438/439 Node
-  tests with one intentional skip, all coverage thresholds, 5/6 Python tests with
-  one intentional skip, and all schema, provenance, and research gates.
+- Verification after integration: focused registry tests pass 9/9; full
+  `npm run verify` passes 454/455 Node tests with one intentional skip, 17/18
+  Python tests with one intentional skip, all coverage, schema, provenance, and
+  research gates, plus 10/10 race runs.
 - Next: merge the exact-head PR after review and CI, then record its URL and merge
   SHA in the canonical Linear completion note.
 
