@@ -5,6 +5,10 @@ export interface LaunchRequest {
   idempotencyKey: string;
   prompt: string;
   workspacePath: string;
+  /** Opaque Superset workspace identity used by live provider adapters. */
+  workspaceId?: string;
+  /** Exact configured agent instance or preset selected for this assignment. */
+  agentPresetId?: string;
   environment: NodeJS.ProcessEnv;
   revalidateWorkspace(): Promise<void>;
   resume?: ResumeMetadata;

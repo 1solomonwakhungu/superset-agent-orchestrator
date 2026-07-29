@@ -10,13 +10,12 @@ in [performance and load testing](docs/performance-and-load-testing.md).
 
 This is an unofficial, experimental launch-ledger technical preview, not a
 supported release. The backend-neutral core and deterministic fixtures exercise
-complete lifecycle semantics, but the public Superset interface currently
-supports only local discovery and launch. Launch acceptance is not completion.
-Status, exact results, stop reasons, cancellation, and backend recovery are not
-observable and are reported honestly as unsupported or `unknown_outcome`.
-Public writer launch remains disabled pending additional workspace safety
-controls. An explicitly enabled provider-fixture route can launch only child
-workspaces beneath its configured test root and is not a production surface.
+complete lifecycle semantics. An opt-in local Superset adapter can discover
+registered workspaces, launch an exact agent preset, persist the Superset terminal
+session identity, and retrieve status and final responses after an orchestrator
+restart. Cancellation remains unsupported and is reported honestly as
+`CANCEL_UNSUPPORTED`. The live adapter is operational tooling for a trusted local
+Superset installation, not a general-availability support commitment.
 
 The supported development matrix is macOS and Linux with Node.js 22 or 24.
 Windows, HTTP transport, remote hosts, relay fallback, package publication, and
@@ -40,9 +39,9 @@ npm start
 ```
 
 Configure any stdio-capable MCP client with the compiled server for its durable
-ledger and lifecycle tools. Production MCP handlers do not yet expose Superset
-discovery or launch; separate adapters and opt-in harnesses exercise those
-capabilities. The project has
+ledger and lifecycle tools. Set `SUPERSET_ORCHESTRATOR_ENABLE_LIVE_SUPERSET=1`
+to expose the opt-in live launch and result tools for registered local Superset
+workspaces. The project has
 no Hermes package, API, prompt, memory, skill, or runtime dependency; Hermes may
 be used only as an ordinary MCP client. See
 [setup and troubleshooting](docs/setup-and-troubleshooting.md) for a
@@ -153,9 +152,11 @@ Schema catalog. It defines asynchronous launch, stable IDs, batches of 100
 sessions, pagination, bounded wait, cancellation, deadlines, results, and restart
 recovery. The versioned lifecycle tools listed above are registered runtime
 handlers; other normative tools remain contract-only until their implementations
-land. The disabled-by-default `provider_*` tools are an internal integration-test
-surface, enabled only by `SUPERSET_ORCHESTRATOR_ENABLE_PROVIDER_TEST_TOOLS=1`, and
-are not part of that published contract.
+land. The disabled-by-default `provider_*` tools are an operational and
+integration surface. They are enabled by
+`SUPERSET_ORCHESTRATOR_ENABLE_LIVE_SUPERSET=1` for the live local adapter, or by
+`SUPERSET_ORCHESTRATOR_ENABLE_PROVIDER_TEST_TOOLS=1` for fixtures, and are not
+part of the published versioned contract.
 
 ## Agent adapter boundary
 
