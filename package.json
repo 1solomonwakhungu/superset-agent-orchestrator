@@ -13,6 +13,7 @@
     }
   },
   "bin": {
+    "experiment-registry": "dist/src/experiment-registry-cli.js",
     "superset-agent-orchestrator": "dist/src/server.js",
     "superset-agent-orchestrator-storage": "dist/src/storage-cli.js"
   },
@@ -33,6 +34,7 @@
     "load:real": "npm run build && node dist/src/real-agent-load-runner.js",
     "reports:verify": "npm run build && node dist/src/report-verifier.js",
     "load:ci": "npm run build && node dist/src/bounded-load-ci.js artifacts/per-351-ci",
+    "registry": "npm run build && node dist/src/experiment-registry-cli.js",
     "discovery:record": "npm run build && node scripts/record-discovery-fixture.mjs",
     "compatibility:report": "node scripts/generate-compatibility-report.mjs",
     "research:verify": "node scripts/verify-disklm-research.mjs",
