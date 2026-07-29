@@ -93,6 +93,31 @@ test("validation and capabilities deny before an attempt", async () => {
   );
 });
 
+test("node limits reject before graph contents are traversed", async () => {
+  const inaccessibleArguments = Object.defineProperty({}, "value", {
+    enumerable: true,
+    get: () => {
+      throw new Error("arguments were traversed");
+    },
+  });
+  await assert.rejects(
+    executeCallGraph(
+      {
+        nodes: [
+          { id: "a", tool: "lookup", arguments: inaccessibleArguments },
+          { id: "b", tool: "lookup", arguments: { id: 2 } },
+        ],
+      },
+      tools,
+      { ...policy, maxNodes: 1 },
+    ),
+    (error: ExecutionRefusedError & { audit?: Array<{ input: unknown }> }) => {
+      assert.deepEqual(error.audit?.[0]?.input, { nodeCount: 2, maxNodes: 1 });
+      return true;
+    },
+  );
+});
+
 test("capabilities are preflighted for the entire graph", async () => {
   const attempted: string[] = [];
   await assert.rejects(
@@ -184,6 +209,39 @@ test("replay reproduces canonical trajectories bit-for-bit", async (context) => 
     ),
     /trajectory/,
   );
+});
+
+test("recorded replay outputs do not alias returned outputs", async (context) => {
+  if (process.platform !== "darwin")
+    return context.skip("recording requires live sandbox");
+  const objectTools: Record<string, ExecutableTool> = {
+    object: {
+      capability: "contacts:read",
+      source: `() => ({ value: "original" })`,
+      input: {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+      output: {
+        type: "object",
+        properties: { value: { type: "string" } },
+        required: ["value"],
+        additionalProperties: false,
+      },
+    },
+  };
+  const graph = { nodes: [{ id: "a", tool: "object", arguments: {} }] };
+  const recorded = await executeCallGraph(graph, objectTools, policy);
+  (recorded.outputs.a as { value: string }).value = "mutated";
+  assert.deepEqual(recorded.replay[0]?.output, { value: "original" });
+  const replayed = await executeCallGraph(
+    graph,
+    objectTools,
+    { ...policy, replayMode: "replay" },
+    recorded.replay,
+  );
+  assert.deepEqual(replayed.outputs.a, { value: "original" });
 });
 
 test("actual outputs are validated before dependent execution", async (context) => {
