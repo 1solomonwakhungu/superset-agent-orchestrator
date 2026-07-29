@@ -5,8 +5,11 @@
 - Merged current `origin/main` `d3229e00f097f926fa6fa59e36fac9c3c6fc5a8e`
   into PR #96 without rebasing, preserving both the safe executor and the merged
   PER-365 regression corpus.
-- Next: rerun focused executor tests and the full verification gate, push the
-  exact head, and merge only after fresh exact-head checks pass.
+- Closed the remaining review gaps by enforcing the node-count bound before any
+  graph traversal and separating replay-record outputs from caller-mutable results.
+- Verification passed: focused validator/executor suite 22/22; full `npm run verify`
+  with 459 passing Node tests and one explicit skip, 34 passing Python tests and
+  one skip, corpus/schema/provenance/research gates, and 10/10 race runs.
 
 ## PER-394 safe executor final hardening, 2026-07-27
 

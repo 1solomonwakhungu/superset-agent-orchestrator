@@ -70,6 +70,23 @@ export async function executeCallGraph(
   replayRecords: readonly ReplayRecord[] = [],
 ): Promise<ExecutionResult> {
   assertPolicy(policy);
+  const maxNodes = policy.maxNodes ?? 100;
+  if (graph.nodes.length > maxNodes) {
+    const entry: AuditEntry = {
+      sequence: 0,
+      nodeId: null,
+      tool: null,
+      capability: null,
+      decision: "validation_denied",
+      input: { nodeCount: graph.nodes.length, maxNodes },
+      output: null,
+      error: "graph exceeds maximum node count",
+    };
+    await policy.audit?.(deepFreeze(cloneJson(entry)));
+    throw withAudit(new ExecutionRefusedError("call graph failed validation"), [
+      entry,
+    ]);
+  }
   const graphSnapshot = cloneJson(graph);
   const toolSnapshot = cloneJson(tools);
   const replaySnapshot = cloneJson(replayRecords);
@@ -96,10 +113,7 @@ export async function executeCallGraph(
     ]),
   );
   const validation = validateCallGraph(graphSnapshot, schemas);
-  if (
-    !validation.valid ||
-    graphSnapshot.nodes.length > policySnapshot.maxNodes!
-  ) {
+  if (!validation.valid) {
     await appendAudit({
       nodeId: null,
       tool: null,
@@ -107,9 +121,7 @@ export async function executeCallGraph(
       decision: "validation_denied",
       input: graphSnapshot,
       output: null,
-      error: validation.valid
-        ? "graph exceeds maximum node count"
-        : JSON.stringify(validation.diagnostics),
+      error: JSON.stringify(validation.diagnostics),
     });
     throw withAudit(
       new ExecutionRefusedError("call graph failed validation"),
@@ -369,7 +381,7 @@ function makeReplay(
     nodeId: node.id,
     tool: node.tool,
     inputHash: hashJson(input),
-    output,
+    output: cloneJson(output),
     toolHash: hashJson(tool),
   };
   return { ...core, recordHash: authenticate(core, replayKey) };
