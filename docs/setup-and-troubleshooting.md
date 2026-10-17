@@ -58,8 +58,21 @@ environment:
 The live adapter uses `~/.superset/bin/superset` for discovery and
 `~/.superset/mcp/local-server.mjs` for launch and response retrieval by default.
 It authorizes only workspaces currently registered to the healthy local Superset
-host. Launch idempotency survives an orchestrator restart because the exact
-Superset terminal session ID is persisted before acceptance is returned.
+host. Each bridge call performs the MCP `initialize` handshake in a fresh
+process that is killed on timeout or after 4 MiB of output.
+
+Launch idempotency survives an orchestrator restart. The adapter writes a
+pending intent to the live run-state file before it calls `agents_create`, then
+replaces it with the exact Superset terminal session ID. The file is guarded by
+a cross-process lock (`<run-state>.lock`, reclaimed after 10 seconds without a
+heartbeat) and replaced atomically, so several orchestrator processes may share
+it. If the bridge times out or dies after `agents_create` was sent, the outcome
+is unknown and Superset offers no session list to reconcile it; the retry fails
+with `LAUNCH_REJECTED` rather than starting a second agent. Check the workspace
+in Superset and relaunch under a new idempotency key if no agent started.
+
+Sessions blocked on a question report `waiting_for_input` from
+`provider_sessions_results`; answer them in Superset before their deadline.
 Cancellation is not supported by this adapter.
 
 ## Runtime environment

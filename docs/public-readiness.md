@@ -13,7 +13,7 @@ Generic stdio MCP client
         -> closed MCP tool schemas and server
         -> durable orchestration and lifecycle services
         -> capability-driven agent adapter boundary
-        -> Superset public CLI or deterministic provider fixture
+        -> Superset CLI, opt-in local MCP bridge, or deterministic provider fixture
         -> isolated local workspace and coding-agent process
 ```
 
@@ -38,28 +38,34 @@ The five P0 prerequisite implementations are present in `main`:
 
 ## Contract status
 
-| Surface                                         | Status                         | Boundary                                                            |
-| ----------------------------------------------- | ------------------------------ | ------------------------------------------------------------------- |
-| TypeScript, Zod, and generated JSON schemas     | Normative                      | Client-independent contract                                         |
-| Fake/provider lifecycle                         | Tested, experimental           | Does not prove Superset support                                     |
-| `batches_create/get/status/results`             | Legacy experimental projection | Migration to contract 1.0 remains                                   |
-| Recovery and lifecycle runtime tools            | Experimental                   | Durable fixture coverage                                            |
-| `provider_*` tools                              | Test-only                      | Disabled without explicit opt-in                                    |
-| Superset discovery and launch adapters          | Technical preview              | Separate harness capability; not exposed by production MCP handlers |
-| Superset status, result, cancellation, recovery | Unsupported                    | Fails honestly                                                      |
-| Public writer launch                            | Disabled                       | Fixture route requires explicit opt-in and a contained test root    |
+| Surface                                     | Status                         | Boundary                                                              |
+| ------------------------------------------- | ------------------------------ | --------------------------------------------------------------------- |
+| TypeScript, Zod, and generated JSON schemas | Normative                      | Client-independent contract                                           |
+| Fake/provider lifecycle                     | Tested, experimental           | Does not prove Superset support                                       |
+| `batches_create/get/status/results`         | Legacy experimental projection | Migration to contract 1.0 remains                                     |
+| Recovery and lifecycle runtime tools        | Experimental                   | Durable fixture coverage                                              |
+| `provider_*` tools                          | Operational, opt-in            | Disabled unless live Superset or fixture mode is enabled              |
+| Live Superset discovery and launch          | Technical preview              | `SUPERSET_ORCHESTRATOR_ENABLE_LIVE_SUPERSET=1`; registered workspaces |
+| Live Superset status and final response     | Technical preview              | Local MCP bridge `agents_responses`; `waiting_for_input` surfaced     |
+| Live Superset launch recovery               | Technical preview              | Session ID bound to idempotency key; unknown outcomes fail closed     |
+| Superset cancellation                       | Unsupported                    | Returns `CANCEL_UNSUPPORTED`; no bridge stop operation is used        |
+| Superset process/transcript recovery        | Unsupported                    | Only the orchestrator's own binding is recovered                      |
+| Public writer launch                        | Disabled                       | Fixture route requires explicit opt-in and a contained test root      |
 
 ## Requirement-to-test traceability
 
 | Requirement                             | Deterministic evidence                                                                               | Real status                       |
 | --------------------------------------- | ---------------------------------------------------------------------------------------------------- | --------------------------------- |
-| Stable asynchronous launch identities   | `tool-contract.test.ts`, `launch-service.test.ts`, `launch-idempotency.test.ts`                      | Superset launch receipt only      |
+| Stable asynchronous launch identities   | `tool-contract.test.ts`, `launch-service.test.ts`, `launch-idempotency.test.ts`                      | Live Superset session ID binding  |
+| Crash-safe live launch idempotency      | `superset-local-mcp-adapter.test.ts`, `superset-local-mcp-transport.test.ts`                         | Fake bridge; fails closed         |
+| Live bridge transport and handshake     | `superset-local-mcp-transport.test.ts`                                                               | Fake stdio MCP bridge             |
+| Live status, input wait, final response | `superset-local-mcp-adapter.test.ts`, `result-capture.test.ts`, `provider-protocol.test.ts`          | Manual 1.17 run: running status   |
 | Atomic and idempotent batches           | `idempotency-and-leases.test.ts`, `batch-store.test.ts`, `fake-superset.integration.test.ts`         | Fixture only                      |
 | 100-session aggregation and attribution | `performance-harness.test.ts`, `result-capture.test.ts`, `fake-superset.integration.test.ts`         | 100/100 fixture benchmark         |
-| Restart without duplicate launch        | `reconciliation.test.ts`, `server-restart.test.ts`, `resilience-regression.test.ts`                  | Fixture/provider only             |
+| Restart without duplicate launch        | `reconciliation.test.ts`, `server-restart.test.ts`, `resilience-regression.test.ts`                  | Manual Superset 1.17 run          |
 | Cancellation and deadline races         | `lifecycle-service.test.ts`, `lifecycle-server.test.ts`, `fake-superset.integration.test.ts`         | Superset cancellation unsupported |
 | Workspace exclusivity and fencing       | `workspace-leases.test.ts`, `workspace-lease-concurrency.test.ts`, `repositories.test.ts`            | Writer launch disabled            |
-| Local discovery and routing             | `superset-discovery.test.ts`, `superset-discovery.smoke.test.ts`                                     | Discovery/launch only             |
+| Local discovery and routing             | `superset-discovery.test.ts`, `superset-discovery.smoke.test.ts`                                     | Superset 1.17 discovery smoke     |
 | Path, command, and environment security | `security-controls.test.ts`, `security-adversarial-corpus.test.ts`, `security-threat-model.test.mjs` | Deterministic                     |
 | Platform support                        | `platform-compatibility.test.ts`, `compatibility-matrix.test.mjs`                                    | macOS/Linux, Node 22/24 CI        |
 | Response adapter seam                   | `opencode-response-adapter.test.ts`, `response-adapter-conformance.test.ts`                          | Normalization boundary only       |
@@ -75,16 +81,29 @@ request, and external-system state must be verified independently.
 - [x] Deterministic lifecycle, security, and recovery coverage
 - [x] macOS/Linux CI on Node.js 22 and 24
 - [x] Security, setup, troubleshooting, and contribution guidance
-- [ ] Authoritative Superset lifecycle and exact response API
-- [ ] Superset cancellation and restart recovery
+- [x] Opt-in live Superset launch, status, and final response through the local MCP bridge
+- [ ] Authoritative, versioned Superset lifecycle and response API
+- [ ] Superset cancellation
+- [ ] Superset process and transcript recovery
 - [ ] Enabled writer launch with enforced isolation
 - [ ] Successful authorized 30-real-agent run
 - [ ] Published package, supported release, and versioning policy
 
 ## Known limitations
 
-- Superset exposes discovery and launch metadata only; acceptance is not completion.
-- Exact ordinary-session responses, cancellation, and backend recovery are unavailable.
+- The live adapter depends on Superset Desktop's local MCP bridge
+  (`agents_create`, `agents_responses`), which is not a versioned public API.
+  It has been exercised manually against Superset 1.17 only.
+- Cancellation is unsupported. `provider_sessions_cancel` returns
+  `CANCEL_UNSUPPORTED` for live sessions.
+- The bridge cannot list sessions, so a launch whose outcome is unknown (the
+  bridge timed out or died after `agents_create` was sent) cannot be reconciled.
+  The adapter keeps a write-ahead pending record and fails the retry with
+  `LAUNCH_REJECTED` instead of starting a second agent; verify it in Superset.
+- A session waiting for input is reported as `waiting_for_input`. It stays
+  non-terminal and is subject to the session deadline.
+- Backend recovery restores the orchestrator's session binding, not the Superset
+  process or transcript.
 - `unknown_outcome` is an intentional honest terminal classification.
 - Public writer launch and OS-enforced read-only sharing are disabled; the
   contained provider fixture is test-only.
