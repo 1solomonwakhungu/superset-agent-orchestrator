@@ -5,8 +5,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { z } from "zod";
 import {
   ExperimentRegistry,
+  experimentRecordSchema,
   type ExperimentInput,
 } from "../src/experiment-registry.js";
 
@@ -170,7 +172,10 @@ test("fails closed when a registered baseline link disappears", async () => {
     input({ experimentId: "exp_00000000-0000-4000-8000-000000000013" }),
   );
   await writeFile(catalog, "[]", "utf8");
-  await assert.rejects(registry.query(), /references unknown baseline fingerprint/);
+  await assert.rejects(
+    registry.query(),
+    /references unknown baseline fingerprint/,
+  );
 });
 
 test("fails closed on mixed checkpoint lineages and duplicate baseline fingerprints", async () => {
@@ -270,4 +275,50 @@ test("fails closed on malformed and truncated existing records", async () => {
     validRegistry.query(),
     /Duplicate experiment ID in registry/,
   );
+});
+
+test("committed JSON Schema matches the runtime record schema", async () => {
+  type Node = Record<string, unknown>;
+  const committed = JSON.parse(
+    await readFile(
+      join(
+        dirname(fileURLToPath(import.meta.url)),
+        "../registry/experiment.schema.json",
+      ),
+      "utf8",
+    ),
+  ) as Node & { $defs: Record<string, Node>; properties: Record<string, Node> };
+  const runtime = z.toJSONSchema(experimentRecordSchema, {
+    unrepresentable: "any",
+  }) as Node & { properties: Record<string, Node>; required: string[] };
+  const resolveRef = (node: Node): Node =>
+    typeof node.$ref === "string"
+      ? (committed.$defs[node.$ref.replace("#/$defs/", "")] ?? {})
+      : node;
+
+  assert.equal(committed.additionalProperties, false);
+  assert.deepEqual(
+    [...(committed.required as string[])].sort(),
+    [...runtime.required].sort(),
+  );
+  assert.deepEqual(
+    Object.keys(committed.properties).sort(),
+    Object.keys(runtime.properties).sort(),
+  );
+  for (const [key, runtimeNode] of Object.entries(runtime.properties)) {
+    const committedNode = resolveRef(committed.properties[key] ?? {});
+    for (const facet of ["const", "enum", "minLength", "maxLength"]) {
+      assert.deepEqual(
+        committedNode[facet],
+        runtimeNode[facet],
+        `${key}.${facet}`,
+      );
+    }
+    if (key !== "timestamp")
+      assert.equal(
+        committedNode.pattern,
+        runtimeNode.pattern,
+        `${key}.pattern`,
+      );
+  }
 });
