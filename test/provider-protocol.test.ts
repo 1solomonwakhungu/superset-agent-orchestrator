@@ -14,6 +14,12 @@ test("strict provider lifecycle schemas accept only the documented protocol", ()
     status: "running",
     updatedAt: "2026-07-25T00:00:00.000Z",
   }), { runId: "run-1", status: "running", updatedAt: "2026-07-25T00:00:00.000Z" });
+  assert.deepEqual(parseProviderStatus({
+    runId: "run-1",
+    status: "running",
+    updatedAt: "2026-07-25T00:00:00.000Z",
+    attention: "waiting_for_input",
+  }), { runId: "run-1", status: "running", updatedAt: "2026-07-25T00:00:00.000Z", attention: "waiting_for_input" });
   assert.deepEqual(parseProviderResult({ status: "succeeded", output: "exact" }), {
     status: "succeeded",
     output: "exact",
@@ -26,6 +32,10 @@ test("provider lifecycle schemas reject unknown fields, invalid timestamps, and 
   for (const operation of [
     () => parseProviderStatus({ runId: "run-1", status: "running", updatedAt: "today" }),
     () => parseProviderStatus({ runId: "run-1", status: "running", updatedAt: "2026-07-25T00:00:00Z", extra: true }),
+    () => parseProviderStatus({
+      runId: "run-1", status: "succeeded", updatedAt: "2026-07-25T00:00:00Z", attention: "waiting_for_input",
+    }),
+    () => parseProviderStatus({ runId: "run-1", status: "running", updatedAt: "2026-07-25T00:00:00Z", attention: "idle" }),
     () => parseProviderResult({ status: "failed", error: "no", retryable: "yes" }),
     () => parseProviderCancellation({ status: "accepted", requestId: "foreign" }),
   ]) {

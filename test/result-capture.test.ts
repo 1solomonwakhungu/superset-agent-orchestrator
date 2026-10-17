@@ -178,6 +178,31 @@ test("does not capture a nonterminal adapter result", async () => {
   }
 });
 
+test("passes a waiting-for-input attention flag through without capturing a result", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "orchestrator-result-"));
+  try {
+    const path = join(directory, "state.json");
+    const store = new DurableStore(path);
+    const adapter = new FakeAgentAdapter([{
+      statuses: ["running", "succeeded"], result: { status: "succeeded", output: "later" },
+    }]);
+    const launch = new LaunchService(store, adapter, authorizer);
+    const accepted = await launch.accept(request);
+    await launch.dispatchPending();
+    const status = adapter.status.bind(adapter);
+    adapter.status = async (handle) => ({ ...(await status(handle)), attention: "waiting_for_input" });
+    const collected = await new ResultCaptureService(store, adapter).collect(accepted.assignmentId, "delivery-1");
+    assert.deepEqual(collected, {
+      duplicate: false,
+      observedStatus: "running",
+      observedAttention: "waiting_for_input",
+    });
+    assert.equal((JSON.parse(await readFile(path, "utf8")) as DurableState).capturedResults?.length, 0);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("records terminal adapter absence as stopped without result", async () => {
   const context = await fixture();
   try {

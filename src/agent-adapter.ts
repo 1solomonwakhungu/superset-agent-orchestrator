@@ -18,9 +18,17 @@ export interface RunHandle {
   runId: string;
 }
 
+/**
+ * Non-terminal condition that needs an operator. The run is still `running` for the state machine, but a
+ * client must not read it as healthy progress: it will not finish until someone answers it.
+ */
+export type RunAttention = "waiting_for_input";
+
 export interface RunState extends RunHandle {
   status: RunStatus;
   updatedAt: string;
+  /** Only valid with status `running`. */
+  attention?: RunAttention;
 }
 
 export interface ResumeMetadata {

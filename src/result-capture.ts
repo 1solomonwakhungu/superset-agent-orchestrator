@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { AgentAdapter, RunResult, RunStatus, TerminalRunStatus } from "./agent-adapter.js";
+import type { AgentAdapter, RunAttention, RunResult, RunStatus, TerminalRunStatus } from "./agent-adapter.js";
 import { parseProviderResult, parseProviderStatus, ProviderProtocolError } from "./provider-protocol.js";
 import { assertBoundedOptionalText, assertIdentifier, MAX_RESULT_BYTES } from "./security.js";
 import { DurableStore, type AgentResultClaim, type CapturedResult } from "./store.js";
@@ -19,7 +19,12 @@ export class ResultCaptureService {
   async collect(
     assignmentId: string,
     deliveryId: string,
-  ): Promise<{ result?: CapturedResult; duplicate: boolean; observedStatus?: RunStatus }> {
+  ): Promise<{
+    result?: CapturedResult;
+    duplicate: boolean;
+    observedStatus?: RunStatus;
+    observedAttention?: RunAttention;
+  }> {
     const assignment = await this.store.assignmentForResult(assignmentId);
     if (assignment.status !== "launched" || assignment.runId === undefined) {
       throw new Error("Result collection requires a launched assignment with a bound run ID");
@@ -39,7 +44,11 @@ export class ResultCaptureService {
       });
     }
     if (state.status === "queued" || state.status === "running") {
-      return { duplicate: false, observedStatus: state.status };
+      return {
+        duplicate: false,
+        observedStatus: state.status,
+        ...(state.attention === undefined ? {} : { observedAttention: state.attention }),
+      };
     }
     let result: RunResult | undefined;
     try {
