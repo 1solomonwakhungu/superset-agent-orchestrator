@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import type { LaunchRequest } from "../src/agent-adapter.js";
 import {
   SupersetLocalMcpAdapter,
@@ -59,6 +62,21 @@ test("launches once, persists the terminal binding, and recovers it after restar
   }
 });
 
+test("reports ordinary progress without an attention flag", async () => {
+  const adapter = new SupersetLocalMcpAdapter({
+    serverPath: "/unused/local-server.mjs",
+    statePath: join(tmpdir(), "unused-live-runs.json"),
+    now: () => new Date("2026-07-27T12:00:00.000Z"),
+    callTool: async () => [{ sessionId: "terminal-2", status: "starting", response: null }],
+  });
+  assert.deepEqual(await adapter.status({ runId: "terminal-2" }), {
+    runId: "terminal-2",
+    status: "running",
+    updatedAt: "2026-07-27T12:00:00.000Z",
+  });
+  await assert.rejects(adapter.status({ runId: "terminal-other" }), /unexpected shape/);
+});
+
 test("maps live Superset responses into running, success, and failure outcomes", async () => {
   const directory = await mkdtemp(join(tmpdir(), "superset-live-response-"));
   try {
@@ -79,6 +97,7 @@ test("maps live Superset responses into running, success, and failure outcomes",
       runId: "terminal-1",
       status: "running",
       updatedAt: "2026-07-27T12:00:00.000Z",
+      attention: "waiting_for_input",
     });
     assert.equal(await adapter.result({ runId: "terminal-1" }), undefined);
 
@@ -124,4 +143,149 @@ test("refuses a live launch without exact workspace and agent identities", async
   const missingAgent = request();
   delete missingAgent.agentPresetId;
   await assert.rejects(adapter.launch(missingAgent), /requires workspaceId and agentPresetId/);
+});
+
+test("persists a pending intent before agents_create and refuses to relaunch an unknown outcome", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "superset-live-pending-"));
+  try {
+    const statePath = join(directory, "runs.json");
+    let observedPending: unknown;
+    const crashing = new SupersetLocalMcpAdapter({
+      serverPath: "/unused/local-server.mjs",
+      statePath,
+      now: () => new Date("2026-07-27T12:00:00.000Z"),
+      callTool: async () => {
+        observedPending = (JSON.parse(await readFile(statePath, "utf8")) as { pending?: unknown }).pending;
+        // Superset may have accepted the launch; the reply is lost.
+        throw new Error("connection reset");
+      },
+    });
+    await assert.rejects(crashing.launch(request()), /connection reset/);
+    assert.deepEqual(Object.keys(observedPending as object), ["client:per-394"]);
+    const persisted = JSON.parse(await readFile(statePath, "utf8")) as {
+      runs: object;
+      pending: Record<string, { status: string; workspaceId: string; agentPresetId: string }>;
+    };
+    assert.deepEqual(persisted.runs, {});
+    assert.equal(persisted.pending["client:per-394"]!.status, "pending");
+    assert.equal(persisted.pending["client:per-394"]!.workspaceId, "workspace-per-394");
+
+    let retried = 0;
+    const restarted = new SupersetLocalMcpAdapter({
+      serverPath: "/unused/local-server.mjs",
+      statePath,
+      callTool: async () => {
+        retried += 1;
+        return { sessionId: "terminal-duplicate" };
+      },
+    });
+    assert.equal(await restarted.findByIdempotencyKey("client:per-394"), undefined);
+    await assert.rejects(restarted.launch(request()), (error: unknown) => {
+      assert.ok(error instanceof Error && "code" in error);
+      assert.equal(error.code, "LAUNCH_REJECTED");
+      assert.match(error.message, /unknown outcome/);
+      return true;
+    });
+    assert.equal(retried, 0);
+
+    // Other keys are unaffected by one unresolved intent.
+    assert.deepEqual(await restarted.launch(request({ idempotencyKey: "client:other" })), {
+      runId: "terminal-duplicate",
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("keeps the intent when agents_create answers without a session ID", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "superset-live-noid-"));
+  try {
+    const statePath = join(directory, "runs.json");
+    const adapter = new SupersetLocalMcpAdapter({
+      serverPath: "/unused/local-server.mjs",
+      statePath,
+      callTool: async () => ({ kind: "terminal" }),
+    });
+    await assert.rejects(adapter.launch(request()), /returned no session ID/);
+    const persisted = JSON.parse(await readFile(statePath, "utf8")) as { pending?: Record<string, unknown> };
+    assert.ok(persisted.pending?.["client:per-394"] !== undefined);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("reclaims a stale cross-process lock left by a crashed holder", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "superset-live-stale-"));
+  try {
+    const statePath = join(directory, "runs.json");
+    const lockPath = `${statePath}.lock`;
+    await mkdir(lockPath);
+    const old = new Date(Date.now() - 60_000);
+    await utimes(lockPath, old, old);
+    const adapter = new SupersetLocalMcpAdapter({
+      serverPath: "/unused/local-server.mjs",
+      statePath,
+      callTool: async () => ({ sessionId: "terminal-after-stale" }),
+    });
+    assert.deepEqual(await adapter.launch(request()), { runId: "terminal-after-stale" });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const run = promisify(execFile);
+const LAUNCH_WORKER = `
+import { appendFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+
+const [sourceDirectory, statePath, createdLog, startAt] = process.argv.slice(2);
+const { SupersetLocalMcpAdapter } = await import(
+  pathToFileURL(join(sourceDirectory, "superset-local-mcp-adapter.ts")).href);
+const adapter = new SupersetLocalMcpAdapter({
+  serverPath: "/unused/local-server.mjs",
+  statePath,
+  callTool: async () => {
+    appendFileSync(createdLog, process.pid + "\\n");
+    await delay(200);
+    return { sessionId: "terminal-" + process.pid };
+  },
+});
+await delay(Math.max(0, Number(startAt) - Date.now()));
+const handle = await adapter.launch({
+  idempotencyKey: "client:shared",
+  prompt: "race",
+  workspacePath: "/workspace/race",
+  workspaceId: "workspace-race",
+  agentPresetId: "opencode-medium",
+  environment: {},
+  revalidateWorkspace: async () => undefined,
+});
+process.stdout.write(JSON.stringify(handle));
+`;
+
+test("separate processes sharing a state file launch one Superset session per key", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "superset-live-processes-"));
+  try {
+    const workerPath = join(directory, "worker.mjs");
+    const statePath = join(directory, "runs.json");
+    const createdLog = join(directory, "created.log");
+    await writeFile(workerPath, LAUNCH_WORKER);
+    const startAt = Date.now() + 1_500;
+    const outcomes = await Promise.all(Array.from({ length: 4 }, async () => {
+      const { stdout } = await run(process.execPath, [
+        "--import", "tsx", workerPath, join(projectRoot, "src"), statePath, createdLog, String(startAt),
+      ], { cwd: projectRoot });
+      return JSON.parse(stdout) as { runId: string };
+    }));
+    const created = (await readFile(createdLog, "utf8")).trim().split("\n");
+    assert.equal(created.length, 1, "exactly one process may call agents_create");
+    assert.equal(new Set(outcomes.map(({ runId }) => runId)).size, 1);
+    const persisted = JSON.parse(await readFile(statePath, "utf8")) as { runs: Record<string, { runId: string }> };
+    assert.equal(persisted.runs["client:shared"]!.runId, outcomes[0]!.runId);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
