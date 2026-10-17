@@ -1,6 +1,6 @@
 {
   "name": "superset-agent-orchestrator",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local-first MCP server for durable orchestration of parallel coding agents through Superset",
   "private": true,
   "type": "module",
