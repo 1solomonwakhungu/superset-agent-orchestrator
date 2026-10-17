@@ -236,6 +236,7 @@ async function main(): Promise<void> {
       for (const [index, assignment] of assignments.entries()) {
         const sessionId = session_ids[index]!;
         let observedStatus: "queued" | "running" | "succeeded" | "failed" | "cancelled" | undefined;
+        let observedAttention: "waiting_for_input" | undefined;
         if (assignment === undefined) {
           items.push({ session_id: sessionId, error: contractError("SESSION_NOT_FOUND", "Unknown session") });
           continue;
@@ -244,6 +245,7 @@ async function main(): Promise<void> {
           try {
             const collected = await capture.collect(assignment.id, `provider:${assignment.attemptId}`);
             observedStatus = collected.observedStatus;
+            observedAttention = collected.observedAttention;
           } catch (error) {
             if (error instanceof SupersetProcessError) {
               items.push({ session_id: sessionId, error: contractError(error.code, error.message) });
@@ -255,7 +257,9 @@ async function main(): Promise<void> {
         const captured = (await store.resultsForSessions([sessionId]))[0];
         const worker = await store.worker(sessionId);
         const status = worker?.status === "requested" && observedStatus !== undefined
-          ? observedStatus === "queued" ? "requested" : observedStatus
+          ? observedStatus === "queued"
+            ? "requested"
+            : observedStatus === "running" && observedAttention !== undefined ? observedAttention : observedStatus
           : worker?.status ?? assignment.status;
         items.push({
           session_id: sessionId, assignment_id: assignment.id, batch_id: assignment.batchId,

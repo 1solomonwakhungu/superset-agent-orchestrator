@@ -18,6 +18,9 @@ export const providerStatusSchema = z.strictObject({
   runId: z.string().min(1).max(MAX_PROVIDER_ID_LENGTH),
   status: z.enum(["queued", "running", "succeeded", "failed", "cancelled"]),
   updatedAt: z.iso.datetime({ offset: true }),
+  attention: z.literal("waiting_for_input").optional(),
+}).refine((state) => state.attention === undefined || state.status === "running", {
+  message: "attention is only valid for a running provider status",
 });
 
 export const providerResultSchema = z.discriminatedUnion("status", [
@@ -54,7 +57,7 @@ export class ProviderProtocolError extends Error {
 }
 
 export function parseProviderStatus(value: unknown): RunState {
-  return parseProviderResponse("status", value, MAX_PROVIDER_STATUS_BYTES, providerStatusSchema);
+  return parseProviderResponse("status", value, MAX_PROVIDER_STATUS_BYTES, providerStatusSchema) as RunState;
 }
 
 export function parseProviderResult(value: unknown): RunResult | undefined {
