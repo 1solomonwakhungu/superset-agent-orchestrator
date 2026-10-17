@@ -10,6 +10,4 @@
 
 ### Bug Fixes
 
-* **deps:** resolve high-severity npm audit advisories ([db95f06](https://github.com/1solomonwakhungu/superset-agent-orchestrator/commit/db95f062c8311e0073ca4a0ffcdca102e64ce8ed))
-* **deps:** resolve high-severity npm audit advisories ([32b7cd6](https://github.com/1solomonwakhungu/superset-agent-orchestrator/commit/32b7cd65d8553b71a20c70d39d7ecb720bb14d39))
-* **deps:** resolve high-severity npm audit advisories ([e0088df](https://github.com/1solomonwakhungu/superset-agent-orchestrator/commit/e0088dfada36a8d32f37aec59882fcf58afb36ff))
+* **deps:** resolve high-severity npm audit advisories ([#99](https://github.com/1solomonwakhungu/superset-agent-orchestrator/pull/99)) ([db95f06](https://github.com/1solomonwakhungu/superset-agent-orchestrator/commit/db95f062c8311e0073ca4a0ffcdca102e64ce8ed))
