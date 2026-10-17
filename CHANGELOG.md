@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/1solomonwakhungu/superset-agent-orchestrator/compare/v0.2.0...v0.3.0) (2026-10-17)
+
+
+### Features
+
+* enable operational live Superset orchestration ([#97](https://github.com/1solomonwakhungu/superset-agent-orchestrator/issues/97)) ([0475dc9](https://github.com/1solomonwakhungu/superset-agent-orchestrator/commit/0475dc9c757a9d5ba257752829263eda3872f80f))
+
 ## [0.2.0](https://github.com/1solomonwakhungu/superset-agent-orchestrator/compare/v0.1.0...v0.2.0) (2026-10-17)
 
 
