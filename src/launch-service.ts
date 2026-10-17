@@ -379,6 +379,8 @@ export class LaunchService {
           idempotencyKey: assignment.idempotencyKey,
           prompt: assignment.prompt,
           workspacePath: assertDataOperand(grant.canonicalPath, "workspace path"),
+          workspaceId: grant.workspaceId,
+          agentPresetId: assignment.attribution.agent,
           environment: childEnvironment(),
           revalidateWorkspace: () => grant.revalidate(),
         });

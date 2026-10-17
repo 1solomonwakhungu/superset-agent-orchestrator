@@ -21,7 +21,7 @@ export const localHostSchema = z.strictObject({
   uptimeSec: z.number().nonnegative(),
 });
 
-export const projectSchema = z.strictObject({
+const canonicalProjectSchema = z.strictObject({
   id: nonEmptyString,
   name: nonEmptyString,
   slug: nonEmptyString,
@@ -31,7 +31,27 @@ export const projectSchema = z.strictObject({
   path: nullableString,
 });
 
-export const workspaceSchema = z.strictObject({
+const localCliProjectSchema = z.object({
+  id: nonEmptyString,
+  name: nonEmptyString,
+  repo: boundedString,
+  path: nullableString,
+});
+
+export const projectSchema = z.union([
+  canonicalProjectSchema,
+  localCliProjectSchema.transform(({ id, name, repo, path }) => ({
+    id,
+    name,
+    slug: name,
+    repoCloneUrl: repo === "-" ? null : repo,
+    githubRepositoryId: null,
+    setUp: path === null ? "no" as const : "yes" as const,
+    path,
+  })),
+]);
+
+const canonicalWorkspaceSchema = z.strictObject({
   id: nonEmptyString,
   organizationId: nonEmptyString,
   projectId: nonEmptyString,
@@ -48,6 +68,28 @@ export const workspaceSchema = z.strictObject({
   projectName: nonEmptyString,
   hostName: nonEmptyString,
 });
+
+const localCliWorkspaceSchema = z.object({
+  id: nonEmptyString,
+  organizationId: nonEmptyString,
+  projectId: nonEmptyString,
+  hostId: nonEmptyString,
+  name: nonEmptyString,
+  branch: nonEmptyString,
+  type: nonEmptyString,
+  createdByUserId: nullableString,
+  taskId: nullableString,
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  worktreePath: nonEmptyString,
+  worktreeExists: z.boolean(),
+  projectName: nonEmptyString,
+});
+
+export const workspaceSchema = z.union([
+  canonicalWorkspaceSchema,
+  localCliWorkspaceSchema.transform((workspace) => ({ ...workspace, hostName: "local" })),
+]);
 
 export const agentPresetSchema = z.strictObject({
   id: nonEmptyString,

@@ -387,6 +387,7 @@ export class RegisteredWorkspaceAuthorizer implements WorkspaceAuthorizer {
   constructor(
     private readonly inventory: WorkspaceInventoryProvider,
     private readonly externalWorkspaces: readonly ExternalWorkspaceAuthorization[] = [],
+    private readonly allowRegisteredExternalWorkspaces = false,
   ) {}
 
   private externalWorkspaceAllowed(workspaceId: string, projectId: string, canonicalPath: string): boolean {
@@ -417,7 +418,8 @@ export class RegisteredWorkspaceAuthorizer implements WorkspaceAuthorizer {
     const projectDirectory = await canonicalDirectory(project.path, "Registered project path is unavailable");
     const workspaceDirectory = await canonicalDirectory(workspace.worktreePath, "Registered workspace path is unavailable");
     const external = !contained(projectDirectory.path, workspaceDirectory.path);
-    if (external && !this.externalWorkspaceAllowed(workspaceId, project.id, workspaceDirectory.path)) {
+    if (external && !this.allowRegisteredExternalWorkspaces
+      && !this.externalWorkspaceAllowed(workspaceId, project.id, workspaceDirectory.path)) {
       throw new SecurityError("POLICY_DENIED", "Registered workspace escapes its project boundary");
     }
     assertDataOperand(workspaceDirectory.path, "workspace path");
@@ -448,7 +450,8 @@ export class RegisteredWorkspaceAuthorizer implements WorkspaceAuthorizer {
         }
         const currentProjectDirectory = await canonicalDirectory(currentProject.path!, "Registered project path is unavailable");
         const current = await canonicalDirectory(currentWorkspace.worktreePath, "Registered workspace path is unavailable");
-        if ((!contained(currentProjectDirectory.path, current.path)
+        if ((!this.allowRegisteredExternalWorkspaces
+          && !contained(currentProjectDirectory.path, current.path)
           && !this.externalWorkspaceAllowed(workspaceId, project.id, current.path))
           || currentProjectDirectory.path !== projectDirectory.path
           || currentProjectDirectory.identity.device !== projectDirectory.identity.device
