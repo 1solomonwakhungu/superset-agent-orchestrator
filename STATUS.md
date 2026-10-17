@@ -1,5 +1,58 @@
 # Status
 
+## PER-394 current-main integration, 2026-07-29
+
+- Merged current `origin/main` `d3229e00f097f926fa6fa59e36fac9c3c6fc5a8e`
+  into PR #96 without rebasing, preserving both the safe executor and the merged
+  PER-365 regression corpus.
+- Closed the remaining review gaps by enforcing the node-count bound before any
+  graph traversal and separating replay-record outputs from caller-mutable results.
+- Verification passed: focused validator/executor suite 22/22; full `npm run verify`
+  with 459 passing Node tests and one explicit skip, 34 passing Python tests and
+  one skip, corpus/schema/provenance/research gates, and 10/10 race runs.
+
+## PER-394 safe executor final hardening, 2026-07-27
+
+- Merged current `origin/main` into PR #96 without rebasing and retained the
+  existing feature branch lineage.
+- Hardened whole-graph validation and default-deny capability preflight so no
+  earlier node executes when any graph capability is refused; snapshotted graph,
+  tool, replay, and policy inputs across audit callbacks and asynchronous work.
+- Added bounded input, output, memory, timeout, and graph limits; explicit
+  filesystem-write denial atop Node permissions; byte-bounded subprocess streams;
+  and bounded failed-output audit evidence.
+- Expanded live macOS red-team coverage for filesystem reads/writes, network,
+  signals, subprocesses, hangs, audit mutation, strict replay, and policy ceilings.
+- Verification passed: focused validator/executor suite 20/20; full `npm run verify`
+  with 457 passing Node tests and one explicit live-Superset skip, 96.35% statement
+  coverage, 17 passing Python tests and one model-dependent skip, all schema,
+  provenance, research gates, and 10/10 race runs.
+## PER-365 regression corpus, 2026-07-26
+
+- Integrated current `origin/main` `d3229e00f097f926fa6fa59e36fac9c3c6fc5a8e`
+  without rebasing and re-audited every acceptance criterion.
+- Added executable result scoring for exact, semantic JSON, generated-sentinel,
+  ordered/commuting tool-call, and timeout-bounded Python/JavaScript code cases.
+- Extended content addressing to the datasheet and all normative generator,
+  validator, and scoring scripts; stable IDs now enforce canonical domain prefixes.
+- Focused verification passes 17/17. Full `npm run check` passes 445/446 Node
+  tests and 34/35 Python tests with one intentional skip in each suite, plus all
+  coverage, corpus, schema, provenance, and research gates; race checks pass 10/10.
+- Next: push the exact head and confirm fresh GitHub checks.
+- Added 15 original, license-recorded held-out items across reasoning, code,
+  typed tool use, generated long-context probes, and determinism slices.
+- Added a standard-library validator enforcing closed item and typed evidence
+  schemas, unique stable IDs, approved licenses, file counts, byte hashes, and
+  the pinned manifest digest, with ten focused positive and negative tests.
+- Review hardening added a deterministic `counter-v1` long-context materializer
+  with midpoint sentinels, embedded tool-schema argument validation, exact-answer
+  prompt constraints, and a schema-valid pinned date.
+- Full `npm run check` passed: 433/434 Node tests with one intentional skip, all
+  coverage thresholds, 12/13 Python tests with one intentional skip, corpus,
+  schema, provenance, and research gates.
+- PR #88 opened; next: pass fresh exact-head CI, merge, and reconcile the
+  canonical Linear completion note.
+
 ## PER-347 PR #82 final hardening integration, 2026-07-26
 
 - Integrated current `origin/main` `764f0a7e227e5e8bae863a5846e4ec063efd3d33`

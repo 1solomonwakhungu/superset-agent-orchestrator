@@ -1,0 +1,49 @@
+{
+  "assets": {
+    "corpus/DATASHEET.md": {
+      "bytes": 3250,
+      "sha256": "783c18fd590ddd7071771c050e3c932088dfd11f37ce4864b2ea2f8dcb816276"
+    },
+    "scripts/materialize_long_context.py": {
+      "bytes": 1493,
+      "sha256": "76085cb36720120f4912a9ba75c199fc264c05bf88b2c52ee559c62020ff13e4"
+    },
+    "scripts/validate_corpus.py": {
+      "bytes": 15901,
+      "sha256": "0fae5df0163e5817a21b141d7a3e87f79144a64ee4417c051d88638543aa07d0"
+    },
+    "scripts/verify_corpus_output.py": {
+      "bytes": 5933,
+      "sha256": "67d5289454343343b1dff10de7a6769d797f1979822526a3e9ea05837151e98e"
+    }
+  },
+  "corpus_version": "per-365-v1",
+  "files": {
+    "code.jsonl": {
+      "bytes": 1674,
+      "items": 3,
+      "sha256": "5c39ffd3fa8257606f19bd3e7e21020b7e77a72c53a0051c5b3dfc99647811df"
+    },
+    "determinism.jsonl": {
+      "bytes": 1204,
+      "items": 3,
+      "sha256": "ca9d3817b4e43911895b79ebd2dbf8a8fcc7dd97b47e63528e67b289d7d88529"
+    },
+    "long-context.jsonl": {
+      "bytes": 1765,
+      "items": 3,
+      "sha256": "09d7ef89d32aa665eca2f4996e2237f98ad1d8409bf4627e4966ec16a5f918b4"
+    },
+    "reasoning.jsonl": {
+      "bytes": 1288,
+      "items": 3,
+      "sha256": "753ef4e80f0dd82b7853a8fe35653bbeab71e75faf08a2cafbd027e6259b1922"
+    },
+    "tool-use.jsonl": {
+      "bytes": 3317,
+      "items": 3,
+      "sha256": "e5f7477dd339a4b7c1218e7c65739fde9b5555e6407a2f20c1075813d8330e7a"
+    }
+  },
+  "schema_version": 1
+}
