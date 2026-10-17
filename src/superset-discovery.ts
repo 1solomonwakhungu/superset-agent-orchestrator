@@ -107,20 +107,34 @@ export const runProcess: ProcessRunner = async (executable, args, timeoutMs, sig
   const argv = assertFixedArguments(args);
   const captureDirectory = mkdtempSync(join(tmpdir(), "superset-discovery-"));
   const stdoutPath = join(captureDirectory, "stdout");
-  const stdoutFd = openSync(stdoutPath, "wx", 0o600);
+  let stdoutFd: number;
+  try {
+    stdoutFd = openSync(stdoutPath, "wx", 0o600);
+  } catch (error) {
+    rmSync(captureDirectory, { recursive: true, force: true });
+    throw error;
+  }
   return new Promise<ProcessResult>((resolve, reject) => {
       const useProcessGroup = process.platform !== "win32";
-      const child = spawn(program, argv, {
-        shell: false,
-        // Superset 1.17 can truncate large JSON responses at exactly 64 KiB
-        // when its stdout is a pipe. A private file preserves the complete
-        // response while the size monitor retains the same hard bound.
-        stdio: ["ignore", stdoutFd, "pipe"],
-        windowsHide: true,
-        detached: useProcessGroup,
-        env: childEnvironment(),
-      });
-      closeSync(stdoutFd);
+      let child: ReturnType<typeof spawn>;
+      try {
+        child = spawn(program, argv, {
+          shell: false,
+          // Superset 1.17 can truncate large JSON responses at exactly 64 KiB
+          // when its stdout is a pipe. A private file preserves the complete
+          // response while the size monitor retains the same hard bound.
+          stdio: ["ignore", stdoutFd, "pipe"],
+          windowsHide: true,
+          detached: useProcessGroup,
+          env: childEnvironment(),
+        });
+      } catch (error) {
+        rmSync(captureDirectory, { recursive: true, force: true });
+        throw error;
+      } finally {
+        // The child holds its own copy of the descriptor.
+        closeSync(stdoutFd);
+      }
       const stderr: Buffer[] = [];
       let stderrBytes = 0;
       let settled = false;

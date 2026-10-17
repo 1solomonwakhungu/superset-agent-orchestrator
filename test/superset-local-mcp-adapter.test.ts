@@ -197,6 +197,40 @@ test("persists a pending intent before agents_create and refuses to relaunch an 
   }
 });
 
+test("fails closed without crashing when the state lock is lost during agents_create", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "superset-live-compromised-"));
+  try {
+    const statePath = join(directory, "runs.json");
+    const adapter = new SupersetLocalMcpAdapter({
+      serverPath: "/unused/local-server.mjs",
+      statePath,
+      callTool: async () => {
+        // Another process reclaimed the lock (for example after a long system sleep).
+        await rm(`${statePath}.lock`, { recursive: true, force: true });
+        await new Promise((resolve) => setTimeout(resolve, 2_600));
+        return { sessionId: "terminal-unbound" };
+      },
+    });
+    await assert.rejects(adapter.launch(request()), (error: unknown) => {
+      assert.ok(error instanceof Error && "code" in error);
+      assert.equal(error.code, "PROVIDER_UNAVAILABLE");
+      assert.match(error.message, /session terminal-unbound, but the live Superset run-state lock was lost/);
+      return true;
+    });
+    const persisted = JSON.parse(await readFile(statePath, "utf8")) as {
+      runs: object;
+      pending?: Record<string, unknown>;
+    };
+    assert.deepEqual(persisted.runs, {});
+    assert.deepEqual(Object.keys(persisted.pending ?? {}), ["client:per-394"]);
+    // The adapter stays usable once the lock is free again.
+    assert.equal(await adapter.findByIdempotencyKey("client:per-394"), undefined);
+    await assert.rejects(adapter.launch(request()), /unknown outcome/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("keeps the intent when agents_create answers without a session ID", async () => {
   const directory = await mkdtemp(join(tmpdir(), "superset-live-noid-"));
   try {

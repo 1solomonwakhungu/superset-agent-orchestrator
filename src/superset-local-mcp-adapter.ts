@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { dirname } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import lockfile from "proper-lockfile";
 import { z } from "zod";
 import type {
@@ -21,6 +22,11 @@ const MCP_PROTOCOL_VERSION = "2025-06-18";
 const DEFAULT_TIMEOUT_MS = 30_000;
 const CHILD_EXIT_GRACE_MS = 1_000;
 const STATE_LOCK_STALE_MS = 10_000;
+/**
+ * JSON-RPC errors that an MCP server raises while validating a request, before any tool handler runs.
+ * Every other failure, including `isError` tool results, may follow a dispatched host mutation.
+ */
+const PRE_DISPATCH_JSON_RPC_ERRORS = new Set([-32700, -32600, -32601, -32602]);
 
 const boundRecordSchema = z.strictObject({
   runId: z.string().min(1),
@@ -71,7 +77,9 @@ const toolResultSchema = z.object({
 
 /**
  * How far a failed tool call got. Launch idempotency depends on this: only `not_dispatched` and
- * `rejected` prove that Superset did not start a session.
+ * `rejected` prove that Superset did not start a session. Superset's MCP tools turn every handler
+ * exception into an `isError` result, including relay and host failures that arrive after the host ran
+ * the mutation, so an `isError` result is `unknown`. Only a JSON-RPC request-validation error is `rejected`.
  */
 export type SupersetLocalToolOutcome = "not_dispatched" | "rejected" | "unknown";
 
@@ -137,7 +145,7 @@ export class SupersetLocalMcpAdapter implements AgentAdapter {
       );
     }
 
-    return this.exclusive(async () => {
+    return this.exclusive(async (assertLockHeld) => {
       const state = await this.readState();
       const existing = state.runs[request.idempotencyKey];
       if (existing !== undefined) return { runId: existing.runId };
@@ -153,6 +161,7 @@ export class SupersetLocalMcpAdapter implements AgentAdapter {
         );
       }
 
+      assertLockHeld();
       state.pending = {
         ...state.pending,
         [request.idempotencyKey]: {
@@ -163,7 +172,14 @@ export class SupersetLocalMcpAdapter implements AgentAdapter {
           startedAt: this.now().toISOString(),
         },
       };
-      await this.writeState(state);
+      try {
+        await this.writeState(state);
+      } catch (error) {
+        // Nothing was dispatched. The rename may still have landed before the directory sync failed, so
+        // withdraw the intent rather than leave it to block every retry.
+        await this.clearPending(state, request.idempotencyKey).catch(() => undefined);
+        throw error;
+      }
 
       let created: z.infer<typeof createResultSchema>;
       try {
@@ -182,6 +198,7 @@ export class SupersetLocalMcpAdapter implements AgentAdapter {
         created = parsed.data;
       } catch (error) {
         if (error instanceof SupersetLocalToolError && error.outcome !== "unknown") {
+          assertLockHeld();
           await this.clearPending(state, request.idempotencyKey);
           if (error.outcome === "rejected") {
             throw new SupersetProcessError("LAUNCH_REJECTED", error.message, { cause: error });
@@ -198,7 +215,18 @@ export class SupersetLocalMcpAdapter implements AgentAdapter {
         agentPresetId,
         createdAt: this.now().toISOString(),
       };
-      await this.writeState(state);
+      // Without the lock another process may have rewritten the file; keep the pending intent instead.
+      assertLockHeld(`Superset started session ${created.sessionId}`);
+      try {
+        await this.writeState(state);
+      } catch (error) {
+        // The pending intent is still on disk, so a retry fails closed; name the session for the operator.
+        throw new SupersetProcessError(
+          "PROVIDER_UNAVAILABLE",
+          `Superset started session ${created.sessionId}, but its binding could not be persisted`,
+          { cause: error },
+        );
+      }
       return { runId: created.sessionId };
     });
   }
@@ -286,6 +314,7 @@ export class SupersetLocalMcpAdapter implements AgentAdapter {
         await handle.close();
       }
       await rename(temporary, this.options.statePath);
+      await syncDirectory(dirname(this.options.statePath));
     } catch (error) {
       await rm(temporary, { force: true }).catch(() => undefined);
       throw new SupersetProcessError("PROVIDER_UNAVAILABLE", "Unable to persist live Superset run state", {
@@ -298,7 +327,9 @@ export class SupersetLocalMcpAdapter implements AgentAdapter {
    * Serializes run-state mutations within this process, then across processes with a lock directory
    * next to the state file. A crashed holder's lock goes stale and is reclaimed; its pending intent stays.
    */
-  private async exclusive<T>(operation: () => Promise<T>): Promise<T> {
+  private async exclusive<T>(
+    operation: (assertLockHeld: (context?: string) => void) => Promise<T>,
+  ): Promise<T> {
     const previous = this.mutationTail;
     let releaseQueue!: () => void;
     this.mutationTail = new Promise<void>((resolve) => {
@@ -306,6 +337,16 @@ export class SupersetLocalMcpAdapter implements AgentAdapter {
     });
     await previous;
     let releaseLock: (() => Promise<void>) | undefined;
+    let compromised: Error | undefined;
+    const assertLockHeld = (context?: string) => {
+      if (compromised === undefined) return;
+      throw new SupersetProcessError(
+        "PROVIDER_UNAVAILABLE",
+        `${context === undefined ? "" : `${context}, but `}the live Superset run-state lock was lost before the `
+          + "outcome could be recorded",
+        { cause: compromised },
+      );
+    };
     try {
       try {
         await mkdir(dirname(this.options.statePath), { recursive: true, mode: 0o700 });
@@ -316,16 +357,23 @@ export class SupersetLocalMcpAdapter implements AgentAdapter {
           stale: STATE_LOCK_STALE_MS,
           update: STATE_LOCK_STALE_MS / 5,
           retries: { retries: Math.ceil(waitMs / 100), minTimeout: 25, maxTimeout: 100 },
+          // The library's default rethrows from a timer and would crash the server. A lost lock instead
+          // fails the operation before its next write.
+          onCompromised: (error) => {
+            compromised = error;
+          },
         });
       } catch (error) {
         throw new SupersetProcessError("PROVIDER_UNAVAILABLE", "Unable to lock live Superset run state", {
           cause: error,
         });
       }
-      return await operation();
+      return await operation(assertLockHeld);
     } finally {
       try {
-        if (releaseLock !== undefined) await releaseLock();
+        // A release failure (including after a compromise) must not mask the operation's outcome; an
+        // unreleased lock goes stale and is reclaimed.
+        if (releaseLock !== undefined) await releaseLock().catch(() => undefined);
       } finally {
         releaseQueue();
       }
@@ -346,6 +394,8 @@ export class SupersetLocalMcpAdapter implements AgentAdapter {
       let settled = false;
       let outputBytes = 0;
       let pendingLine = "";
+      // Decode across chunk boundaries so a multi-byte character split by the pipe is not corrupted.
+      const decoder = new StringDecoder("utf8");
       const stderr: Buffer[] = [];
       const child = spawn(
         this.options.nodeExecutable ?? process.execPath,
@@ -356,12 +406,15 @@ export class SupersetLocalMcpAdapter implements AgentAdapter {
           stdio: ["pipe", "pipe", "pipe"],
         },
       );
+      const leaderExited = () => child.exitCode !== null || child.signalCode !== null;
       const terminate = () => {
-        if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) return;
+        if (child.pid === undefined) return;
+        // The group outlives a leader that exited on EOF while leaving its own children behind.
+        if (process.platform === "win32" && leaderExited()) return;
         try {
           process.kill(process.platform === "win32" ? child.pid : -child.pid, "SIGKILL");
         } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ESRCH") child.kill("SIGKILL");
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH" && !leaderExited()) child.kill("SIGKILL");
         }
       };
       const fail = (
@@ -426,7 +479,11 @@ export class SupersetLocalMcpAdapter implements AgentAdapter {
         }
         if (message.id === callId) {
           if ("error" in message) {
-            fail("PROVIDER_UNAVAILABLE", message.error.message, "rejected");
+            fail(
+              "PROVIDER_UNAVAILABLE",
+              message.error.message,
+              PRE_DISPATCH_JSON_RPC_ERRORS.has(message.error.code) ? "rejected" : "unknown",
+            );
             return;
           }
           const result = toolResultSchema.safeParse(message.result);
@@ -436,7 +493,8 @@ export class SupersetLocalMcpAdapter implements AgentAdapter {
           }
           const text = result.data.content[0]!.text;
           if (result.data.isError === true) {
-            fail("PROVIDER_UNAVAILABLE", text, "rejected");
+            // The handler ran; it may have failed after Superset accepted the launch.
+            fail("PROVIDER_UNAVAILABLE", text, "unknown");
             return;
           }
           try {
@@ -453,7 +511,7 @@ export class SupersetLocalMcpAdapter implements AgentAdapter {
 
       child.stdout.on("data", (chunk: Buffer) => {
         if (settled || !countOutput(chunk)) return;
-        pendingLine += chunk.toString("utf8");
+        pendingLine += decoder.write(chunk);
         let newline = pendingLine.indexOf("\n");
         while (newline !== -1 && !settled) {
           const line = pendingLine.slice(0, newline).trim();
@@ -488,5 +546,20 @@ export class SupersetLocalMcpAdapter implements AgentAdapter {
         },
       });
     });
+  }
+}
+
+/** Makes a rename durable: POSIX only guarantees the new directory entry after the directory is synced. */
+async function syncDirectory(directory: string): Promise<void> {
+  if (process.platform === "win32") return;
+  const handle = await open(directory, "r");
+  try {
+    await handle.sync();
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    // Some filesystems cannot sync a directory; the file itself was already synced.
+    if (code !== "EINVAL" && code !== "ENOTSUP" && code !== "EISDIR") throw error;
+  } finally {
+    await handle.close();
   }
 }
