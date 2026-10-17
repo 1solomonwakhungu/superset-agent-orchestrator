@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/superset-agent-orchestrator/experiment.schema.json",
+  "title": "Finalized experiment registry record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "experimentId",
+    "parentBaselineFingerprint",
+    "lineage",
+    "hypothesis",
+    "config",
+    "checkpointSha",
+    "env",
+    "hardware",
+    "codeRevision",
+    "tokenizerHash",
+    "chatTemplateHash",
+    "corpusHash",
+    "metrics",
+    "artifactLinks",
+    "status",
+    "timestamp",
+    "ownerAgent"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "experimentId": {
+      "type": "string",
+      "pattern": "^exp_[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "parentBaselineFingerprint": { "$ref": "#/$defs/hash" },
+    "lineage": {
+      "enum": ["baseline", "disklm", "callforge", "fgguf"]
+    },
+    "hypothesis": { "type": "string", "minLength": 1, "maxLength": 1000 },
+    "config": { "$ref": "#/$defs/jsonObject" },
+    "checkpointSha": { "$ref": "#/$defs/revision" },
+    "env": { "$ref": "#/$defs/nonEmptyJsonObject" },
+    "hardware": { "$ref": "#/$defs/nonEmptyJsonObject" },
+    "codeRevision": { "$ref": "#/$defs/revision" },
+    "tokenizerHash": { "$ref": "#/$defs/hash" },
+    "chatTemplateHash": { "$ref": "#/$defs/hash" },
+    "corpusHash": { "$ref": "#/$defs/hash" },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": { "type": "number" }
+    },
+    "artifactLinks": {
+      "type": "array",
+      "items": { "type": "string", "format": "uri" }
+    },
+    "status": { "enum": ["succeeded", "failed", "aborted"] },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "ownerAgent": { "type": "string", "minLength": 1, "maxLength": 200 }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "revision": {
+      "type": "string",
+      "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$"
+    },
+    "jsonValue": {
+      "oneOf": [
+        { "type": "string" },
+        { "type": "number" },
+        { "type": "boolean" },
+        { "type": "null" },
+        { "type": "array", "items": { "$ref": "#/$defs/jsonValue" } },
+        { "$ref": "#/$defs/jsonObject" }
+      ]
+    },
+    "jsonObject": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/jsonValue" }
+    },
+    "nonEmptyJsonObject": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/$defs/jsonValue" }
+    }
+  }
+}
