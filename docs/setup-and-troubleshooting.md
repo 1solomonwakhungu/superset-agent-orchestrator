@@ -71,6 +71,18 @@ is unknown and Superset offers no session list to reconcile it; the retry fails
 with `LAUNCH_REJECTED` rather than starting a second agent. Check the workspace
 in Superset and relaunch under a new idempotency key if no agent started.
 
+Superset's MCP tools report relay and host failures that can follow an accepted
+launch as `isError` tool results, so the adapter also treats an `isError` result
+and any JSON-RPC error other than request validation (`-32700`, `-32600`,
+`-32601`, `-32602`) as an unknown outcome. Only a bridge that failed before
+`tools/call` was sent, or a request-validation error, clears the pending intent.
+A pending entry blocks only its own idempotency key. Once you have checked
+Superset, you can delete the entry from the `pending` object in the run-state
+file while no orchestrator process is running. If the lock is lost during a
+launch (for example, another process reclaimed it after a long system sleep),
+the launch fails with `PROVIDER_UNAVAILABLE` naming any session Superset
+returned, and the pending intent stays.
+
 Sessions blocked on a question report `waiting_for_input` from
 `provider_sessions_results`; answer them in Superset before their deadline.
 Cancellation is not supported by this adapter.

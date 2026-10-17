@@ -16,6 +16,8 @@ type Mode =
   | "flood"
   | "tool-error"
   | "rpc-error"
+  | "rpc-internal-error"
+  | "split-utf8"
   | "malformed"
   | "exit-early"
   | "crash-after-call"
@@ -80,6 +82,21 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   if (mode === "crash-after-call") process.exit(9);
   if (mode === "rpc-error") {
     send({ id: message.id, error: { code: -32602, message: "Unknown agent preset" } });
+    return;
+  }
+  if (mode === "rpc-internal-error") {
+    send({ id: message.id, error: { code: -32603, message: "Host relay failed" } });
+    return;
+  }
+  if (mode === "split-utf8") {
+    const text = JSON.stringify(args.session_ids.map((sessionId) => ({
+      sessionId, status: "completed", response: "caf\u00e9 \u2713 \u{1F680}", pendingQuestion: null,
+    })));
+    const bytes = Buffer.from(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text }] } }) + "\\n");
+    // Split inside the four-byte emoji so the two halves arrive as separate chunks.
+    const cut = bytes.indexOf(Buffer.from("\u{1F680}")) + 2;
+    process.stdout.write(bytes.subarray(0, cut));
+    setTimeout(() => process.stdout.write(bytes.subarray(cut)), 100);
     return;
   }
   if (mode === "tool-error") {
@@ -214,29 +231,59 @@ test("stops reading and kills the bridge when output exceeds the limit", async (
   });
 });
 
-test("classifies tool errors and JSON-RPC errors as definitive rejections", async () => {
+test("treats only JSON-RPC request-validation errors as definitive rejections", async () => {
   await withFixture(async (fixture) => {
-    for (const [mode, pattern] of [
-      ["tool-error", /Workspace is not registered/],
-      ["rpc-error", /Unknown agent preset/],
-    ] as const) {
+    const adapter = await fixture.adapter("rpc-error");
+    await assert.rejects(adapter.status({ runId: "terminal-error" }), (error: unknown) => {
+      assert.ok(error instanceof SupersetLocalToolError);
+      assert.equal(error.outcome, "rejected");
+      assert.match(error.message, /Unknown agent preset/);
+      return true;
+    });
+    // The server refused the request before any handler ran, so the intent is cleared and a retry may launch.
+    await assert.rejects(adapter.launch(request()), (error: unknown) => {
+      assert.ok(error instanceof Error && "code" in error);
+      assert.equal(error.code, "LAUNCH_REJECTED");
+      assert.match(error.message, /Unknown agent preset/);
+      return true;
+    });
+    const state = JSON.parse(await readFile(fixture.statePath, "utf8")) as Record<string, unknown>;
+    assert.equal(state.pending, undefined);
+  });
+});
+
+test("keeps the pending intent for tool errors and internal JSON-RPC errors", async () => {
+  // Superset reports relay and host failures that follow a dispatched mutation as isError results, so
+  // neither proves that no agent started.
+  for (const [mode, pattern] of [
+    ["tool-error", /Workspace is not registered/],
+    ["rpc-internal-error", /Host relay failed/],
+  ] as const) {
+    await withFixture(async (fixture) => {
       const adapter = await fixture.adapter(mode);
-      await assert.rejects(adapter.status({ runId: "terminal-error" }), (error: unknown) => {
-        assert.ok(error instanceof SupersetLocalToolError);
-        assert.equal(error.outcome, "rejected");
-        assert.match(error.message, pattern);
-        return true;
-      });
-      // A rejected launch provably started nothing, so its intent is cleared and a retry may launch.
       await assert.rejects(adapter.launch(request()), (error: unknown) => {
-        assert.ok(error instanceof Error && "code" in error);
-        assert.equal(error.code, "LAUNCH_REJECTED");
+        assert.ok(error instanceof SupersetLocalToolError);
+        assert.equal(error.outcome, "unknown");
+        assert.equal(error.code, "PROVIDER_UNAVAILABLE");
         assert.match(error.message, pattern);
         return true;
       });
-      const state = JSON.parse(await readFile(fixture.statePath, "utf8")) as Record<string, unknown>;
-      assert.equal(state.pending, undefined);
-    }
+      const state = JSON.parse(await readFile(fixture.statePath, "utf8")) as { pending?: Record<string, unknown> };
+      assert.deepEqual(Object.keys(state.pending ?? {}), ["client:transport"]);
+      await assert.rejects(adapter.launch(request()), /has an unknown outcome/);
+      const calls = (await fixture.methods()).filter((method) => method === "tools/call");
+      assert.equal(calls.length, 1, "the retry must not send a second agents_create");
+    });
+  }
+});
+
+test("decodes a multi-byte character split across stdout chunks", async () => {
+  await withFixture(async (fixture) => {
+    const adapter = await fixture.adapter("split-utf8");
+    assert.deepEqual(await adapter.result({ runId: "terminal-utf8" }), {
+      status: "succeeded",
+      output: "caf\u00e9 \u2713 \u{1F680}",
+    });
   });
 });
 

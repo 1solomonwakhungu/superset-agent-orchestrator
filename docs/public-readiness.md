@@ -100,6 +100,8 @@ request, and external-system state must be verified independently.
   bridge timed out or died after `agents_create` was sent) cannot be reconciled.
   The adapter keeps a write-ahead pending record and fails the retry with
   `LAUNCH_REJECTED` instead of starting a second agent; verify it in Superset.
+  Bridge `isError` results count as unknown outcomes, so a launch Superset
+  refused for an ordinary reason also needs this manual check.
 - A session waiting for input is reported as `waiting_for_input`. It stays
   non-terminal and is subject to the session deadline.
 - Backend recovery restores the orchestrator's session binding, not the Superset
